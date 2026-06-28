@@ -155,7 +155,7 @@ function normalizeDocument(document = {}) {
     templateId: typeof document.templateId === "string" && document.templateId ? document.templateId : "warm",
     fontFamily: typeof document.fontFamily === "string" && document.fontFamily ? document.fontFamily : "LXGW WenKai Screen",
     fontSize: Number.isFinite(Number(document.fontSize)) ? Math.min(32, Math.max(12, Number(document.fontSize))) : 18,
-    layoutMode: document.layoutMode === "paged" ? "paged" : "flow",
+    layoutMode: "flow",
     customBackground: typeof document.customBackground === "string" && document.customBackground ? document.customBackground : "",
     updatedAt: new Date().toISOString(),
   };

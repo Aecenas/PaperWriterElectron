@@ -1253,12 +1253,12 @@ button:disabled {
 }
 
 .paper-editor p {
-  margin: 0 0 1.5em;
+  margin: 0 0 1.05em;
   text-indent: 2em;
 }
 
 .paged-page-body p {
-  margin: 0 0 1.5em;
+  margin: 0 0 1.05em;
   text-indent: 2em;
 }
 
@@ -1268,7 +1268,7 @@ button:disabled {
 .paged-page-body h1,
 .paged-page-body h2,
 .paged-page-body h3 {
-  margin: 0 0 0.9em;
+  margin: 0 0 0.72em;
   color: inherit;
   font-family: var(--heading-font);
   font-weight: var(--heading-weight, 700);
@@ -1317,8 +1317,8 @@ button:disabled {
 
 .paper-editor blockquote,
 .paged-page-body blockquote {
-  margin: 2.15em 0 2.25em;
-  padding: 24px 34px 26px 34px;
+  margin: 1.55em 0 1.65em;
+  padding: 20px 32px 22px 32px;
   border: 1px solid rgba(159, 139, 105, 0.24);
   border-left: 3px solid #c96c3d;
   border-radius: 5px;
@@ -1364,7 +1364,7 @@ button:disabled {
   position: relative;
   z-index: 1;
   width: 100%;
-  margin: 2.2em 0;
+  margin: 1.45em 0;
   display: grid;
   justify-items: center;
   text-indent: 0;
@@ -1469,7 +1469,7 @@ button:disabled {
   max-width: 100%;
   height: auto;
   display: block;
-  margin: 2.2em auto;
+  margin: 1.45em auto;
   border: 1px solid #c66f42;
   border-radius: 3px;
 }
@@ -1478,7 +1478,7 @@ button:disabled {
 .paper-editor ol,
 .paged-page-body ul,
 .paged-page-body ol {
-  margin: 0 0 1.35em;
+  margin: 0 0 1.05em;
   padding-left: 1.4em;
 }
 
@@ -1509,6 +1509,40 @@ button:disabled {
 .paged-page-body li p {
   margin: 0;
   text-indent: 0;
+}
+
+.paper-page-break {
+  position: relative;
+  z-index: 1;
+  height: 34px;
+  margin: 1.45em 0;
+  display: grid;
+  place-items: center;
+  color: rgba(154, 86, 53, 0.7);
+  font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-indent: 0;
+  user-select: none;
+}
+
+.paper-page-break::before {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed rgba(198, 111, 66, 0.44);
+  content: "";
+}
+
+.paper-page-break span {
+  position: relative;
+  border: 1px solid rgba(198, 111, 66, 0.22);
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: rgba(255, 253, 248, 0.92);
+  box-shadow: 0 4px 12px rgba(67, 55, 40, 0.08);
 }
 
 .paper-editor .is-editor-empty:first-child::before {
@@ -1631,6 +1665,10 @@ button:disabled {
 
 .desktop-shell.print-mode .image-size-tools {
   display: none;
+}
+
+.desktop-shell.print-mode .paper-page-break {
+  visibility: hidden;
 }
 
 @media (max-width: 1320px) {

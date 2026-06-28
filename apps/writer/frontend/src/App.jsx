@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { mergeAttributes } from "@tiptap/core";
+import { mergeAttributes, Node } from "@tiptap/core";
 import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
@@ -16,7 +16,6 @@ import {
   AlignRight,
   ArrowLeft,
   Bold,
-  BookOpen,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -42,6 +41,7 @@ import {
   RefreshCw,
   Save,
   SaveAll,
+  SeparatorHorizontal,
   Underline,
   Undo2,
   X,
@@ -392,7 +392,7 @@ function normalizeDocument(document, letterTemplates = DEFAULT_LETTER_TEMPLATES)
     templateId,
     fontFamily: letterTemplate.typography.bodyFont,
     fontSize: letterTemplate.typography.bodySize,
-    layoutMode: document?.layoutMode === LAYOUT_MODES.PAGED ? LAYOUT_MODES.PAGED : LAYOUT_MODES.FLOW,
+    layoutMode: LAYOUT_MODES.FLOW,
   };
 }
 
@@ -557,6 +557,10 @@ function runEditorCommand(editor, savedSelectionRef, buildCommand) {
 
 function setHeadingLevel(editor, savedSelectionRef, level) {
   runEditorCommand(editor, savedSelectionRef, (chain) => chain.toggleHeading({ level }));
+}
+
+function insertPageBreak(editor, savedSelectionRef) {
+  runEditorCommand(editor, savedSelectionRef, (chain) => chain.insertContent({ type: "paperPageBreak" }));
 }
 
 function createTocListItems(headings) {
@@ -805,6 +809,30 @@ const PaperImage = Image.extend({
   },
 });
 
+const PaperPageBreak = Node.create({
+  name: "paperPageBreak",
+  group: "block",
+  atom: true,
+  selectable: true,
+  draggable: true,
+
+  parseHTML() {
+    return [{ tag: "div[data-type='paper-page-break']" }];
+  },
+
+  renderHTML() {
+    return [
+      "div",
+      mergeAttributes({
+        "data-type": "paper-page-break",
+        class: "paper-page-break",
+        contenteditable: "false",
+      }),
+      ["span", {}, "分页符"],
+    ];
+  },
+});
+
 function MenuButton({ icon: Icon, label, menuId, openMenu, onOpenMenu, children }) {
   const isOpen = openMenu === menuId;
 
@@ -844,14 +872,12 @@ function TopNav({
   onSave,
   onExportPdf,
   onInsertImage,
-  onLayoutModeChange,
   onExportImages,
   onCheckUpdates,
   onDownloadUpdate,
   onInstallUpdate,
 }) {
-  const isPaged = document.layoutMode === LAYOUT_MODES.PAGED;
-  const canEdit = Boolean(editor) && !isPaged;
+  const canEdit = Boolean(editor);
   const [openMenu, setOpenMenu] = useState("");
 
   const closeMenus = useCallback(() => {
@@ -899,7 +925,7 @@ function TopNav({
         </MenuButton>
         <MenuButton icon={Download} label="导出" menuId="export" openMenu={openMenu} onOpenMenu={setOpenMenu}>
           <MenuItem icon={Download} label="导出 PDF" onClick={() => runMenuAction(onExportPdf)} />
-          <MenuItem icon={FileImage} label="导出图片" disabled={!isPaged} onClick={() => runMenuAction(onExportImages)} />
+          <MenuItem icon={FileImage} label="导出图片" onClick={() => runMenuAction(onExportImages)} />
         </MenuButton>
         <MenuButton icon={RefreshCw} label="更新" menuId="update" openMenu={openMenu} onOpenMenu={setOpenMenu}>
           <MenuItem icon={RefreshCw} label="检查更新" onClick={() => runMenuAction(onCheckUpdates)} />
@@ -908,26 +934,7 @@ function TopNav({
         </MenuButton>
       </div>
 
-      <div className="nav-center">
-        <div className="mode-switch" aria-label="页面模式">
-          <button
-            type="button"
-            className={document.layoutMode === LAYOUT_MODES.FLOW ? "active" : ""}
-            onClick={() => onLayoutModeChange(LAYOUT_MODES.FLOW)}
-          >
-            <FileText size={15} />
-            <span>连续</span>
-          </button>
-          <button
-            type="button"
-            className={isPaged ? "active" : ""}
-            onClick={() => onLayoutModeChange(LAYOUT_MODES.PAGED)}
-          >
-            <BookOpen size={15} />
-            <span>分页</span>
-          </button>
-        </div>
-      </div>
+      <div className="nav-center" />
 
       <div className="nav-tools">
         <IconButton icon={Undo2} label="撤销" disabled={!canEdit} onClick={() => editor?.chain().focus().undo().run()} />
@@ -960,6 +967,7 @@ function TopNav({
         <IconButton icon={AlignRight} label="右对齐" disabled={!canEdit} onClick={() => runEditorCommand(editor, savedSelectionRef, (chain) => chain.setTextAlign("right"))} />
         <span className="nav-divider" />
         <IconButton icon={ImagePlus} label="插入图片" disabled={!canEdit} onClick={onInsertImage} />
+        <IconButton icon={SeparatorHorizontal} label="插入分页符" disabled={!canEdit} onClick={() => insertPageBreak(editor, savedSelectionRef)} />
         <IconButton icon={ListTree} label="插入目录" disabled={!canEdit} onClick={() => insertTableOfContents(editor, savedSelectionRef)} />
         <IconButton icon={Heading1} label="一级标题" active={editor?.isActive("heading", { level: 1 })} disabled={!canEdit} onClick={() => setHeadingLevel(editor, savedSelectionRef, 1)} />
         <IconButton icon={Heading2} label="二级标题" active={editor?.isActive("heading", { level: 2 })} disabled={!canEdit} onClick={() => setHeadingLevel(editor, savedSelectionRef, 2)} />
@@ -1434,42 +1442,20 @@ function PaperCanvas({ editor, document, letterTemplates, printMode, onTitleChan
       typography,
     ],
   );
-  const isPaged = document.layoutMode === LAYOUT_MODES.PAGED;
-  const pages = useMemo(() => paginateHtml(document.html), [document.html]);
-
   return (
     <main className={printMode ? "canvas print-mode" : "canvas"}>
-      <SelectionBubbleToolbar editor={editor} disabled={isPaged || printMode} savedSelectionRef={savedSelectionRef} />
+      <SelectionBubbleToolbar editor={editor} disabled={printMode} savedSelectionRef={savedSelectionRef} />
       <div className="paper-viewport">
-        {isPaged ? (
-          <div className="paged-pages" data-page-count={pages.length}>
-            {pages.map((pageHtml, index) => (
-              <PageArticle
-                key={`${index}-${pageHtml.length}`}
-                document={document}
-                selectedTemplate={selectedTemplate}
-                paperStyle={paperStyle}
-                className="paged-page"
-                showHeader={index === 0}
-                onTitleChange={index === 0 ? onTitleChange : undefined}
-                onAuthorChange={index === 0 ? onAuthorChange : undefined}
-              >
-                <section className={index === 0 ? "paged-page-body with-header" : "paged-page-body"} dangerouslySetInnerHTML={{ __html: pageHtml }} />
-              </PageArticle>
-            ))}
-          </div>
-        ) : (
-          <PageArticle
-            document={document}
-            selectedTemplate={selectedTemplate}
-            paperStyle={paperStyle}
-            showHeader
-            onTitleChange={onTitleChange}
-            onAuthorChange={onAuthorChange}
-          >
-            <EditorContent editor={editor} />
-          </PageArticle>
-        )}
+        <PageArticle
+          document={document}
+          selectedTemplate={selectedTemplate}
+          paperStyle={paperStyle}
+          showHeader
+          onTitleChange={onTitleChange}
+          onAuthorChange={onAuthorChange}
+        >
+          <EditorContent editor={editor} />
+        </PageArticle>
       </div>
     </main>
   );
@@ -1544,6 +1530,39 @@ function createDocumentTab(document, path = "", dirty = false) {
   };
 }
 
+function getFlowExportRects() {
+  const sheet = window.document.querySelector(".paper-sheet");
+  if (!sheet) {
+    return [];
+  }
+
+  const sheetRect = sheet.getBoundingClientRect();
+  const breaks = Array.from(sheet.querySelectorAll(".paper-page-break"))
+    .map((breakElement) => breakElement.getBoundingClientRect())
+    .filter((rect) => rect.top > sheetRect.top && rect.bottom < sheetRect.bottom)
+    .sort((left, right) => left.top - right.top);
+  const segments = [];
+  let segmentTop = sheetRect.top;
+
+  breaks.forEach((breakRect) => {
+    if (breakRect.top - segmentTop >= 80) {
+      segments.push({ top: segmentTop, bottom: breakRect.top });
+    }
+    segmentTop = breakRect.bottom;
+  });
+
+  if (sheetRect.bottom - segmentTop >= 80) {
+    segments.push({ top: segmentTop, bottom: sheetRect.bottom });
+  }
+
+  return (segments.length ? segments : [{ top: sheetRect.top, bottom: sheetRect.bottom }]).map((segment) => ({
+    x: sheetRect.left + window.scrollX,
+    y: segment.top + window.scrollY,
+    width: sheetRect.width,
+    height: segment.bottom - segment.top,
+  }));
+}
+
 export default function App() {
   const [userLetterTemplates, setUserLetterTemplates] = useState(() => loadUserLetterTemplates());
   const letterTemplates = useMemo(() => [...DEFAULT_LETTER_TEMPLATES, ...userLetterTemplates], [userLetterTemplates]);
@@ -1575,6 +1594,7 @@ export default function App() {
       Highlight.configure({ multicolor: true }),
       FontFamily,
       PaperImage.configure({ allowBase64: true, inline: false }),
+      PaperPageBreak,
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       Placeholder.configure({ placeholder: "在这里开始写。" }),
     ],
@@ -1885,6 +1905,19 @@ export default function App() {
     [currentPath, getSaveDocument, refreshFolder, showStatus],
   );
 
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") {
+        return;
+      }
+      event.preventDefault();
+      handleSave(event.shiftKey);
+    };
+
+    window.document.addEventListener("keydown", handleKeyDown, true);
+    return () => window.document.removeEventListener("keydown", handleKeyDown, true);
+  }, [handleSave]);
+
   const handleExportPdf = useCallback(async () => {
     const nextDocument = getSaveDocument();
     setDocumentState(nextDocument);
@@ -1899,25 +1932,21 @@ export default function App() {
 
   const handleExportImages = useCallback(async () => {
     const nextDocument = getSaveDocument();
-    const pagedDocument = { ...nextDocument, layoutMode: LAYOUT_MODES.PAGED };
-    setDocumentState(pagedDocument);
-    await new Promise((resolve) => window.setTimeout(resolve, 180));
-    const pageRects = Array.from(document.querySelectorAll(".paged-page")).map((page) => {
-      const rect = page.getBoundingClientRect();
-      return {
-        x: rect.left + window.scrollX,
-        y: rect.top + window.scrollY,
-        width: rect.width,
-        height: rect.height,
-      };
-    });
-    if (!pageRects.length) {
-      showStatus("没有可导出的分页", "warning");
-      return;
-    }
-    const result = await bridge.exportPageImages(pagedDocument.title, pageRects);
-    if (!result?.canceled) {
-      showStatus(`已导出 ${result.count || pageRects.length} 张图片`, "success");
+    setDocumentState(nextDocument);
+    setPrintMode(true);
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      const pageRects = getFlowExportRects();
+      if (!pageRects.length) {
+        showStatus("没有可导出的内容", "warning");
+        return;
+      }
+      const result = await bridge.exportPageImages(nextDocument.title, pageRects);
+      if (!result?.canceled) {
+        showStatus(`已导出 ${result.count || pageRects.length} 张图片`, "success");
+      }
+    } finally {
+      setPrintMode(false);
     }
   }, [getSaveDocument, showStatus]);
 
@@ -2003,7 +2032,6 @@ export default function App() {
         onExportPdf={handleExportPdf}
         onExportImages={handleExportImages}
         onInsertImage={handleInsertImage}
-        onLayoutModeChange={(layoutMode) => updateDocumentSetting({ layoutMode })}
         onCheckUpdates={handleCheckUpdates}
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
