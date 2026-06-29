@@ -1050,14 +1050,30 @@ button:disabled {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(154, 86, 53, 0.34) rgba(245, 242, 236, 0.72);
   background:
     radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.72), transparent 34%),
     linear-gradient(180deg, #f5f2ec, #eee9df);
 }
 
 .canvas::-webkit-scrollbar {
-  display: none;
+  width: 11px;
+  height: 11px;
+}
+
+.canvas::-webkit-scrollbar-track {
+  background: rgba(245, 242, 236, 0.72);
+}
+
+.canvas::-webkit-scrollbar-thumb {
+  border: 3px solid rgba(245, 242, 236, 0.72);
+  border-radius: 999px;
+  background: rgba(154, 86, 53, 0.34);
+}
+
+.canvas::-webkit-scrollbar-thumb:hover {
+  background: rgba(154, 86, 53, 0.5);
 }
 
 .paper-viewport {
@@ -1419,7 +1435,8 @@ button:disabled {
 
 .paper-image-caption {
   flex: 0 1 auto;
-  width: min(100%, 62em);
+  width: auto;
+  max-width: calc(100% - 4.5em);
   min-width: 0;
   min-height: 24px;
   border: 0;
@@ -1432,7 +1449,7 @@ button:disabled {
   appearance: none;
   font: inherit;
   line-height: inherit;
-  text-align: left;
+  text-align: center;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   outline: none;

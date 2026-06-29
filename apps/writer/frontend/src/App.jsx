@@ -709,6 +709,17 @@ function resizeCaptionField(field) {
   if (!field) {
     return;
   }
+  const row = field.closest(".paper-image-caption-row");
+  const availableWidth = Math.max(160, (row?.clientWidth || field.clientWidth || 520) - 88);
+  const computedStyle = window.getComputedStyle(field);
+  const text = field.value || field.placeholder || "";
+  const canvas = resizeCaptionField.canvas || document.createElement("canvas");
+  resizeCaptionField.canvas = canvas;
+  const context = canvas.getContext("2d");
+  context.font = computedStyle.font;
+  const measuredWidth = Math.ceil(context.measureText(text).width + 6);
+  const nextWidth = Math.max(96, Math.min(availableWidth, measuredWidth));
+  field.style.width = `${nextWidth}px`;
   field.style.height = "0px";
   field.style.height = `${Math.max(24, field.scrollHeight)}px`;
 }
