@@ -705,9 +705,28 @@ function ColorMenu({ icon: Icon, label, options, value, onSelect }) {
   );
 }
 
+function resizeCaptionField(field) {
+  if (!field) {
+    return;
+  }
+  field.style.height = "0px";
+  field.style.height = `${Math.max(24, field.scrollHeight)}px`;
+}
+
 function PaperImageNodeView({ node, updateAttributes, selected }) {
   const width = node.attrs.width || "78%";
   const caption = node.attrs.caption || "";
+  const captionRef = useRef(null);
+
+  useEffect(() => {
+    resizeCaptionField(captionRef.current);
+    const animationFrame = window.requestAnimationFrame(() => resizeCaptionField(captionRef.current));
+    const timer = window.setTimeout(() => resizeCaptionField(captionRef.current), 80);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(timer);
+    };
+  }, [caption]);
 
   return (
     <NodeViewWrapper
@@ -736,11 +755,15 @@ function PaperImageNodeView({ node, updateAttributes, selected }) {
       </div>
       <label className="paper-image-caption-row" contentEditable={false}>
         <span className="paper-image-caption-prefix" aria-hidden="true" />
-        <input
+        <textarea
+          ref={captionRef}
           className="paper-image-caption"
           value={caption}
-          onChange={(event) => updateAttributes({ caption: event.target.value })}
-          onInput={(event) => updateAttributes({ caption: event.currentTarget.value })}
+          rows={1}
+          onChange={(event) => {
+            updateAttributes({ caption: event.target.value });
+            resizeCaptionField(event.currentTarget);
+          }}
           aria-label="图片标题"
           placeholder="添加图片标题"
           spellCheck={false}
@@ -882,11 +905,10 @@ function TopNav({
   onExportPdf,
   onInsertImage,
   onExportImages,
-  onCheckUpdates,
-  onDownloadUpdate,
-  onInstallUpdate,
+  onRunUpdate,
 }) {
   const canEdit = Boolean(editor);
+  const updateBusy = updateState?.status === "checking" || updateState?.status === "downloading";
   const [openMenu, setOpenMenu] = useState("");
 
   const closeMenus = useCallback(() => {
@@ -936,11 +958,17 @@ function TopNav({
           <MenuItem icon={Download} label="导出 PDF" onClick={() => runMenuAction(onExportPdf)} />
           <MenuItem icon={FileImage} label="导出图片" onClick={() => runMenuAction(onExportImages)} />
         </MenuButton>
-        <MenuButton icon={RefreshCw} label="更新" menuId="update" openMenu={openMenu} onOpenMenu={setOpenMenu}>
-          <MenuItem icon={RefreshCw} label="检查更新" onClick={() => runMenuAction(onCheckUpdates)} />
-          <MenuItem icon={Download} label="下载更新" disabled={updateState?.status !== "available"} onClick={() => runMenuAction(onDownloadUpdate)} />
-          <MenuItem icon={RefreshCw} label="重启安装" disabled={updateState?.status !== "downloaded"} onClick={() => runMenuAction(onInstallUpdate)} />
-        </MenuButton>
+        <button
+          type="button"
+          className={updateBusy ? "nav-command active" : "nav-command"}
+          disabled={updateBusy}
+          onClick={onRunUpdate}
+          title={updateState?.message || "检查并安装更新"}
+          aria-label="检查并安装更新"
+        >
+          <RefreshCw size={19} strokeWidth={1.9} />
+          <span>{updateBusy ? "更新中" : "更新"}</span>
+        </button>
       </div>
 
       <div className="nav-center" />
@@ -1593,6 +1621,7 @@ export default function App() {
   const applyingRef = useRef(false);
   const readyRef = useRef(false);
   const editorSelectionRef = useRef(null);
+  const updateFlowRef = useRef({ active: false, handled: "" });
 
   const editor = useEditor({
     extensions: [
@@ -1676,6 +1705,22 @@ export default function App() {
       if (state?.message) {
         showStatus(state.message, state.status === "error" ? "warning" : "success");
       }
+      if (!updateFlowRef.current.active) {
+        return;
+      }
+      if (state?.status === "available" && updateFlowRef.current.handled !== "available") {
+        updateFlowRef.current.handled = "available";
+        bridge.downloadUpdate?.();
+        return;
+      }
+      if (state?.status === "downloaded" && updateFlowRef.current.handled !== "downloaded") {
+        updateFlowRef.current.handled = "downloaded";
+        bridge.installUpdate?.();
+        return;
+      }
+      if (["none", "error", "dev"].includes(state?.status)) {
+        updateFlowRef.current = { active: false, handled: state.status };
+      }
     });
     return () => {
       mounted = false;
@@ -1683,28 +1728,39 @@ export default function App() {
     };
   }, [showStatus]);
 
-  const handleCheckUpdates = useCallback(async () => {
+  const handleRunUpdate = useCallback(async () => {
+    if (updateState?.status === "checking" || updateState?.status === "downloading") {
+      return;
+    }
+    updateFlowRef.current = { active: true, handled: "" };
+    if (updateState?.status === "downloaded") {
+      updateFlowRef.current.handled = "downloaded";
+      await bridge.installUpdate?.();
+      return;
+    }
+    if (updateState?.status === "available") {
+      updateFlowRef.current.handled = "available";
+      const state = await bridge.downloadUpdate?.();
+      if (state) {
+        setUpdateState(state);
+      }
+      return;
+    }
     const state = await bridge.checkForUpdates?.();
     if (state) {
       setUpdateState(state);
       showStatus(state.message || "更新检查完成", state.status === "error" ? "warning" : "success");
+      if (state.status === "available" && updateFlowRef.current.handled !== "available") {
+        updateFlowRef.current.handled = "available";
+        bridge.downloadUpdate?.();
+      } else if (state.status === "downloaded" && updateFlowRef.current.handled !== "downloaded") {
+        updateFlowRef.current.handled = "downloaded";
+        bridge.installUpdate?.();
+      } else if (["none", "error", "dev"].includes(state.status)) {
+        updateFlowRef.current = { active: false, handled: state.status };
+      }
     }
-  }, [showStatus]);
-
-  const handleDownloadUpdate = useCallback(async () => {
-    const state = await bridge.downloadUpdate?.();
-    if (state) {
-      setUpdateState(state);
-      showStatus(state.message || "开始下载更新", state.status === "error" ? "warning" : "success");
-    }
-  }, [showStatus]);
-
-  const handleInstallUpdate = useCallback(async () => {
-    const state = await bridge.installUpdate?.();
-    if (state) {
-      setUpdateState(state);
-    }
-  }, []);
+  }, [showStatus, updateState?.status]);
 
   const applyDocument = useCallback(
     (nextDocument, nextPath = "", nextDirty = false) => {
@@ -2041,9 +2097,7 @@ export default function App() {
         onExportPdf={handleExportPdf}
         onExportImages={handleExportImages}
         onInsertImage={handleInsertImage}
-        onCheckUpdates={handleCheckUpdates}
-        onDownloadUpdate={handleDownloadUpdate}
-        onInstallUpdate={handleInstallUpdate}
+        onRunUpdate={handleRunUpdate}
       />
       <div className={appShellClassName}>
         {leftSidebarCollapsed ? (

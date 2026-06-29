@@ -1397,11 +1397,13 @@ button:disabled {
 
 .paper-image-caption-row,
 .paper-image-figure figcaption {
-  width: min(var(--image-width), 100%);
+  width: 100%;
+  max-width: 100%;
   min-height: 24px;
+  height: auto;
   border: 0;
   border-radius: 4px;
-  padding: 7px 8px 0;
+  padding: 7px clamp(12px, 8%, 72px) 0;
   display: flex;
   justify-content: center;
   align-items: baseline;
@@ -1416,16 +1418,23 @@ button:disabled {
 }
 
 .paper-image-caption {
+  flex: 0 1 auto;
+  width: min(100%, 62em);
   min-width: 0;
-  max-width: calc(100% - 3.8em);
+  min-height: 24px;
   border: 0;
   padding: 0;
+  overflow: hidden;
+  resize: none;
+  field-sizing: content;
   color: inherit;
   background: transparent;
   appearance: none;
   font: inherit;
   line-height: inherit;
   text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   outline: none;
 }
 
