@@ -1083,6 +1083,7 @@ button:disabled {
   min-width: 0;
   min-height: 1280px;
   overflow: hidden;
+  counter-reset: paper-figure;
   border: 1px solid var(--paper-edge);
   border-radius: 8px;
   background: var(--paper-repeat-bg) center top / 100% auto repeat-y, var(--paper-base);
@@ -1368,6 +1369,7 @@ button:disabled {
   display: grid;
   justify-items: center;
   text-indent: 0;
+  counter-increment: paper-figure;
 }
 
 .paper-image-frame {
@@ -1393,16 +1395,19 @@ button:disabled {
   width: min(var(--image-width), 100%);
 }
 
-.paper-image-caption,
+.paper-image-caption-row,
 .paper-image-figure figcaption {
   width: min(var(--image-width), 100%);
   min-height: 24px;
   border: 0;
   border-radius: 4px;
   padding: 7px 8px 0;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0.28em;
   color: rgba(74, 79, 79, 0.58);
   background: transparent;
-  appearance: none;
   font-family: var(--image-caption-font);
   font-size: var(--image-caption-size);
   line-height: 1.55;
@@ -1410,17 +1415,43 @@ button:disabled {
   outline: none;
 }
 
+.paper-image-caption {
+  min-width: 0;
+  max-width: calc(100% - 3.8em);
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  appearance: none;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  outline: none;
+}
+
 .paper-image-caption:focus {
   box-shadow: 0 1px 0 rgba(198, 111, 66, 0.34);
 }
 
-.paper-image-caption::placeholder,
-.paper-image-figure figcaption:empty::before {
+.paper-image-caption-prefix,
+.paper-image-figure figcaption::before {
+  flex: 0 0 auto;
+  color: rgba(154, 86, 53, 0.76);
+  font-weight: 650;
+  content: "";
+}
+
+.paper-image-caption-prefix::before,
+.paper-image-figure figcaption::before {
+  content: "图" counter(paper-figure) ". ";
+}
+
+.paper-image-caption::placeholder {
   color: rgba(74, 79, 79, 0.34);
 }
 
 .paper-image-figure figcaption:empty::before {
-  content: attr(data-placeholder);
+  content: "图" counter(paper-figure) ".";
 }
 
 .image-size-tools {

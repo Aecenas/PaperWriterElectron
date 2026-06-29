@@ -734,15 +734,18 @@ function PaperImageNodeView({ node, updateAttributes, selected }) {
           ))}
         </div>
       </div>
-      <input
-        className="paper-image-caption"
-        value={caption}
-        onChange={(event) => updateAttributes({ caption: event.target.value })}
-        aria-label="图片标题"
-        placeholder="添加图片标题"
-        spellCheck={false}
-        contentEditable={false}
-      />
+      <label className="paper-image-caption-row" contentEditable={false}>
+        <span className="paper-image-caption-prefix" aria-hidden="true" />
+        <input
+          className="paper-image-caption"
+          value={caption}
+          onChange={(event) => updateAttributes({ caption: event.target.value })}
+          onInput={(event) => updateAttributes({ caption: event.currentTarget.value })}
+          aria-label="图片标题"
+          placeholder="添加图片标题"
+          spellCheck={false}
+        />
+      </label>
     </NodeViewWrapper>
   );
 }
@@ -757,7 +760,7 @@ const PaperImage = Image.extend({
       },
       caption: {
         default: "",
-        parseHTML: (element) => element.getAttribute("data-caption") || "",
+        parseHTML: (element) => element.getAttribute("data-caption") || element.querySelector("figcaption")?.textContent?.trim() || "",
       },
     };
   },
@@ -798,7 +801,13 @@ const PaperImage = Image.extend({
     delete imageAttrs.style;
     return [
       "figure",
-      { "data-type": "paper-image", "data-width": width, class: "paper-image-figure", style: `--image-width: ${width};` },
+      {
+        "data-type": "paper-image",
+        "data-width": width,
+        "data-caption": caption,
+        class: "paper-image-figure",
+        style: `--image-width: ${width};`,
+      },
       ["img", mergeAttributes(imageAttrs)],
       ["figcaption", { "data-placeholder": "添加图片标题" }, caption],
     ];
