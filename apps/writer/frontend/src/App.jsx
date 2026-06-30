@@ -1526,7 +1526,7 @@ function SelectionBubbleToolbar({ editor, disabled, savedSelectionRef }) {
   );
 }
 
-function PaperCanvas({ editor, document, letterTemplates, printMode, onTitleChange, onAuthorChange, savedSelectionRef }) {
+function PaperCanvas({ editor, document, letterTemplates, printMode, imageExportMode, onTitleChange, onAuthorChange, savedSelectionRef }) {
   const selectedLetterTemplate = getLetterTemplate(document, letterTemplates);
   const selectedPaperId = document.customBackground ? document.templateId : selectedLetterTemplate.paperId;
   const selectedTemplate = TEMPLATES.find((template) => template.id === selectedPaperId) || TEMPLATES[0];
@@ -1565,7 +1565,7 @@ function PaperCanvas({ editor, document, letterTemplates, printMode, onTitleChan
   );
   return (
     <main className={printMode ? "canvas print-mode" : "canvas"}>
-      <SelectionBubbleToolbar editor={editor} disabled={printMode} savedSelectionRef={savedSelectionRef} />
+      <SelectionBubbleToolbar editor={editor} disabled={printMode || imageExportMode} savedSelectionRef={savedSelectionRef} />
       <div className="paper-viewport">
         <PageArticle
           document={document}
@@ -1732,6 +1732,7 @@ export default function App() {
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(true);
   const [status, setStatus] = useState(null);
   const [printMode, setPrintMode] = useState(false);
+  const [imageExportMode, setImageExportMode] = useState(false);
   const [updateState, setUpdateState] = useState({ status: "idle", message: "尚未检查更新" });
   const applyingRef = useRef(false);
   const readyRef = useRef(false);
@@ -2275,9 +2276,19 @@ export default function App() {
     const nextDocument = getSaveDocument();
     setDocumentState(nextDocument);
     const previousRightSidebarCollapsed = rightSidebarCollapsed;
+    const previousCanvasScroll = window.document.querySelector(".canvas")?.scrollTop || 0;
+    window.document.body.classList.add("image-export-body");
     setRightSidebarCollapsed(true);
+    setImageExportMode(true);
     try {
-      await new Promise((resolve) => window.setTimeout(resolve, 180));
+      await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+      const canvas = window.document.querySelector(".canvas");
+      if (canvas) {
+        canvas.scrollTop = 0;
+        canvas.scrollLeft = 0;
+      }
+      window.scrollTo(0, 0);
+      await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
       const pageRects = getFlowExportRects();
       if (!pageRects.length) {
         showStatus("没有可导出的内容", "warning");
@@ -2288,7 +2299,15 @@ export default function App() {
         showStatus(`已导出 ${result.count || pageRects.length} 张图片`, "success");
       }
     } finally {
+      const canvas = window.document.querySelector(".canvas");
+      if (canvas) {
+        window.requestAnimationFrame(() => {
+          canvas.scrollTop = previousCanvasScroll;
+        });
+      }
+      setImageExportMode(false);
       setRightSidebarCollapsed(previousRightSidebarCollapsed);
+      window.document.body.classList.remove("image-export-body");
     }
   }, [getSaveDocument, rightSidebarCollapsed, showStatus]);
 
@@ -2353,6 +2372,7 @@ export default function App() {
   const shellClassName = [
     "desktop-shell",
     printMode ? "print-mode" : "",
+    imageExportMode ? "image-export-mode" : "",
     leftSidebarCollapsed ? "left-sidebar-collapsed" : "",
     rightSidebarCollapsed ? "right-sidebar-collapsed" : "",
   ].filter(Boolean).join(" ");
@@ -2410,6 +2430,7 @@ export default function App() {
               document={documentState}
               letterTemplates={letterTemplates}
               printMode={printMode}
+              imageExportMode={imageExportMode}
               onTitleChange={handleTitleChange}
               onAuthorChange={handleAuthorChange}
               savedSelectionRef={editorSelectionRef}

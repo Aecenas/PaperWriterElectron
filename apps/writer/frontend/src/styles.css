@@ -48,6 +48,14 @@ body {
   background: var(--canvas);
 }
 
+body.image-export-body,
+body.image-export-body #root {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+  background: #ffffff;
+}
+
 button,
 select {
   font: inherit;
@@ -1828,6 +1836,63 @@ button:disabled {
 }
 
 .desktop-shell.print-mode .paper-page-break {
+  visibility: hidden;
+}
+
+.desktop-shell.image-export-mode {
+  display: block;
+  min-height: 0;
+  height: auto;
+  overflow: visible;
+  background: #ffffff;
+}
+
+.desktop-shell.image-export-mode .desktop-titlebar,
+.desktop-shell.image-export-mode .top-nav,
+.desktop-shell.image-export-mode .document-tabs,
+.desktop-shell.image-export-mode .statusbar,
+.desktop-shell.image-export-mode .status-toast,
+.desktop-shell.image-export-mode .selection-bubble-menu,
+.desktop-shell.image-export-mode .image-size-tools {
+  display: none !important;
+}
+
+.desktop-shell.image-export-mode .sidebar,
+.desktop-shell.image-export-mode .sidebar-float-toggle {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.desktop-shell.image-export-mode .app-shell {
+  min-height: 0;
+  height: auto;
+}
+
+.desktop-shell.image-export-mode .workspace,
+.desktop-shell.image-export-mode .work-surface,
+.desktop-shell.image-export-mode .canvas,
+.desktop-shell.image-export-mode .paper-viewport {
+  min-height: 0;
+  height: auto;
+  overflow: visible;
+  background: #ffffff;
+}
+
+.desktop-shell.image-export-mode .work-surface {
+  display: block;
+}
+
+.desktop-shell.image-export-mode .paper-viewport {
+  padding-top: 20px;
+  padding-bottom: 0;
+}
+
+.desktop-shell.image-export-mode .paper-sheet {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.desktop-shell.image-export-mode .paper-page-break {
   visibility: hidden;
 }
 
