@@ -369,8 +369,12 @@ ipcMain.handle("document:open-path", async (_event, filePath) => {
   if (!isSupportedDocument(filePath)) {
     return { canceled: true };
   }
-  const document = await loadPaperDocument(filePath);
-  return { canceled: false, path: filePath, document };
+  try {
+    const document = await loadPaperDocument(filePath);
+    return { canceled: false, path: filePath, document };
+  } catch {
+    return { canceled: true };
+  }
 });
 
 ipcMain.handle("folder:open", async () => {
@@ -391,7 +395,11 @@ ipcMain.handle("folder:list", async (_event, folderPath) => {
   if (!folderPath) {
     return { canceled: true, files: [] };
   }
-  return { canceled: false, folderPath, files: await listDocumentFiles(folderPath) };
+  try {
+    return { canceled: false, folderPath, files: await listDocumentFiles(folderPath) };
+  } catch {
+    return { canceled: true, folderPath: "", files: [] };
+  }
 });
 
 async function listDocumentFiles(folderPath) {

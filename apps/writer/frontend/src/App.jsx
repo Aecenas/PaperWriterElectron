@@ -83,6 +83,7 @@ const IMAGE_WIDTH_OPTIONS = [
   { label: "满", value: "100%" },
 ];
 const USER_TEMPLATE_STORAGE_KEY = "paperwriter.userLetterTemplates";
+const SESSION_STORAGE_KEY = "paperwriter.sessionState";
 const TEMPLATE_FONT_OPTIONS = [
   "LXGW WenKai Screen",
   "LXGW WenKai",
@@ -360,6 +361,33 @@ function saveUserLetterTemplates(templates) {
     return;
   }
   window.localStorage.setItem(USER_TEMPLATE_STORAGE_KEY, JSON.stringify(templates.map(normalizeUserTemplate)));
+}
+
+function loadSessionState() {
+  if (typeof window === "undefined") {
+    return { folderPath: "", activePath: "" };
+  }
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return {
+      folderPath: typeof parsed.folderPath === "string" ? parsed.folderPath : "",
+      activePath: typeof parsed.activePath === "string" ? parsed.activePath : "",
+    };
+  } catch {
+    return { folderPath: "", activePath: "" };
+  }
+}
+
+function saveSessionState(state) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+    folderPath: typeof state.folderPath === "string" ? state.folderPath : "",
+    activePath: typeof state.activePath === "string" ? state.activePath : "",
+    updatedAt: new Date().toISOString(),
+  }));
 }
 
 function createBlankDocument() {
@@ -1028,17 +1056,21 @@ function TopNav({
 function LeftSidebar({
   currentPath,
   folderState,
+  mode,
+  outlineItems,
   onNew,
   onOpen,
   onOpenFolder,
   onOpenFolderFile,
+  onModeChange,
+  onOutlineItemClick,
   onCollapse,
 }) {
   return (
     <aside className="sidebar left-sidebar">
       <section className="sidebar-panel documents-panel">
         <div className="sidebar-heading">
-          <h2 className="sidebar-title">文件夹</h2>
+          <h2 className="sidebar-title">{mode === "folder" ? "文件夹" : "目录"}</h2>
           <div className="sidebar-actions">
             <button type="button" className="sidebar-plus" onClick={onCollapse} aria-label="收起左侧栏" title="收起左侧栏">
               <PanelLeftClose size={18} />
@@ -1046,46 +1078,87 @@ function LeftSidebar({
           </div>
         </div>
 
-        <div className="sidebar-file-actions" aria-label="文件操作">
-          <button type="button" onClick={onNew} title="新建文件">
-            <Plus size={16} />
-            <span>新建文件</span>
+        <div className="sidebar-mode-switch" role="tablist" aria-label="左侧栏模式">
+          <button
+            type="button"
+            className={mode === "folder" ? "active" : ""}
+            onClick={() => onModeChange("folder")}
+          >
+            文件夹
           </button>
-          <button type="button" onClick={onOpen} title="打开文件">
-            <FileText size={16} />
-            <span>打开文件</span>
-          </button>
-          <button type="button" onClick={onOpenFolder} title="打开文件夹">
-            <FolderOpen size={16} />
-            <span>打开文件夹</span>
+          <button
+            type="button"
+            className={mode === "outline" ? "active" : ""}
+            onClick={() => onModeChange("outline")}
+          >
+            目录
           </button>
         </div>
 
-        {folderState.path ? (
-          <div className="document-list">
-            <div className="folder-path" title={folderState.path}>{folderState.path}</div>
-            {folderState.files.length ? (
-              folderState.files.map((item) => (
+        {mode === "folder" ? (
+          <>
+            <div className="sidebar-file-actions" aria-label="文件操作">
+              <button type="button" onClick={onNew} title="新建文件">
+                <Plus size={16} />
+                <span>新建文件</span>
+              </button>
+              <button type="button" onClick={onOpen} title="打开文件">
+                <FileText size={16} />
+                <span>打开文件</span>
+              </button>
+              <button type="button" onClick={onOpenFolder} title="打开文件夹">
+                <FolderOpen size={16} />
+                <span>打开文件夹</span>
+              </button>
+            </div>
+
+            {folderState.path ? (
+              <div className="document-list">
+                <div className="folder-path" title={folderState.path}>{folderState.path}</div>
+                {folderState.files.length ? folderState.files.map((item) => (
+                  <button
+                    key={item.path}
+                    type="button"
+                    className={item.path === currentPath ? "document-row active" : "document-row"}
+                    onClick={() => onOpenFolderFile(item.path)}
+                  >
+                    {item.path === currentPath ? <span className="document-dot" /> : null}
+                    <strong>{item.name}</strong>
+                    <small>{new Date(item.updatedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</small>
+                  </button>
+                )) : (
+                  <p className="empty-folder">这个文件夹里还没有 .letterpaper 文档。</p>
+                )}
+              </div>
+            ) : (
+              <div className="folder-empty">
+                <FileText size={28} />
+                <span>打开一个文件夹后，这里会显示其中的信笺文档。</span>
+                <button type="button" onClick={onOpenFolder}>打开文件夹</button>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="outline-list" aria-label="当前文档目录">
+            {outlineItems.length ? (
+              outlineItems.map((item) => (
                 <button
-                  key={item.path}
+                  key={item.id}
                   type="button"
-                  className={item.path === currentPath ? "document-row active" : "document-row"}
-                  onClick={() => onOpenFolderFile(item.path)}
+                  className={`outline-row level-${item.level}`}
+                  onClick={() => onOutlineItemClick(item)}
+                  title={item.text}
                 >
-                  {item.path === currentPath ? <span className="document-dot" /> : null}
-                  <strong>{item.name}</strong>
-                  <small>{new Date(item.updatedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</small>
+                  <span className="outline-marker" />
+                  <span>{item.text}</span>
                 </button>
               ))
             ) : (
-              <p className="empty-folder">这个文件夹里还没有 .letterpaper 文档。</p>
+              <div className="folder-empty outline-empty">
+                <ListTree size={28} />
+                <span>当前信笺还没有一、二、三级标题。</span>
+              </div>
             )}
-          </div>
-        ) : (
-          <div className="folder-empty">
-            <FileText size={28} />
-            <span>打开一个文件夹后，这里会显示其中的信笺文档。</span>
-            <button type="button" onClick={onOpenFolder}>打开文件夹</button>
           </div>
         )}
       </section>
@@ -1578,6 +1651,33 @@ function createDocumentTab(document, path = "", dirty = false) {
   };
 }
 
+function buildOutlineItems(editor) {
+  if (!editor) {
+    return [];
+  }
+  const items = [];
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name !== "heading") {
+      return;
+    }
+    const level = Number(node.attrs.level) || 1;
+    if (level < 1 || level > 3) {
+      return;
+    }
+    const text = node.textContent?.trim();
+    if (!text) {
+      return;
+    }
+    items.push({
+      id: `${pos}-${level}-${text}`,
+      level,
+      text,
+      pos,
+    });
+  });
+  return items;
+}
+
 function getFlowExportRects() {
   const sheet = window.document.querySelector(".paper-sheet");
   if (!sheet) {
@@ -1612,6 +1712,9 @@ function getFlowExportRects() {
 }
 
 export default function App() {
+  const [initialSession] = useState(() => loadSessionState());
+  const sessionRef = useRef(initialSession);
+  const sessionRestoredRef = useRef(false);
   const [userLetterTemplates, setUserLetterTemplates] = useState(() => loadUserLetterTemplates());
   const letterTemplates = useMemo(() => [...DEFAULT_LETTER_TEMPLATES, ...userLetterTemplates], [userLetterTemplates]);
   const [documentState, setDocumentState] = useState(() => createBlankDocument());
@@ -1623,9 +1726,10 @@ export default function App() {
     return [tab];
   });
   const [activeTabId, setActiveTabId] = useState(() => openTabs[0]?.id || "");
-  const [folderState, setFolderState] = useState({ path: "", files: [] });
+  const [folderState, setFolderState] = useState(() => ({ path: initialSession.folderPath || "", files: [] }));
+  const [leftSidebarMode, setLeftSidebarMode] = useState("folder");
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(true);
   const [status, setStatus] = useState(null);
   const [printMode, setPrintMode] = useState(false);
   const [updateState, setUpdateState] = useState({ status: "idle", message: "尚未检查更新" });
@@ -1633,10 +1737,17 @@ export default function App() {
   const readyRef = useRef(false);
   const editorSelectionRef = useRef(null);
   const updateFlowRef = useRef({ active: false, handled: "" });
+  const openTabsRef = useRef(openTabs);
+  const activeTabIdRef = useRef(activeTabId);
+  const currentPathRef = useRef(currentPath);
+  const dirtyRef = useRef(dirty);
+  const documentStateRef = useRef(documentState);
+  const getSaveDocumentRef = useRef(null);
+  const refreshFolderRef = useRef(null);
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({ underline: false }),
       TextStyle,
       Color.configure({ types: ["textStyle"] }),
       UnderlineExtension,
@@ -1676,10 +1787,49 @@ export default function App() {
   });
 
   const stats = useMemo(() => wordStats(editor?.getText() || ""), [documentState.html, editor]);
+  const outlineItems = useMemo(() => buildOutlineItems(editor), [documentState.html, editor]);
+
+  const persistSession = useCallback((patch) => {
+    const nextSession = {
+      ...sessionRef.current,
+      ...patch,
+    };
+    sessionRef.current = nextSession;
+    saveSessionState(nextSession);
+  }, []);
 
   useEffect(() => {
     saveUserLetterTemplates(userLetterTemplates);
   }, [userLetterTemplates]);
+
+  useEffect(() => {
+    openTabsRef.current = openTabs;
+  }, [openTabs]);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
+
+  useEffect(() => {
+    currentPathRef.current = currentPath;
+    if (currentPath) {
+      persistSession({ activePath: currentPath });
+    }
+  }, [currentPath, persistSession]);
+
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  }, [dirty]);
+
+  useEffect(() => {
+    documentStateRef.current = documentState;
+  }, [documentState]);
+
+  useEffect(() => {
+    if (folderState.path) {
+      persistSession({ folderPath: folderState.path });
+    }
+  }, [folderState.path, persistSession]);
 
   useEffect(() => {
     if (!activeTabId) {
@@ -1799,6 +1949,10 @@ export default function App() {
     }, letterTemplates);
   }, [documentState, editor, letterTemplates]);
 
+  useEffect(() => {
+    getSaveDocumentRef.current = getSaveDocument;
+  }, [getSaveDocument]);
+
   const handleTitleChange = useCallback((title) => {
     setDocumentState((previous) => ({
       ...previous,
@@ -1817,38 +1971,6 @@ export default function App() {
     setDirty(true);
   }, []);
 
-  useEffect(() => {
-    if (!editor) {
-      return;
-    }
-    let mounted = true;
-    bridge.loadAutosave().then((result) => {
-      if (!mounted || !result?.exists) {
-        return;
-      }
-      applyDocument(result.document, "");
-      setDirty(true);
-      showStatus("已恢复自动草稿", "success");
-    });
-    return () => {
-      mounted = false;
-    };
-  }, [applyDocument, editor, showStatus]);
-
-  useEffect(() => {
-    if (!readyRef.current || !dirty) {
-      return undefined;
-    }
-
-    const timer = window.setTimeout(() => {
-      bridge.saveAutosave(getSaveDocument()).catch(() => {
-        showStatus("自动保存失败", "warning");
-      });
-    }, 900);
-
-    return () => window.clearTimeout(timer);
-  }, [dirty, documentState, getSaveDocument, showStatus]);
-
   const addOrActivateDocumentTab = useCallback(
     (nextDocument, nextPath = "", nextDirty = false) => {
       const normalized = normalizeDocument(nextDocument, letterTemplates);
@@ -1859,13 +1981,66 @@ export default function App() {
         return existingTab.id;
       }
       const tab = createDocumentTab(normalized, nextPath, nextDirty);
-      setOpenTabs((tabs) => [...tabs, tab]);
+      setOpenTabs((tabs) => {
+        const onlyTab = tabs.length === 1 ? tabs[0] : null;
+        const canReplaceBlank = nextPath
+          && onlyTab
+          && !onlyTab.path
+          && !onlyTab.dirty
+          && !currentPath
+          && !dirty;
+        return canReplaceBlank ? [tab] : [...tabs, tab];
+      });
       setActiveTabId(tab.id);
       applyDocument(normalized, nextPath, nextDirty);
       return tab.id;
     },
-    [applyDocument, letterTemplates, openTabs],
+    [applyDocument, currentPath, dirty, letterTemplates, openTabs],
   );
+
+  useEffect(() => {
+    if (!editor || sessionRestoredRef.current) {
+      return undefined;
+    }
+    sessionRestoredRef.current = true;
+    let mounted = true;
+    const restoreSession = async () => {
+      const { folderPath, activePath } = sessionRef.current;
+      if (folderPath) {
+        try {
+          const result = await bridge.listFolder(folderPath);
+          if (mounted && !result?.canceled) {
+            setFolderState({ path: result.folderPath || folderPath, files: result.files || [] });
+          }
+        } catch {
+          if (mounted) {
+            setFolderState({ path: "", files: [] });
+          }
+        }
+      }
+      if (activePath) {
+        try {
+          const result = await bridge.openDocumentPath(activePath);
+          if (!mounted || result?.canceled || !result?.document) {
+            return;
+          }
+          const normalized = normalizeDocument(result.document, letterTemplates);
+          const tab = createDocumentTab(normalized, result.path, false);
+          setOpenTabs([tab]);
+          setActiveTabId(tab.id);
+          applyDocument(normalized, result.path, false);
+        } catch {
+          if (mounted) {
+            persistSession({ activePath: "" });
+          }
+        }
+      }
+    };
+    restoreSession();
+    return () => {
+      mounted = false;
+    };
+  }, [applyDocument, editor, letterTemplates, persistSession]);
 
   const handleSelectTab = useCallback(
     (tabId) => {
@@ -1952,6 +2127,10 @@ export default function App() {
     }
   }, [folderState.path]);
 
+  useEffect(() => {
+    refreshFolderRef.current = refreshFolder;
+  }, [refreshFolder]);
+
   const handleOpenFolderFile = useCallback(
     async (path) => {
       const result = await bridge.openDocumentPath(path);
@@ -1965,6 +2144,22 @@ export default function App() {
     [addOrActivateDocumentTab, showStatus],
   );
 
+  const handleOutlineItemClick = useCallback(
+    (item) => {
+      if (!editor || typeof item?.pos !== "number") {
+        return;
+      }
+      const selectionPos = Math.min(item.pos + 1, editor.state.doc.content.size);
+      editor.chain().focus().setTextSelection(selectionPos).run();
+      window.requestAnimationFrame(() => {
+        const node = editor.view.nodeDOM(item.pos);
+        const element = node?.nodeType === window.Node.ELEMENT_NODE ? node : node?.parentElement;
+        element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    },
+    [editor],
+  );
+
   const handleSave = useCallback(
     async (saveAs) => {
       const nextDocument = getSaveDocument();
@@ -1975,11 +2170,81 @@ export default function App() {
       setDocumentState(nextDocument);
       setCurrentPath(result.path);
       setDirty(false);
+      persistSession({ activePath: result.path });
       refreshFolder();
       showStatus("文档已保存", "success");
     },
-    [currentPath, getSaveDocument, refreshFolder, showStatus],
+    [currentPath, getSaveDocument, persistSession, refreshFolder, showStatus],
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(async () => {
+      const getCurrentSaveDocument = getSaveDocumentRef.current;
+      if (!getCurrentSaveDocument) {
+        return;
+      }
+      const activeId = activeTabIdRef.current;
+      const activePath = currentPathRef.current;
+      const activeDirty = dirtyRef.current;
+      const activeDocument = getCurrentSaveDocument();
+      const snapshot = openTabsRef.current.map((tab) => (
+        tab.id === activeId
+          ? {
+              ...tab,
+              path: activePath,
+              document: activeDocument,
+              dirty: activeDirty,
+            }
+          : tab
+      ));
+      const realDirtyTabs = snapshot.filter((tab) => tab.path && tab.dirty);
+      if (!realDirtyTabs.length) {
+        return;
+      }
+
+      const savedPaths = new Set();
+      for (const tab of realDirtyTabs) {
+        try {
+          const result = await bridge.saveDocument(tab.document, tab.path, false);
+          if (!result?.canceled) {
+            savedPaths.add(tab.path);
+          }
+        } catch {
+          // A manual save will surface the exact error; the interval keeps trying.
+        }
+      }
+      if (!savedPaths.size) {
+        return;
+      }
+
+      setOpenTabs((tabs) => tabs.map((tab) => (
+        savedPaths.has(tab.path)
+          ? {
+              ...tab,
+              dirty: false,
+              document: tab.id === activeId ? activeDocument : tab.document,
+            }
+          : tab
+      )));
+
+      if (activePath && savedPaths.has(activePath)) {
+        const latestDocument = documentStateRef.current;
+        const activeDocumentUnchanged = latestDocument.html === activeDocument.html
+          && latestDocument.title === activeDocument.title
+          && latestDocument.author === activeDocument.author
+          && latestDocument.letterTemplateId === activeDocument.letterTemplateId
+          && latestDocument.templateId === activeDocument.templateId
+          && latestDocument.customBackground === activeDocument.customBackground;
+        if (activeDocumentUnchanged) {
+          setDocumentState(activeDocument);
+          setDirty(false);
+        }
+      }
+      refreshFolderRef.current?.();
+    }, 60000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -2009,9 +2274,10 @@ export default function App() {
   const handleExportImages = useCallback(async () => {
     const nextDocument = getSaveDocument();
     setDocumentState(nextDocument);
-    setPrintMode(true);
+    const previousRightSidebarCollapsed = rightSidebarCollapsed;
+    setRightSidebarCollapsed(true);
     try {
-      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
       const pageRects = getFlowExportRects();
       if (!pageRects.length) {
         showStatus("没有可导出的内容", "warning");
@@ -2022,9 +2288,9 @@ export default function App() {
         showStatus(`已导出 ${result.count || pageRects.length} 张图片`, "success");
       }
     } finally {
-      setPrintMode(false);
+      setRightSidebarCollapsed(previousRightSidebarCollapsed);
     }
-  }, [getSaveDocument, showStatus]);
+  }, [getSaveDocument, rightSidebarCollapsed, showStatus]);
 
   const handleInsertImage = useCallback(async () => {
     const result = await bridge.pickImage();
@@ -2119,10 +2385,14 @@ export default function App() {
           <LeftSidebar
             currentPath={currentPath}
             folderState={folderState}
+            mode={leftSidebarMode}
+            outlineItems={outlineItems}
             onNew={handleNew}
             onOpen={handleOpen}
             onOpenFolder={handleOpenFolder}
             onOpenFolderFile={handleOpenFolderFile}
+            onModeChange={setLeftSidebarMode}
+            onOutlineItemClick={handleOutlineItemClick}
             onCollapse={() => setLeftSidebarCollapsed(true)}
           />
         )}
