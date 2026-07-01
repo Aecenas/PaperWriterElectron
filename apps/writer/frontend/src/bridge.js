@@ -41,14 +41,31 @@ function pickImageInBrowser() {
 const browserBridge = {
   isElectron: false,
   getPaths: async () => ({
+    desktop: "Browser preview",
     documents: "Browser preview",
     autosave: "localStorage:paperwriter.autosave",
     userData: "localStorage",
+    aiDebugLog: "Browser preview",
   }),
+  debugLog: async (event, data) => {
+    console.debug("[paperwriter-debug]", event, data);
+    return { ok: true };
+  },
   openDocument: async () => ({ canceled: true }),
   openDocumentPath: async () => ({ canceled: true }),
   openFolder: async () => ({ canceled: true, files: [] }),
-  listFolder: async () => ({ canceled: true, files: [] }),
+  listFolder: async () => ({ canceled: true, files: [], folders: [], entries: [] }),
+  copyFolderPath: async (folderPath) => {
+    await navigator.clipboard?.writeText?.(folderPath || "");
+    return { ok: Boolean(folderPath) };
+  },
+  showFolder: async () => ({ ok: false }),
+  createFolder: async () => ({ ok: false, canceled: true }),
+  createDocumentInFolder: async () => ({ ok: false, canceled: true }),
+  renameEntry: async () => ({ ok: false, canceled: true }),
+  deleteEntry: async () => ({ ok: false, canceled: true }),
+  moveEntry: async () => ({ ok: false, canceled: true }),
+  backupDocument: async () => ({ ok: false, canceled: true }),
   saveDocument: async (document) => {
     writeJson("paperwriter.preview.document", document);
     return { canceled: false, path: "browser-preview.letterpaper" };

@@ -19,13 +19,18 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
+  Copy,
   Download,
   FileImage,
+  FilePlus,
   FileText,
   FolderOpen,
+  FolderPlus,
   Heading1,
   Heading2,
   Heading3,
+  HelpCircle,
   Highlighter,
   ImagePlus,
   Italic,
@@ -35,6 +40,7 @@ import {
   PanelLeftClose,
   PanelRightClose,
   Palette,
+  Pencil,
   Plus,
   Quote,
   Redo2,
@@ -42,6 +48,7 @@ import {
   Save,
   SaveAll,
   SeparatorHorizontal,
+  Trash2,
   Underline,
   Undo2,
   X,
@@ -84,6 +91,9 @@ const IMAGE_WIDTH_OPTIONS = [
 ];
 const USER_TEMPLATE_STORAGE_KEY = "paperwriter.userLetterTemplates";
 const SESSION_STORAGE_KEY = "paperwriter.sessionState";
+const IMAGE_EXPORT_STAGE_ID = "paperwriter-image-export-stage";
+const IMAGE_EXPORT_SEGMENT_PADDING = 24;
+const FOLDER_LIST_TIMEOUT_MS = 8000;
 const TEMPLATE_FONT_OPTIONS = [
   "LXGW WenKai Screen",
   "LXGW WenKai",
@@ -150,6 +160,88 @@ const PAPER_ASSETS = {
   "bamboo-shadow": new URL("./assets/papers/bamboo-window-shadow-paper.png", import.meta.url).href,
   "chinese-corner": new URL("./assets/papers/chinese-corner-border-paper.png", import.meta.url).href,
 };
+
+const ICON_ASSETS = {
+  goldPen: new URL("./assets/icons/gold-pen.png", import.meta.url).href,
+  goldFolderFull: new URL("./assets/icons/gold-folder-full.png", import.meta.url).href,
+  goldFolderEmpty: new URL("./assets/icons/gold-folder-empty.png", import.meta.url).href,
+};
+
+const HELP_SEEN_STORAGE_KEY = "paperwriter.helpSeenVersion";
+const HELP_ALL_SECTION = "all";
+const HELP_MENU_ITEMS = [
+  { id: HELP_ALL_SECTION, label: "完整引导", icon: HelpCircle },
+  { id: "left", label: "左侧栏", icon: FolderOpen },
+  { id: "top", label: "顶部栏", icon: Save },
+  { id: "right", label: "右侧栏", icon: FileText },
+  { id: "body", label: "正文", icon: Pencil },
+  { id: "bottom", label: "底部栏", icon: List },
+];
+const HELP_TOUR_STEPS = [
+  {
+    id: "left-tree",
+    section: "left",
+    target: "left",
+    cardPosition: "left",
+    eyebrow: "左侧栏",
+    title: "文件管理在这里",
+    description: "文件树和大纲是二选一入口。文件树里可以打开文件夹、展开子文件夹、右键新建/重命名/备份/删除，也可以把信笺或文件夹拖到可见文件夹里。",
+  },
+  {
+    id: "top-primary",
+    section: "top",
+    target: "topPrimary",
+    cardPosition: "top-left",
+    eyebrow: "顶部栏",
+    title: "常用文件操作在左侧",
+    description: "文件、保存、导出、更新和帮助都在顶部左侧。帮助按钮现在可以直接跳到某个区域，也可以从完整引导开始看。",
+  },
+  {
+    id: "top-tools",
+    section: "top",
+    target: "topTools",
+    cardPosition: "top-right",
+    eyebrow: "顶部栏",
+    title: "段落与插入工具在右侧",
+    description: "这里放的是不依赖选中文字的操作：撤销重做、引用、列表、对齐、插图、分页符、目录和 H1/H2/H3 标题。",
+  },
+  {
+    id: "right-template",
+    section: "right",
+    target: "right",
+    cardPosition: "right",
+    eyebrow: "右侧栏",
+    title: "信笺模板从右边打开",
+    description: "右侧栏用于查看和选择信笺模板。默认模板不可改，用户模板可以基于现有模板新建，再调整纸张、字体和字号。",
+  },
+  {
+    id: "body-editor",
+    section: "body",
+    target: "editorSelection",
+    cardPosition: "body-left",
+    eyebrow: "正文",
+    title: "选中文字后才出现细节工具",
+    description: "标题、署名和日期可以直接编辑；正文中圈选文字后会浮现加粗、斜体、下划线、文字颜色和水彩标记等工具。",
+  },
+  {
+    id: "body-page-break",
+    section: "body",
+    target: "pageBreak",
+    cardPosition: "body-left",
+    eyebrow: "正文",
+    title: "分页符决定图片簇切分",
+    description: "连续写作时插入分页符，导出图片会按分页符切成多张。每张图片的范围就是两个分页符之间的内容。",
+  },
+  {
+    id: "bottom-status",
+    section: "bottom",
+    target: "bottom",
+    cardPosition: "bottom",
+    eyebrow: "底部栏",
+    title: "状态信息放在底部",
+    description: "底部会统计字数、段落、页数、图片和引用，中间显示自动保存状态，右侧显示当前版本号。",
+  },
+];
 
 const PAPER_SLICES = {
   "minimal-red-margin": {
@@ -325,7 +417,7 @@ function normalizeUserTemplate(template) {
   const paperId = TEMPLATES.some((paper) => paper.id === template?.paperId) ? template.paperId : "minimal-red-margin";
   return {
     id: typeof template?.id === "string" && template.id.startsWith("user-") ? template.id : createTemplateId(),
-    label: template?.label?.trim() || "我的信件模板",
+    label: template?.label?.trim() || "我的信笺模板",
     paperId,
     description: template?.description?.trim() || "用户模板 / 可编辑",
     typography: cloneTypography(template?.typography),
@@ -336,7 +428,7 @@ function normalizeUserTemplate(template) {
 function createUserTemplate(baseTemplate = DEFAULT_LETTER_TEMPLATES[0]) {
   return normalizeUserTemplate({
     id: createTemplateId(),
-    label: `${baseTemplate.label || "信件模板"} 副本`,
+    label: `${baseTemplate.label || "信笺模板"} 副本`,
     paperId: baseTemplate.paperId,
     description: "用户模板 / 可编辑",
     typography: cloneTypography(baseTemplate.typography),
@@ -390,8 +482,68 @@ function saveSessionState(state) {
   }));
 }
 
+function getSeenHelpVersion() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  try {
+    return window.localStorage.getItem(HELP_SEEN_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveSeenHelpVersion(version) {
+  if (typeof window === "undefined" || !version) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(HELP_SEEN_STORAGE_KEY, version);
+  } catch {
+    // localStorage may be unavailable in constrained environments; help can still open manually.
+  }
+}
+
+function listFolderWithTimeout(folderPath) {
+  let timer = 0;
+  const startedAt = Date.now();
+  bridge.debugLog?.("renderer:list-folder:start", { folderPath });
+  const timeout = new Promise((resolve) => {
+    timer = window.setTimeout(() => {
+      bridge.debugLog?.("renderer:list-folder:timeout", {
+        folderPath,
+        ms: Date.now() - startedAt,
+      });
+      resolve({
+        canceled: true,
+        timedOut: true,
+        folderPath,
+        files: [],
+        folders: [],
+        entries: [],
+      });
+    }, FOLDER_LIST_TIMEOUT_MS);
+  });
+  return Promise.race([bridge.listFolder(folderPath), timeout])
+    .then((result) => {
+      bridge.debugLog?.("renderer:list-folder:done", {
+        folderPath,
+        ms: Date.now() - startedAt,
+        canceled: Boolean(result?.canceled),
+        timedOut: Boolean(result?.timedOut),
+        folders: result?.folders?.length || 0,
+        files: result?.files?.length || 0,
+      });
+      return result;
+    })
+    .finally(() => {
+      window.clearTimeout(timer);
+    });
+}
+
 function createBlankDocument() {
   const letterTemplate = DEFAULT_LETTER_TEMPLATES[0];
+  const now = new Date().toISOString();
   return {
     version: 1,
     title: "未命名信笺",
@@ -401,7 +553,9 @@ function createBlankDocument() {
     templateId: letterTemplate.paperId,
     layoutMode: LAYOUT_MODES.FLOW,
     customBackground: "",
-    updatedAt: new Date().toISOString(),
+    createdAt: now,
+    displayDate: formatPaperDate(now),
+    updatedAt: now,
   };
 }
 
@@ -410,12 +564,20 @@ function normalizeDocument(document, letterTemplates = DEFAULT_LETTER_TEMPLATES)
   const letterTemplateId = normalizeLetterTemplateId(document?.letterTemplateId, document?.templateId, letterTemplates);
   const letterTemplate = letterTemplates.find((template) => template.id === letterTemplateId) || DEFAULT_LETTER_TEMPLATES[0];
   const templateId = customBackground && document?.templateId === "custom" ? "custom" : letterTemplate.paperId;
+  const createdAt = typeof document?.createdAt === "string" && document.createdAt
+    ? document.createdAt
+    : (typeof document?.updatedAt === "string" && document.updatedAt ? document.updatedAt : new Date().toISOString());
+  const displayDate = typeof document?.displayDate === "string" && document.displayDate.trim()
+    ? document.displayDate.trim().slice(0, 40)
+    : formatPaperDate(createdAt);
   return {
     ...createBlankDocument(),
     ...document,
     title: document?.title?.trim() || "未命名信笺",
     author: typeof document?.author === "string" ? document.author.trim().slice(0, 40) : "",
     html: document?.html || "<p></p>",
+    createdAt,
+    displayDate,
     letterTemplateId,
     templateId,
     fontFamily: letterTemplate.typography.bodyFont,
@@ -429,13 +591,51 @@ function inferTitle(text) {
   return compact ? compact.slice(0, 24) : "未命名信笺";
 }
 
-function wordStats(text) {
+function displayNameFromPath(filePath) {
+  return String(filePath || "").replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || String(filePath || "");
+}
+
+function pathIsSameOrInside(targetPath, parentPath) {
+  const normalize = (value) => String(value || "").replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  const target = normalize(targetPath);
+  const parent = normalize(parentPath);
+  return Boolean(target && parent && (target === parent || target.startsWith(`${parent}\\`)));
+}
+
+function replacePathPrefix(targetPath, fromPath, toPath) {
+  if (!pathIsSameOrInside(targetPath, fromPath)) {
+    return targetPath;
+  }
+  if (targetPath === fromPath) {
+    return toPath;
+  }
+  const separator = targetPath[fromPath.length] || "\\";
+  const suffix = targetPath.slice(fromPath.length + (separator === "\\" || separator === "/" ? 1 : 0));
+  return suffix ? `${toPath}\\${suffix}` : toPath;
+}
+
+function parentPathFromPath(filePath) {
+  const normalized = String(filePath || "").replace(/\//g, "\\").replace(/\\+$/, "");
+  const index = normalized.lastIndexOf("\\");
+  return index > 0 ? normalized.slice(0, index) : "";
+}
+
+function wordStats(text, html = "") {
   const chineseChars = (text.match(/[\u4e00-\u9fff]/g) || []).length;
   const latinWords = (text.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*/g) || []).length;
   const paragraphs = text.split(/\n+/).filter((part) => part.trim()).length;
+  const template = document.createElement("template");
+  template.innerHTML = html || "";
+  const images = template.content.querySelectorAll("img").length;
+  const quotes = template.content.querySelectorAll("blockquote").length;
+  const pageBreaks = template.content.querySelectorAll(".paper-page-break, [data-type='paper-page-break']").length;
   return {
     words: chineseChars + latinWords,
     paragraphs,
+    images,
+    quotes,
+    pageBreaks,
+    pages: pageBreaks + 1,
   };
 }
 
@@ -504,7 +704,10 @@ function StatusToast({ status }) {
 function TitleBar() {
   return (
     <header className="desktop-titlebar">
-      <strong>信笺写作</strong>
+      <strong>
+        <img src={ICON_ASSETS.goldPen} alt="" aria-hidden="true" />
+        <span>信笺写作</span>
+      </strong>
     </header>
   );
 }
@@ -737,17 +940,6 @@ function resizeCaptionField(field) {
   if (!field) {
     return;
   }
-  const row = field.closest(".paper-image-caption-row");
-  const availableWidth = Math.max(240, (row?.clientWidth || field.clientWidth || 520) - 44);
-  const computedStyle = window.getComputedStyle(field);
-  const text = field.value || field.placeholder || "";
-  const canvas = resizeCaptionField.canvas || document.createElement("canvas");
-  resizeCaptionField.canvas = canvas;
-  const context = canvas.getContext("2d");
-  context.font = computedStyle.font;
-  const measuredWidth = Math.ceil(context.measureText(text).width + 42);
-  const nextWidth = Math.max(180, Math.min(availableWidth, measuredWidth));
-  field.style.width = `${nextWidth}px`;
   field.style.height = "0px";
   field.style.height = `${Math.max(24, field.scrollHeight)}px`;
 }
@@ -935,16 +1127,99 @@ function MenuItem({ icon: Icon, label, disabled = false, onClick }) {
   );
 }
 
+function TreeContextMenu({ menu, onClose, onCreateFolder, onCreateDocument, onRename, onBackup, onDelete }) {
+  useEffect(() => {
+    if (!menu) {
+      return undefined;
+    }
+    const close = () => onClose();
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.document.addEventListener("pointerdown", close);
+    window.document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.document.removeEventListener("pointerdown", close);
+      window.document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [menu, onClose]);
+
+  if (!menu) {
+    return null;
+  }
+
+  const run = (action) => {
+    onClose();
+    action?.(menu.entry);
+  };
+
+  return (
+    <div
+      className="tree-context-menu"
+      style={{ left: menu.x, top: menu.y }}
+      onPointerDown={(event) => event.stopPropagation()}
+      role="menu"
+    >
+      {menu.entry.type === "folder" ? (
+        <>
+          <button type="button" onClick={() => run(onCreateFolder)} role="menuitem">
+            <FolderPlus size={15} />
+            <span>新建子文件夹</span>
+          </button>
+          <button type="button" onClick={() => run(onCreateDocument)} role="menuitem">
+            <FilePlus size={15} />
+            <span>新建信笺</span>
+          </button>
+          {!menu.entry.protected ? (
+            <>
+              <i />
+              <button type="button" onClick={() => run(onRename)} role="menuitem">
+                <Pencil size={15} />
+                <span>重命名</span>
+              </button>
+              <button type="button" className="danger" onClick={() => run(onDelete)} role="menuitem">
+                <Trash2 size={15} />
+                <span>删除</span>
+              </button>
+            </>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <button type="button" onClick={() => run(onRename)} role="menuitem">
+            <Pencil size={15} />
+            <span>重命名</span>
+          </button>
+          <button type="button" onClick={() => run(onBackup)} role="menuitem">
+            <Copy size={15} />
+            <span>复制备份</span>
+          </button>
+          <i />
+          <button type="button" className="danger" onClick={() => run(onDelete)} role="menuitem">
+            <Trash2 size={15} />
+            <span>删除</span>
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function TopNav({
   editor,
   document,
   savedSelectionRef,
   updateState,
+  onNew,
+  onOpen,
   onSave,
   onExportPdf,
   onInsertImage,
   onExportImages,
   onRunUpdate,
+  onOpenHelp,
 }) {
   const canEdit = Boolean(editor);
   const updateBusy = updateState?.status === "checking" || updateState?.status === "downloading";
@@ -989,6 +1264,10 @@ function TopNav({
   return (
     <section className="top-nav">
       <div className="nav-primary">
+        <MenuButton icon={FileText} label="文件" menuId="file" openMenu={openMenu} onOpenMenu={setOpenMenu}>
+          <MenuItem icon={FilePlus} label="新建文件" onClick={() => runMenuAction(onNew)} />
+          <MenuItem icon={FileText} label="打开文件" onClick={() => runMenuAction(onOpen)} />
+        </MenuButton>
         <MenuButton icon={Save} label="保存" menuId="save" openMenu={openMenu} onOpenMenu={setOpenMenu}>
           <MenuItem icon={Save} label="保存" onClick={() => runMenuAction(() => onSave(false))} />
           <MenuItem icon={SaveAll} label="另存为" onClick={() => runMenuAction(() => onSave(true))} />
@@ -1008,6 +1287,16 @@ function TopNav({
           <RefreshCw size={19} strokeWidth={1.9} />
           <span>{updateBusy ? "更新中" : "更新"}</span>
         </button>
+        <MenuButton icon={HelpCircle} label="帮助" menuId="help" openMenu={openMenu} onOpenMenu={setOpenMenu}>
+          {HELP_MENU_ITEMS.map((item) => (
+            <MenuItem
+              key={item.id}
+              icon={item.icon}
+              label={item.label}
+              onClick={() => runMenuAction(() => onOpenHelp(item.id))}
+            />
+          ))}
+        </MenuButton>
       </div>
 
       <div className="nav-center" />
@@ -1053,24 +1342,540 @@ function TopNav({
   );
 }
 
+function getHelpTourSteps(section) {
+  if (!section || section === HELP_ALL_SECTION) {
+    return HELP_TOUR_STEPS;
+  }
+  const steps = HELP_TOUR_STEPS.filter((step) => step.section === section);
+  return steps.length ? steps : HELP_TOUR_STEPS;
+}
+
+function ImmersiveHelpTour({ open, section, stepIndex, onStepChange, onClose }) {
+  const steps = useMemo(() => getHelpTourSteps(section), [section]);
+  const safeIndex = Math.min(Math.max(stepIndex, 0), steps.length - 1);
+  const currentStep = steps[safeIndex] || steps[0];
+  const isFirst = safeIndex <= 0;
+  const isLast = safeIndex >= steps.length - 1;
+
+  const goPrev = useCallback(() => {
+    if (isFirst) {
+      return;
+    }
+    onStepChange(safeIndex - 1);
+  }, [isFirst, onStepChange, safeIndex]);
+
+  const goNext = useCallback(() => {
+    if (isLast) {
+      onClose();
+      return;
+    }
+    onStepChange(safeIndex + 1);
+  }, [isLast, onClose, onStepChange, safeIndex]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    if (stepIndex !== safeIndex) {
+      onStepChange(safeIndex);
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        goPrev();
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        goNext();
+      }
+    };
+    window.document.addEventListener("keydown", handleKeyDown, true);
+    return () => window.document.removeEventListener("keydown", handleKeyDown, true);
+  }, [goNext, goPrev, onClose, onStepChange, open, safeIndex, stepIndex]);
+
+  if (!open || !currentStep) {
+    return null;
+  }
+
+  return (
+    <div className="immersive-help-overlay" role="presentation" onMouseDown={onClose}>
+      <section
+        className={`immersive-help-shell card-${currentStep.cardPosition}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="help-tour-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button type="button" className="help-tour-close" onClick={onClose} aria-label="关闭帮助" title="关闭帮助">
+          <X size={17} />
+        </button>
+        <HelpTourMock target={currentStep.target} />
+        <article className={`help-tour-card arrow-${currentStep.cardPosition}`}>
+          <div className="help-tour-heading">
+            <span>{safeIndex + 1}</span>
+            <div>
+              <p>{currentStep.eyebrow}</p>
+              <h2 id="help-tour-title">{currentStep.title}</h2>
+            </div>
+          </div>
+          <p className="help-tour-description">{currentStep.description}</p>
+          <div className="help-tour-dots" aria-label="帮助步骤">
+            {steps.map((step, index) => (
+              <button
+                key={step.id}
+                type="button"
+                className={index === safeIndex ? "active" : ""}
+                onClick={() => onStepChange(index)}
+                aria-label={`切换到第 ${index + 1} 步：${step.title}`}
+              />
+            ))}
+          </div>
+          <div className="help-tour-actions">
+            <button type="button" className="ghost" onClick={onClose}>
+              跳过
+            </button>
+            <div>
+              <button type="button" onClick={goPrev} disabled={isFirst}>
+                上一步
+              </button>
+              <button type="button" className="primary" onClick={goNext}>
+                {isLast ? "完成" : "下一步"}
+              </button>
+            </div>
+          </div>
+        </article>
+      </section>
+    </div>
+  );
+}
+
+function HelpTourMock({ target }) {
+  const targetClass = useCallback((name) => (target === name ? "tour-target active" : "tour-target"), [target]);
+
+  return (
+    <div className={`help-tour-mock target-${target}`}>
+      <div className="tour-mock-titlebar">
+        <img src={ICON_ASSETS.goldPen} alt="" aria-hidden="true" />
+        <span>信笺写作</span>
+      </div>
+      <div className="tour-mock-nav">
+        <div className={targetClass("topPrimary")}>
+          <span><FileText size={13} />文件</span>
+          <span><Save size={13} />保存</span>
+          <span><Download size={13} />导出</span>
+          <span><RefreshCw size={13} />更新</span>
+          <span><HelpCircle size={13} />帮助</span>
+        </div>
+        <div className={targetClass("topTools")}>
+          <Undo2 size={14} />
+          <Redo2 size={14} />
+          <Quote size={14} />
+          <List size={14} />
+          <AlignCenter size={14} />
+          <ImagePlus size={14} />
+          <SeparatorHorizontal size={14} />
+          <ListTree size={14} />
+          <Heading1 size={14} />
+          <Heading2 size={14} />
+          <Heading3 size={14} />
+        </div>
+      </div>
+      <div className="tour-mock-body">
+        <aside className={targetClass("left")}>
+          <div className="tour-mock-segment">
+            <b>文件树</b>
+            <span>大纲</span>
+          </div>
+          <div className="tour-mock-path">
+            <FolderOpen size={14} />
+            <span>C:\Users\Ain\Desktop\复盘</span>
+          </div>
+          <div className="tour-tree-row muted">
+            <img src={ICON_ASSETS.goldFolderFull} alt="" aria-hidden="true" />
+            <span>...</span>
+          </div>
+          <div className="tour-tree-row">
+            <ChevronRight size={12} />
+            <img src={ICON_ASSETS.goldFolderFull} alt="" aria-hidden="true" />
+            <strong>7月W1</strong>
+          </div>
+          <div className="tour-tree-row nested">
+            <img src={ICON_ASSETS.goldPen} alt="" aria-hidden="true" />
+            <span>关键日报0630</span>
+          </div>
+        </aside>
+        <main className="tour-mock-workspace">
+          <div className="tour-mock-tabs">
+            <span>未命名信笺</span>
+            <i>+</i>
+          </div>
+          <section className="tour-mock-paper">
+            <header>
+              <h1>未命名信笺</h1>
+              <p>署名&nbsp;&nbsp;写于&nbsp;&nbsp;2026 年 7 月 1 日</p>
+            </header>
+            <div className={targetClass("editorSelection")}>
+              <p>圈选一段文字后，附近会浮现行内工具。</p>
+              <p><mark>这段文字已被选中</mark>，可以设置颜色、加粗、斜体或水彩背景。</p>
+              <div className="tour-floating-toolbar">
+                <Bold size={13} />
+                <Italic size={13} />
+                <Underline size={13} />
+                <Palette size={13} />
+                <Highlighter size={13} />
+              </div>
+            </div>
+            <blockquote>
+              <p>引用内容写在这里，来源单独作为最后一行。</p>
+              <p>—— 来源</p>
+            </blockquote>
+            <div className="tour-image-block">
+              <div />
+              <span>图1. 图片标题自动居中</span>
+            </div>
+            <div className={targetClass("pageBreak")}>
+              <i />
+              <span>分页符</span>
+              <i />
+            </div>
+          </section>
+        </main>
+        <aside className={targetClass("right")}>
+          <div className="tour-template-head">
+            <strong>信笺模板</strong>
+            <PanelRightClose size={15} />
+          </div>
+          <p>默认模板</p>
+          <div className="tour-template-grid">
+            <span className="active">极简红线</span>
+            <span>竹影竖线</span>
+          </div>
+          <p>用户模板</p>
+          <button type="button">基于当前新建</button>
+        </aside>
+      </div>
+      <footer className={targetClass("bottom")}>
+        <span><b>128</b>字</span>
+        <span><b>5</b>段</span>
+        <span><b>2</b>页</span>
+        <span><b>1</b>图</span>
+        <span><b>1</b>引用</span>
+        <em>自动保存于 16:27</em>
+        <strong>V 0.1.7</strong>
+      </footer>
+    </div>
+  );
+}
+
+function FolderEntryRows({
+  entries,
+  currentPath,
+  expandedFolders,
+  depth = 0,
+  onOpenFile,
+  onOpenFolderPath,
+  onToggleFolder,
+  onContextMenu,
+  onDragPointerDown = () => {},
+  onConsumeDragClick = () => false,
+  dragTargetPath = "",
+}) {
+  const folderClickTimersRef = useRef(new Map());
+
+  useEffect(() => () => {
+    folderClickTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    folderClickTimersRef.current.clear();
+  }, []);
+
+  const handleFolderClick = useCallback((path) => {
+    if (onConsumeDragClick()) {
+      return;
+    }
+    const existingTimer = folderClickTimersRef.current.get(path);
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+    }
+    const timer = window.setTimeout(() => {
+      folderClickTimersRef.current.delete(path);
+      onToggleFolder(path);
+    }, 180);
+    folderClickTimersRef.current.set(path, timer);
+  }, [onConsumeDragClick, onToggleFolder]);
+
+  const handleFolderDoubleClick = useCallback((path) => {
+    const existingTimer = folderClickTimersRef.current.get(path);
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+      folderClickTimersRef.current.delete(path);
+    }
+    onOpenFolderPath(path);
+  }, [onOpenFolderPath]);
+
+  return entries.map((entry) => {
+    if (entry.type === "folder") {
+      const expanded = Boolean(expandedFolders[entry.path]?.expanded);
+      const loading = Boolean(expandedFolders[entry.path]?.loading);
+      const childEntries = expandedFolders[entry.path]?.entries || [];
+      return (
+        <div key={entry.path} className="folder-tree-group">
+          <div
+            className={dragTargetPath === entry.path ? "folder-tree-row folder-entry drag-target" : "folder-tree-row folder-entry"}
+            style={{ "--tree-depth": depth }}
+            data-drop-folder-path={entry.path}
+          >
+            <button
+              type="button"
+              className={expanded ? "folder-disclosure expanded" : "folder-disclosure"}
+              onClick={() => onToggleFolder(entry.path)}
+              aria-label={expanded ? "折叠文件夹" : "展开文件夹"}
+              title={expanded ? "折叠文件夹" : "展开文件夹"}
+            >
+              <ChevronRight size={14} />
+            </button>
+            <button
+              type="button"
+              className={dragTargetPath === entry.path ? "folder-entry-main drag-target" : "folder-entry-main"}
+              data-drop-folder-path={entry.path}
+              onClick={() => handleFolderClick(entry.path)}
+              onDoubleClick={() => handleFolderDoubleClick(entry.path)}
+              onContextMenu={(event) => onContextMenu(event, entry)}
+              onPointerDown={(event) => onDragPointerDown(event, entry)}
+              title={`${entry.name}（单击展开/收起，双击进入）`}
+            >
+              <img
+                className="asset-icon folder-asset-icon"
+                src={entry.hasLetterpapers ? ICON_ASSETS.goldFolderFull : ICON_ASSETS.goldFolderEmpty}
+                alt=""
+                aria-hidden="true"
+              />
+              <span>{entry.name}</span>
+            </button>
+          </div>
+          {expanded ? (
+            <div className="folder-tree-children">
+              {loading ? (
+                <p className="folder-tree-hint" style={{ "--tree-depth": depth + 1 }}>读取中...</p>
+              ) : childEntries.length ? (
+                <FolderEntryRows
+                  entries={childEntries}
+                  currentPath={currentPath}
+                  expandedFolders={expandedFolders}
+                  depth={depth + 1}
+                  onOpenFile={onOpenFile}
+                  onOpenFolderPath={onOpenFolderPath}
+                  onToggleFolder={onToggleFolder}
+                  onContextMenu={onContextMenu}
+                  onDragPointerDown={onDragPointerDown}
+                  onConsumeDragClick={onConsumeDragClick}
+                  dragTargetPath={dragTargetPath}
+                />
+              ) : (
+                <p className="folder-tree-hint" style={{ "--tree-depth": depth + 1 }}>空文件夹</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
+    return (
+      <button
+        key={entry.path}
+        type="button"
+        className={entry.path === currentPath ? "folder-tree-row file-entry active" : "folder-tree-row file-entry"}
+        style={{ "--tree-depth": depth }}
+        onClick={() => {
+          if (onConsumeDragClick()) {
+            return;
+          }
+          onOpenFile(entry.path);
+        }}
+        onContextMenu={(event) => onContextMenu(event, entry)}
+        onPointerDown={(event) => onDragPointerDown(event, entry)}
+        title={entry.name}
+      >
+        {entry.path === currentPath ? <span className="document-dot" /> : <span className="folder-disclosure-spacer" />}
+        <img className="asset-icon pen-asset-icon" src={ICON_ASSETS.goldPen} alt="" aria-hidden="true" />
+        <span>{entry.displayName || entry.name}</span>
+      </button>
+    );
+  });
+}
+
 function LeftSidebar({
   currentPath,
   folderState,
   mode,
   outlineItems,
-  onNew,
-  onOpen,
+  expandedFolders,
   onOpenFolder,
+  onOpenFolderPath,
   onOpenFolderFile,
+  onToggleFolder,
+  onCreateFolder,
+  onCreateDocument,
+  onRenameEntry,
+  onBackupDocument,
+  onDeleteEntry,
+  onMoveEntry,
   onModeChange,
   onOutlineItemClick,
   onCollapse,
 }) {
+  const [contextMenu, setContextMenu] = useState(null);
+  const [dragState, setDragState] = useState(null);
+  const dragSuppressClickRef = useRef(false);
+  const folderEntries = folderState.entries || [
+    ...(folderState.folders || []),
+    ...(folderState.files || []),
+  ];
+
+  const consumeDragClick = useCallback(() => {
+    if (!dragSuppressClickRef.current) {
+      return false;
+    }
+    dragSuppressClickRef.current = false;
+    return true;
+  }, []);
+
+  const getDropFolderPath = useCallback((clientX, clientY, draggedEntry) => {
+    const element = window.document.elementFromPoint(clientX, clientY)?.closest?.("[data-drop-folder-path]");
+    const targetPath = element?.dataset?.dropFolderPath || "";
+    if (!targetPath || !draggedEntry?.path || targetPath === draggedEntry.path) {
+      return "";
+    }
+    if (parentPathFromPath(draggedEntry.path) === targetPath) {
+      return "";
+    }
+    if (draggedEntry.type === "folder" && pathIsSameOrInside(targetPath, draggedEntry.path)) {
+      return "";
+    }
+    return targetPath;
+  }, []);
+
+  const startTreeDrag = useCallback((event, entry) => {
+    if (!entry?.path || event.button !== 0) {
+      return;
+    }
+
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let active = false;
+    let latestX = startX;
+    let latestY = startY;
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handleMove, true);
+      window.removeEventListener("pointerup", handleUp, true);
+      window.removeEventListener("pointercancel", handleCancel, true);
+    };
+
+    const beginDrag = () => {
+      if (active) {
+        return;
+      }
+      active = true;
+      dragSuppressClickRef.current = true;
+      setContextMenu(null);
+      setDragState({
+        entry,
+        x: latestX,
+        y: latestY,
+        targetPath: getDropFolderPath(latestX, latestY, entry),
+      });
+    };
+
+    const finish = async (clientX, clientY) => {
+      cleanup();
+      if (!active) {
+        return;
+      }
+      dragSuppressClickRef.current = true;
+      const targetPath = getDropFolderPath(clientX, clientY, entry);
+      setDragState(null);
+      if (targetPath) {
+        await onMoveEntry?.(entry, targetPath);
+      }
+    };
+
+    const handleMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) {
+        return;
+      }
+      latestX = moveEvent.clientX;
+      latestY = moveEvent.clientY;
+      const distance = Math.hypot(latestX - startX, latestY - startY);
+      if (!active && distance > 2) {
+        beginDrag();
+      }
+      if (active) {
+        moveEvent.preventDefault();
+        const targetPath = getDropFolderPath(latestX, latestY, entry);
+        setDragState((state) => state ? {
+          ...state,
+          x: latestX,
+          y: latestY,
+          targetPath,
+        } : state);
+      }
+    };
+
+    const handleUp = (upEvent) => {
+      if (upEvent.pointerId !== pointerId) {
+        return;
+      }
+      finish(upEvent.clientX, upEvent.clientY);
+    };
+
+    const handleCancel = (cancelEvent) => {
+      if (cancelEvent.pointerId !== pointerId) {
+        return;
+      }
+      cleanup();
+      setDragState(null);
+    };
+
+    window.addEventListener("pointermove", handleMove, true);
+    window.addEventListener("pointerup", handleUp, true);
+    window.addEventListener("pointercancel", handleCancel, true);
+  }, [getDropFolderPath, onMoveEntry]);
+
+  const openTreeContextMenu = useCallback((event, entry) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      entry,
+      x: Math.min(event.clientX, window.innerWidth - 210),
+      y: Math.min(event.clientY, window.innerHeight - 220),
+    });
+  }, []);
+
   return (
     <aside className="sidebar left-sidebar">
       <section className="sidebar-panel documents-panel">
         <div className="sidebar-heading">
-          <h2 className="sidebar-title">{mode === "folder" ? "文件夹" : "目录"}</h2>
+          <div className="sidebar-mode-switch" role="tablist" aria-label="左侧栏模式">
+            <button
+              type="button"
+              className={mode === "folder" ? "active" : ""}
+              onClick={() => onModeChange("folder")}
+            >
+              文件树
+            </button>
+            <button
+              type="button"
+              className={mode === "outline" ? "active" : ""}
+              onClick={() => onModeChange("outline")}
+            >
+              大纲
+            </button>
+          </div>
           <div className="sidebar-actions">
             <button type="button" className="sidebar-plus" onClick={onCollapse} aria-label="收起左侧栏" title="收起左侧栏">
               <PanelLeftClose size={18} />
@@ -1078,56 +1883,70 @@ function LeftSidebar({
           </div>
         </div>
 
-        <div className="sidebar-mode-switch" role="tablist" aria-label="左侧栏模式">
-          <button
-            type="button"
-            className={mode === "folder" ? "active" : ""}
-            onClick={() => onModeChange("folder")}
-          >
-            文件夹
-          </button>
-          <button
-            type="button"
-            className={mode === "outline" ? "active" : ""}
-            onClick={() => onModeChange("outline")}
-          >
-            目录
-          </button>
-        </div>
-
         {mode === "folder" ? (
           <>
-            <div className="sidebar-file-actions" aria-label="文件操作">
-              <button type="button" onClick={onNew} title="新建文件">
-                <Plus size={16} />
-                <span>新建文件</span>
-              </button>
-              <button type="button" onClick={onOpen} title="打开文件">
-                <FileText size={16} />
-                <span>打开文件</span>
-              </button>
-              <button type="button" onClick={onOpenFolder} title="打开文件夹">
-                <FolderOpen size={16} />
-                <span>打开文件夹</span>
-              </button>
-            </div>
-
             {folderState.path ? (
-              <div className="document-list">
-                <div className="folder-path" title={folderState.path}>{folderState.path}</div>
-                {folderState.files.length ? folderState.files.map((item) => (
+              <div
+                className={dragState?.targetPath === folderState.path ? "document-list drag-target" : "document-list"}
+                data-drop-folder-path={folderState.path}
+              >
+                <div className="folder-pathbar">
                   <button
-                    key={item.path}
                     type="button"
-                    className={item.path === currentPath ? "document-row active" : "document-row"}
-                    onClick={() => onOpenFolderFile(item.path)}
+                    className="folder-path-open"
+                    onClick={onOpenFolder}
+                    aria-label="打开文件夹"
+                    title="打开文件夹"
                   >
-                    {item.path === currentPath ? <span className="document-dot" /> : null}
-                    <strong>{item.name}</strong>
-                    <small>{new Date(item.updatedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</small>
+                    <FolderOpen size={18} />
                   </button>
-                )) : (
-                  <p className="empty-folder">这个文件夹里还没有 .letterpaper 文档。</p>
+                  <div
+                    className="folder-path-main"
+                    title={folderState.path}
+                    aria-label={`当前路径：${folderState.path}`}
+                    onContextMenu={(event) => openTreeContextMenu(event, {
+                      type: "folder",
+                      name: displayNameFromPath(folderState.path),
+                      path: folderState.path,
+                      hasLetterpapers: true,
+                      protected: true,
+                    })}
+                  >
+                    <span>{folderState.path}</span>
+                  </div>
+                </div>
+                {folderState.parentPath ? (
+                  <button
+                    type="button"
+                    className="folder-tree-row parent-entry"
+                    style={{ "--tree-depth": 0 }}
+                    onClick={() => onOpenFolderPath(folderState.parentPath)}
+                    title="返回上级文件夹"
+                  >
+                    <span className="folder-disclosure-spacer" />
+                    <img className="asset-icon folder-asset-icon" src={ICON_ASSETS.goldFolderEmpty} alt="" aria-hidden="true" />
+                    <span>...</span>
+                  </button>
+                ) : null}
+                {folderState.loading ? (
+                  <p className="empty-folder">正在读取文件树...</p>
+                ) : folderState.error ? (
+                  <p className="empty-folder">{folderState.error}</p>
+                ) : folderEntries.length ? (
+                  <FolderEntryRows
+                    entries={folderEntries}
+                    currentPath={currentPath}
+                    expandedFolders={expandedFolders}
+                    onOpenFile={onOpenFolderFile}
+                  onOpenFolderPath={onOpenFolderPath}
+                  onToggleFolder={onToggleFolder}
+                  onContextMenu={openTreeContextMenu}
+                  onDragPointerDown={startTreeDrag}
+                  onConsumeDragClick={consumeDragClick}
+                  dragTargetPath={dragState?.targetPath || ""}
+                />
+              ) : (
+                <p className="empty-folder">这个文件夹里还没有信笺文档或子文件夹。</p>
                 )}
               </div>
             ) : (
@@ -1137,6 +1956,15 @@ function LeftSidebar({
                 <button type="button" onClick={onOpenFolder}>打开文件夹</button>
               </div>
             )}
+            <TreeContextMenu
+              menu={contextMenu}
+              onClose={() => setContextMenu(null)}
+              onCreateFolder={onCreateFolder}
+              onCreateDocument={onCreateDocument}
+              onRename={onRenameEntry}
+              onBackup={onBackupDocument}
+              onDelete={onDeleteEntry}
+            />
           </>
         ) : (
           <div className="outline-list" aria-label="当前文档目录">
@@ -1161,6 +1989,22 @@ function LeftSidebar({
             )}
           </div>
         )}
+        {dragState ? (
+          <div
+            className={dragState.targetPath ? "tree-drag-ghost valid" : "tree-drag-ghost"}
+            style={{ left: dragState.x + 14, top: dragState.y + 14 }}
+            aria-hidden="true"
+          >
+            <img
+              className="asset-icon"
+              src={dragState.entry.type === "folder"
+                ? (dragState.entry.hasLetterpapers ? ICON_ASSETS.goldFolderFull : ICON_ASSETS.goldFolderEmpty)
+                : ICON_ASSETS.goldPen}
+              alt=""
+            />
+            <span>{dragState.entry.displayName || dragState.entry.name}</span>
+          </div>
+        ) : null}
       </section>
     </aside>
   );
@@ -1229,7 +2073,7 @@ function RightTemplateSidebar({
     <aside className="sidebar right-sidebar">
       <section className="sidebar-panel templates-panel">
         <div className="sidebar-heading">
-          <h2 className="sidebar-title">信件模板</h2>
+          <h2 className="sidebar-title">信笺模板</h2>
           <button type="button" className="sidebar-plus" onClick={onCollapse} aria-label="收起右侧栏" title="收起右侧栏">
             <PanelRightClose size={18} />
           </button>
@@ -1346,12 +2190,13 @@ function estimateAuthorWidth(author) {
   const width = Array.from(value).reduce((total, character) => (
     total + (/[\u3400-\u9fff]/.test(character) ? 1.05 : 0.56)
   ), 0);
-  return `${Math.max(2.2, Math.min(12, width + 0.35))}em`;
+  return `${Math.max(0.76, Math.min(12, width + 0.2))}em`;
 }
 
-function PageArticle({ document, selectedTemplate, paperStyle, children, className = "", showHeader = false, onTitleChange, onAuthorChange }) {
+function PageArticle({ document, selectedTemplate, paperStyle, children, className = "", showHeader = false, onTitleChange, onAuthorChange, onDateChange }) {
   const authorText = document.author?.trim() || "";
   const authorWidth = estimateAuthorWidth(authorText);
+  const displayDate = document.displayDate || formatPaperDate(document.createdAt);
 
   return (
     <article className={`paper-sheet template-${document.customBackground ? "custom" : document.templateId} ${className}`} style={paperStyle}>
@@ -1375,8 +2220,14 @@ function PageArticle({ document, selectedTemplate, paperStyle, children, classNa
               spellCheck={false}
               style={{ width: authorWidth }}
             />
-            <span className={authorText ? "paper-meta-prefix with-author" : "paper-meta-prefix"}>写于</span>
-            <time>{formatPaperDate(document.updatedAt)}</time>
+            <span className="paper-meta-prefix">写于</span>
+            <input
+              className="paper-date-input"
+              value={displayDate}
+              onChange={(event) => onDateChange?.(event.target.value)}
+              aria-label="写作日期"
+              spellCheck={false}
+            />
           </p>
         </header>
       ) : null}
@@ -1526,7 +2377,7 @@ function SelectionBubbleToolbar({ editor, disabled, savedSelectionRef }) {
   );
 }
 
-function PaperCanvas({ editor, document, letterTemplates, printMode, imageExportMode, onTitleChange, onAuthorChange, savedSelectionRef }) {
+function PaperCanvas({ editor, document, letterTemplates, printMode, imageExportMode, onTitleChange, onAuthorChange, onDateChange, savedSelectionRef }) {
   const selectedLetterTemplate = getLetterTemplate(document, letterTemplates);
   const selectedPaperId = document.customBackground ? document.templateId : selectedLetterTemplate.paperId;
   const selectedTemplate = TEMPLATES.find((template) => template.id === selectedPaperId) || TEMPLATES[0];
@@ -1574,6 +2425,7 @@ function PaperCanvas({ editor, document, letterTemplates, printMode, imageExport
           showHeader
           onTitleChange={onTitleChange}
           onAuthorChange={onAuthorChange}
+          onDateChange={onDateChange}
         >
           <EditorContent editor={editor} />
         </PageArticle>
@@ -1624,15 +2476,31 @@ function DocumentTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNew }) {
   );
 }
 
-function StatusBar({ document, stats, dirty }) {
+function StatusBar({ document, stats, dirty, version }) {
   return (
     <footer className="statusbar">
       <div className="statusbar-counts">
-        <span>{stats.words.toLocaleString()} 字</span>
+        <span className="status-metric words"><strong>{stats.words.toLocaleString()}</strong><em>字</em></span>
         <i />
-        <span>{stats.paragraphs.toLocaleString()} 段</span>
+        <span className="status-metric paragraphs"><strong>{stats.paragraphs.toLocaleString()}</strong><em>段</em></span>
+        <i />
+        <span className="status-metric pages"><strong>{stats.pages.toLocaleString()}</strong><em>页</em></span>
+        <i />
+        <span className="status-metric images"><strong>{stats.images.toLocaleString()}</strong><em>图</em></span>
+        <i />
+        <span className="status-metric quotes"><strong>{stats.quotes.toLocaleString()}</strong><em>引用</em></span>
       </div>
-      <div className="statusbar-save">自动保存于 {formatClock(document.updatedAt)}{dirty ? " · 未保存" : ""}</div>
+      <div className={dirty ? "statusbar-save dirty" : "statusbar-save saved"}>
+        自动保存于 {formatClock(document.updatedAt)}{dirty ? " · 未保存" : ""}
+      </div>
+      <div className="statusbar-version">
+        {version ? (
+          <>
+            <span className="status-version-v">V</span>
+            <span className="status-version-number">{version}</span>
+          </>
+        ) : ""}
+      </div>
     </footer>
   );
 }
@@ -1678,37 +2546,129 @@ function buildOutlineItems(editor) {
   return items;
 }
 
-function getFlowExportRects() {
+function cleanupImageExportStage() {
+  window.document.getElementById(IMAGE_EXPORT_STAGE_ID)?.remove();
+}
+
+function syncClonedFormValues(source, clone) {
+  const sourceControls = Array.from(source.querySelectorAll("input, textarea"));
+  const cloneControls = Array.from(clone.querySelectorAll("input, textarea"));
+  sourceControls.forEach((control, index) => {
+    const clonedControl = cloneControls[index];
+    if (!clonedControl) {
+      return;
+    }
+    clonedControl.value = control.value;
+    clonedControl.setAttribute("value", control.value);
+    if (clonedControl.tagName === "TEXTAREA") {
+      clonedControl.textContent = control.value;
+    }
+  });
+}
+
+function getFlowExportSegments(sheet) {
+  const sheetRect = sheet.getBoundingClientRect();
+  const editorElement = sheet.querySelector(".paper-editor");
+  const editorChildren = editorElement ? Array.from(editorElement.children) : [];
+  const groups = [];
+  let currentGroup = { startBreak: null, endBreak: null, nodes: [] };
+
+  editorChildren.forEach((child) => {
+    if (child.matches?.(".paper-page-break")) {
+      currentGroup.endBreak = child;
+      groups.push(currentGroup);
+      currentGroup = { startBreak: child, endBreak: null, nodes: [] };
+      return;
+    }
+    currentGroup.nodes.push(child);
+  });
+  groups.push(currentGroup);
+
+  const header = sheet.querySelector(".paper-header");
+  return groups
+    .map((group, index) => {
+      const contentRects = group.nodes
+        .map((node) => node.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0);
+      if (index === 0 && header) {
+        contentRects.unshift(header.getBoundingClientRect());
+      }
+
+      const startLimit = group.startBreak
+        ? group.startBreak.getBoundingClientRect().bottom
+        : sheetRect.top;
+      const endLimit = group.endBreak
+        ? group.endBreak.getBoundingClientRect().top
+        : sheetRect.bottom;
+      const firstContentTop = contentRects[0]?.top ?? startLimit;
+      const lastContentBottom = contentRects[contentRects.length - 1]?.bottom ?? endLimit;
+      const top = index === 0
+        ? sheetRect.top
+        : Math.max(sheetRect.top, startLimit, firstContentTop - IMAGE_EXPORT_SEGMENT_PADDING);
+      const bottomPadding = group.endBreak ? IMAGE_EXPORT_SEGMENT_PADDING : IMAGE_EXPORT_SEGMENT_PADDING * 2;
+      const bottom = Math.min(
+        sheetRect.bottom,
+        endLimit,
+        Math.max(top + 80, lastContentBottom + bottomPadding),
+      );
+
+      return {
+        top: Math.max(0, top - sheetRect.top),
+        bottom: Math.max(0, bottom - sheetRect.top),
+      };
+    })
+    .filter((segment) => segment.bottom - segment.top >= 80);
+}
+
+function prepareImageExportRects() {
+  cleanupImageExportStage();
   const sheet = window.document.querySelector(".paper-sheet");
   if (!sheet) {
     return [];
   }
 
   const sheetRect = sheet.getBoundingClientRect();
-  const breaks = Array.from(sheet.querySelectorAll(".paper-page-break"))
-    .map((breakElement) => breakElement.getBoundingClientRect())
-    .filter((rect) => rect.top > sheetRect.top && rect.bottom < sheetRect.bottom)
-    .sort((left, right) => left.top - right.top);
-  const segments = [];
-  let segmentTop = sheetRect.top;
-
-  breaks.forEach((breakRect) => {
-    if (breakRect.top - segmentTop >= 80) {
-      segments.push({ top: segmentTop, bottom: breakRect.top });
-    }
-    segmentTop = breakRect.bottom;
-  });
-
-  if (sheetRect.bottom - segmentTop >= 80) {
-    segments.push({ top: segmentTop, bottom: sheetRect.bottom });
+  const segments = getFlowExportSegments(sheet);
+  if (!segments.length) {
+    return [];
   }
 
-  return (segments.length ? segments : [{ top: sheetRect.top, bottom: sheetRect.bottom }]).map((segment) => ({
-    x: sheetRect.left + window.scrollX,
-    y: segment.top + window.scrollY,
-    width: sheetRect.width,
-    height: segment.bottom - segment.top,
-  }));
+  const stage = window.document.createElement("div");
+  stage.id = IMAGE_EXPORT_STAGE_ID;
+  stage.className = "image-export-stage";
+  stage.style.width = `${Math.ceil(sheetRect.width)}px`;
+  window.document.body.append(stage);
+
+  segments.forEach((segment) => {
+    const clone = sheet.cloneNode(true);
+    syncClonedFormValues(sheet, clone);
+    clone.style.width = `${sheetRect.width}px`;
+    clone.style.minWidth = `${sheetRect.width}px`;
+    clone.style.margin = "0";
+
+    const offset = window.document.createElement("div");
+    offset.className = "image-export-segment-offset";
+    offset.style.width = `${sheetRect.width}px`;
+    offset.style.transform = `translateY(-${segment.top}px)`;
+    offset.append(clone);
+
+    const wrapper = window.document.createElement("div");
+    wrapper.className = "image-export-segment";
+    wrapper.style.width = `${Math.ceil(sheetRect.width)}px`;
+    wrapper.style.height = `${Math.ceil(segment.bottom - segment.top)}px`;
+    wrapper.append(offset);
+    stage.append(wrapper);
+  });
+
+  return Array.from(stage.querySelectorAll(".image-export-segment")).map((segment) => {
+    const rect = segment.getBoundingClientRect();
+    return {
+      x: Math.floor(rect.left + window.scrollX),
+      y: Math.floor(rect.top + window.scrollY),
+      width: Math.ceil(rect.width),
+      height: Math.ceil(rect.height),
+    };
+  });
 }
 
 export default function App() {
@@ -1726,10 +2686,21 @@ export default function App() {
     return [tab];
   });
   const [activeTabId, setActiveTabId] = useState(() => openTabs[0]?.id || "");
-  const [folderState, setFolderState] = useState(() => ({ path: initialSession.folderPath || "", files: [] }));
+  const [folderState, setFolderState] = useState(() => ({
+    path: initialSession.folderPath || "",
+    parentPath: "",
+    folders: [],
+    files: [],
+    entries: [],
+    loading: Boolean(initialSession.folderPath),
+  }));
+  const [expandedFolders, setExpandedFolders] = useState({});
   const [leftSidebarMode, setLeftSidebarMode] = useState("folder");
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
   const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(true);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSection, setHelpSection] = useState(HELP_ALL_SECTION);
+  const [helpStepIndex, setHelpStepIndex] = useState(0);
   const [status, setStatus] = useState(null);
   const [printMode, setPrintMode] = useState(false);
   const [imageExportMode, setImageExportMode] = useState(false);
@@ -1738,11 +2709,13 @@ export default function App() {
   const readyRef = useRef(false);
   const editorSelectionRef = useRef(null);
   const updateFlowRef = useRef({ active: false, handled: "" });
+  const restoreRunRef = useRef(0);
   const openTabsRef = useRef(openTabs);
   const activeTabIdRef = useRef(activeTabId);
   const currentPathRef = useRef(currentPath);
   const dirtyRef = useRef(dirty);
   const documentStateRef = useRef(documentState);
+  const helpAutoCheckedRef = useRef(false);
   const getSaveDocumentRef = useRef(null);
   const refreshFolderRef = useRef(null);
 
@@ -1787,7 +2760,7 @@ export default function App() {
     },
   });
 
-  const stats = useMemo(() => wordStats(editor?.getText() || ""), [documentState.html, editor]);
+  const stats = useMemo(() => wordStats(editor?.getText() || "", documentState.html), [documentState.html, editor]);
   const outlineItems = useMemo(() => buildOutlineItems(editor), [documentState.html, editor]);
 
   const persistSession = useCallback((patch) => {
@@ -1854,6 +2827,29 @@ export default function App() {
     window.clearTimeout(showStatus.timer);
     showStatus.timer = window.setTimeout(() => setStatus(null), 2800);
   }, []);
+
+  const openHelpTour = useCallback((section = HELP_ALL_SECTION) => {
+    setHelpSection(section || HELP_ALL_SECTION);
+    setHelpStepIndex(0);
+    setHelpOpen(true);
+  }, []);
+
+  const closeHelpTour = useCallback(() => {
+    setHelpOpen(false);
+    if (updateState?.version) {
+      saveSeenHelpVersion(updateState.version);
+    }
+  }, [updateState?.version]);
+
+  useEffect(() => {
+    if (helpAutoCheckedRef.current || !updateState?.version) {
+      return;
+    }
+    helpAutoCheckedRef.current = true;
+    if (getSeenHelpVersion() !== updateState.version) {
+      openHelpTour(HELP_ALL_SECTION);
+    }
+  }, [openHelpTour, updateState?.version]);
 
   useEffect(() => {
     let mounted = true;
@@ -1972,6 +2968,15 @@ export default function App() {
     setDirty(true);
   }, []);
 
+  const handleDateChange = useCallback((displayDate) => {
+    setDocumentState((previous) => ({
+      ...previous,
+      displayDate: displayDate.slice(0, 40),
+      updatedAt: new Date().toISOString(),
+    }));
+    setDirty(true);
+  }, []);
+
   const addOrActivateDocumentTab = useCallback(
     (nextDocument, nextPath = "", nextDirty = false) => {
       const normalized = normalizeDocument(nextDocument, letterTemplates);
@@ -2003,43 +3008,135 @@ export default function App() {
     if (!editor || sessionRestoredRef.current) {
       return undefined;
     }
-    sessionRestoredRef.current = true;
-    let mounted = true;
+    let canceled = false;
+    const runId = restoreRunRef.current + 1;
+    restoreRunRef.current = runId;
+    const isActiveRestore = () => !canceled && restoreRunRef.current === runId;
     const restoreSession = async () => {
-      const { folderPath, activePath } = sessionRef.current;
-      if (folderPath) {
+      const { folderPath: savedFolderPath, activePath } = sessionRef.current;
+      let folderPath = savedFolderPath;
+      let desktopPath = "";
+      bridge.debugLog?.("renderer:restore:start", {
+        savedFolderPath,
+        activePath,
+      });
+      if (!folderPath) {
         try {
-          const result = await bridge.listFolder(folderPath);
-          if (mounted && !result?.canceled) {
-            setFolderState({ path: result.folderPath || folderPath, files: result.files || [] });
-          }
+          const paths = await bridge.getPaths?.();
+          desktopPath = paths?.desktop || "";
+          folderPath = desktopPath;
         } catch {
-          if (mounted) {
-            setFolderState({ path: "", files: [] });
+          folderPath = "";
+        }
+      }
+      if (folderPath) {
+        bridge.debugLog?.("renderer:restore:folder-selected", {
+          folderPath,
+          source: savedFolderPath ? "session" : "desktop-default",
+        });
+        if (isActiveRestore()) {
+          setFolderState((previous) => ({
+            ...previous,
+            path: folderPath,
+            loading: true,
+          }));
+        }
+        try {
+          const result = await listFolderWithTimeout(folderPath);
+          if (isActiveRestore() && !result?.canceled) {
+            bridge.debugLog?.("renderer:restore:folder-applied", {
+              folderPath,
+              folders: result.folders?.length || 0,
+              files: result.files?.length || 0,
+            });
+            setFolderState({
+              path: result.folderPath || folderPath,
+              parentPath: result.parentPath || "",
+              folders: result.folders || [],
+              files: result.files || [],
+              entries: result.entries || [...(result.folders || []), ...(result.files || [])],
+              loading: false,
+              error: "",
+            });
+          } else if (isActiveRestore()) {
+            throw new Error("folder list canceled");
+          }
+        } catch (error) {
+          bridge.debugLog?.("renderer:restore:folder-fallback", {
+            folderPath,
+            message: error?.message,
+          });
+          if (isActiveRestore()) {
+            try {
+              const paths = desktopPath ? { desktop: desktopPath } : await bridge.getPaths?.();
+              const fallbackPath = paths?.desktop || "";
+              const fallback = fallbackPath ? await listFolderWithTimeout(fallbackPath) : null;
+              if (fallbackPath && !fallback?.canceled) {
+                setFolderState({
+                  path: fallback.folderPath || fallbackPath,
+                  parentPath: fallback.parentPath || "",
+                  folders: fallback.folders || [],
+                  files: fallback.files || [],
+                  entries: fallback.entries || [...(fallback.folders || []), ...(fallback.files || [])],
+                  loading: false,
+                  error: "",
+                });
+                persistSession({ folderPath: fallback.folderPath || fallbackPath, activePath: "" });
+              } else {
+                setFolderState({
+                  path: folderPath,
+                  parentPath: "",
+                  files: [],
+                  folders: [],
+                  entries: [],
+                  loading: false,
+                  error: "文件树读取超时或失败",
+                });
+              }
+            } catch {
+              setFolderState({
+                path: folderPath,
+                parentPath: "",
+                files: [],
+                folders: [],
+                entries: [],
+                loading: false,
+                error: "文件树读取超时或失败",
+              });
+            }
           }
         }
       }
       if (activePath) {
         try {
           const result = await bridge.openDocumentPath(activePath);
-          if (!mounted || result?.canceled || !result?.document) {
+          if (!isActiveRestore()) {
             return;
           }
-          const normalized = normalizeDocument(result.document, letterTemplates);
-          const tab = createDocumentTab(normalized, result.path, false);
-          setOpenTabs([tab]);
-          setActiveTabId(tab.id);
-          applyDocument(normalized, result.path, false);
+          if (!result?.canceled && result?.document) {
+            const normalized = normalizeDocument(result.document, letterTemplates);
+            const tab = createDocumentTab(normalized, result.path, false);
+            setOpenTabs([tab]);
+            setActiveTabId(tab.id);
+            applyDocument(normalized, result.path, false);
+          } else {
+            persistSession({ activePath: "" });
+          }
         } catch {
-          if (mounted) {
+          if (isActiveRestore()) {
             persistSession({ activePath: "" });
           }
         }
       }
+      if (isActiveRestore()) {
+        sessionRestoredRef.current = true;
+        bridge.debugLog?.("renderer:restore:complete", { runId });
+      }
     };
     restoreSession();
     return () => {
-      mounted = false;
+      canceled = true;
+      bridge.debugLog?.("renderer:restore:canceled", { runId });
     };
   }, [applyDocument, editor, letterTemplates, persistSession]);
 
@@ -2114,23 +3211,89 @@ export default function App() {
     if (result?.canceled) {
       return;
     }
-    setFolderState({ path: result.folderPath || "", files: result.files || [] });
+    setFolderState({
+      path: result.folderPath || "",
+      parentPath: result.parentPath || "",
+      folders: result.folders || [],
+      files: result.files || [],
+      entries: result.entries || [...(result.folders || []), ...(result.files || [])],
+      loading: false,
+      error: "",
+    });
+    setExpandedFolders({});
     showStatus("文件夹已打开", "success");
+  }, [showStatus]);
+
+  const handleOpenFolderPath = useCallback(async (path) => {
+    if (!path) {
+      return;
+    }
+    setFolderState((previous) => ({
+      ...previous,
+      path,
+      loading: true,
+    }));
+    const result = await listFolderWithTimeout(path);
+    if (result?.canceled) {
+      setFolderState((previous) => ({
+        ...previous,
+      loading: false,
+      error: "",
+    }));
+      showStatus("无法打开这个文件夹", "warning");
+      return;
+    }
+    setFolderState({
+      path: result.folderPath || path,
+      parentPath: result.parentPath || "",
+      folders: result.folders || [],
+      files: result.files || [],
+      entries: result.entries || [...(result.folders || []), ...(result.files || [])],
+      loading: false,
+      error: "",
+    });
+    setExpandedFolders({});
   }, [showStatus]);
 
   const refreshFolder = useCallback(async () => {
     if (!folderState.path) {
       return;
     }
-    const result = await bridge.listFolder(folderState.path);
+    const result = await listFolderWithTimeout(folderState.path);
     if (!result?.canceled) {
-      setFolderState({ path: result.folderPath || folderState.path, files: result.files || [] });
+      setFolderState({
+        path: result.folderPath || folderState.path,
+        parentPath: result.parentPath || "",
+        folders: result.folders || [],
+        files: result.files || [],
+        entries: result.entries || [...(result.folders || []), ...(result.files || [])],
+        loading: false,
+        error: "",
+      });
     }
   }, [folderState.path]);
 
   useEffect(() => {
     refreshFolderRef.current = refreshFolder;
   }, [refreshFolder]);
+
+  const refreshTreeAfterEntryChange = useCallback(async (folderPath = "") => {
+    await refreshFolder();
+    if (folderPath && expandedFolders[folderPath]?.expanded) {
+      const result = await listFolderWithTimeout(folderPath);
+      if (!result?.canceled) {
+        setExpandedFolders((state) => ({
+          ...state,
+          [folderPath]: {
+            ...(state[folderPath] || {}),
+            expanded: true,
+            loading: false,
+            entries: result.entries || [...(result.folders || []), ...(result.files || [])],
+          },
+        }));
+      }
+    }
+  }, [expandedFolders, refreshFolder]);
 
   const handleOpenFolderFile = useCallback(
     async (path) => {
@@ -2144,6 +3307,206 @@ export default function App() {
     },
     [addOrActivateDocumentTab, showStatus],
   );
+
+  const handleCreateFolderInTree = useCallback(async (entry) => {
+    const parentPath = entry?.path || folderState.path;
+    if (!parentPath) {
+      return;
+    }
+    const name = window.prompt("新建子文件夹名称", "新建文件夹");
+    if (!name?.trim()) {
+      return;
+    }
+    const result = await bridge.createFolder?.(parentPath, name);
+    if (!result?.ok) {
+      showStatus(result?.message || "新建文件夹失败", "warning");
+      return;
+    }
+    await refreshTreeAfterEntryChange(parentPath);
+    showStatus("文件夹已新建", "success");
+  }, [folderState.path, refreshTreeAfterEntryChange, showStatus]);
+
+  const handleCreateDocumentInTree = useCallback(async (entry) => {
+    const folderPath = entry?.path || folderState.path;
+    if (!folderPath) {
+      return;
+    }
+    const title = window.prompt("新建信笺名称", "未命名信笺");
+    if (!title?.trim()) {
+      return;
+    }
+    const result = await bridge.createDocumentInFolder?.(folderPath, title);
+    if (!result?.ok) {
+      showStatus(result?.message || "新建信笺失败", "warning");
+      return;
+    }
+    await refreshTreeAfterEntryChange(folderPath);
+    addOrActivateDocumentTab(result.document || createBlankDocument(), result.path, false);
+    showStatus("信笺已新建", "success");
+  }, [addOrActivateDocumentTab, folderState.path, refreshTreeAfterEntryChange, showStatus]);
+
+  const handleRenameTreeEntry = useCallback(async (entry) => {
+    if (!entry?.path) {
+      return;
+    }
+    const currentName = entry.type === "file" ? (entry.displayName || entry.name.replace(/\.[^.]+$/, "")) : entry.name;
+    const nextName = window.prompt("重命名", currentName);
+    if (!nextName?.trim() || nextName.trim() === currentName) {
+      return;
+    }
+    const result = await bridge.renameEntry?.(entry.path, nextName);
+    if (!result?.ok) {
+      showStatus(result?.message || "重命名失败", "warning");
+      return;
+    }
+
+    if (entry.type === "file") {
+      setOpenTabs((tabs) => tabs.map((tab) => (
+        tab.path === entry.path
+          ? { ...tab, path: result.path, title: nextName.trim() }
+          : tab
+      )));
+      if (currentPath === entry.path) {
+        setCurrentPath(result.path);
+        setDocumentState((previous) => ({
+          ...previous,
+          title: nextName.trim(),
+          updatedAt: new Date().toISOString(),
+        }));
+        persistSession({ activePath: result.path });
+      }
+    }
+
+    await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
+    showStatus("已重命名", "success");
+  }, [currentPath, folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus]);
+
+  const handleBackupTreeDocument = useCallback(async (entry) => {
+    if (!entry?.path || entry.type !== "file") {
+      return;
+    }
+    const result = await bridge.backupDocument?.(entry.path);
+    if (!result?.ok) {
+      showStatus(result?.message || "备份失败", "warning");
+      return;
+    }
+    await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
+    showStatus("备份已复制到当前目录", "success");
+  }, [folderState.path, refreshTreeAfterEntryChange, showStatus]);
+
+  const handleDeleteTreeEntry = useCallback(async (entry) => {
+    if (!entry?.path) {
+      return;
+    }
+    const label = entry.type === "file" ? (entry.displayName || entry.name) : entry.name;
+    const scope = entry.type === "folder" ? "这个文件夹及其内部内容" : "这个信笺";
+    if (!window.confirm(`确定删除${scope}“${label}”吗？删除后会进入回收站。`)) {
+      return;
+    }
+    const result = await bridge.deleteEntry?.(entry.path);
+    if (!result?.ok) {
+      showStatus(result?.message || "删除失败", "warning");
+      return;
+    }
+
+    if (entry.type === "file") {
+      const remainingTabs = openTabs.filter((tab) => tab.path !== entry.path);
+      if (currentPath === entry.path) {
+        if (remainingTabs.length) {
+          const nextTab = remainingTabs[0];
+          setOpenTabs(remainingTabs);
+          setActiveTabId(nextTab.id);
+          applyDocument(nextTab.document, nextTab.path, nextTab.dirty);
+          persistSession({ activePath: nextTab.path || "" });
+        } else {
+          const blank = createBlankDocument();
+          const tab = createDocumentTab(blank);
+          setOpenTabs([tab]);
+          setActiveTabId(tab.id);
+          applyDocument(blank, "", false);
+          persistSession({ activePath: "" });
+        }
+      } else {
+        setOpenTabs(remainingTabs);
+        if (openTabs.some((tab) => tab.path === entry.path && tab.id === activeTabId)) {
+          const nextTab = remainingTabs[0];
+          if (nextTab) {
+            setActiveTabId(nextTab.id);
+            applyDocument(nextTab.document, nextTab.path, nextTab.dirty);
+          }
+        }
+      }
+    }
+
+    await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
+    showStatus("已删除", "success");
+  }, [activeTabId, applyDocument, currentPath, folderState.path, openTabs, persistSession, refreshTreeAfterEntryChange, showStatus]);
+
+  const handleMoveTreeEntry = useCallback(async (entry, targetFolderPath) => {
+    if (!entry?.path || !targetFolderPath) {
+      return;
+    }
+    const result = await bridge.moveEntry?.(entry.path, targetFolderPath);
+    if (!result?.ok) {
+      showStatus(result?.message || "移动失败", "warning");
+      return;
+    }
+
+    if (entry.type === "file") {
+      setOpenTabs((tabs) => tabs.map((tab) => (
+        tab.path === result.oldPath
+          ? { ...tab, path: result.path }
+          : tab
+      )));
+      if (currentPath === result.oldPath) {
+        setCurrentPath(result.path);
+        persistSession({ activePath: result.path });
+      }
+    } else {
+      setOpenTabs((tabs) => tabs.map((tab) => (
+        pathIsSameOrInside(tab.path, result.oldPath)
+          ? { ...tab, path: replacePathPrefix(tab.path, result.oldPath, result.path) }
+          : tab
+      )));
+      if (pathIsSameOrInside(currentPath, result.oldPath)) {
+        const nextPath = replacePathPrefix(currentPath, result.oldPath, result.path);
+        setCurrentPath(nextPath);
+        persistSession({ activePath: nextPath });
+      }
+    }
+
+    await refreshTreeAfterEntryChange(result.sourceParent || folderState.path);
+    await refreshTreeAfterEntryChange(result.targetFolderPath || targetFolderPath);
+    showStatus("已移动", "success");
+  }, [currentPath, folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus]);
+
+  const handleToggleFolder = useCallback(async (path) => {
+    if (!path) {
+      return;
+    }
+    const existing = expandedFolders[path];
+    if (existing?.expanded) {
+      setExpandedFolders((state) => ({
+        ...state,
+        [path]: { ...existing, expanded: false },
+      }));
+      return;
+    }
+
+    setExpandedFolders((state) => ({
+      ...state,
+      [path]: { ...(state[path] || {}), expanded: true, loading: true },
+    }));
+    const result = await listFolderWithTimeout(path);
+    setExpandedFolders((state) => ({
+      ...state,
+      [path]: {
+        expanded: true,
+        loading: false,
+        entries: result?.canceled ? [] : (result.entries || [...(result.folders || []), ...(result.files || [])]),
+      },
+    }));
+  }, [expandedFolders]);
 
   const handleOutlineItemClick = useCallback(
     (item) => {
@@ -2233,6 +3596,8 @@ export default function App() {
         const activeDocumentUnchanged = latestDocument.html === activeDocument.html
           && latestDocument.title === activeDocument.title
           && latestDocument.author === activeDocument.author
+          && latestDocument.createdAt === activeDocument.createdAt
+          && latestDocument.displayDate === activeDocument.displayDate
           && latestDocument.letterTemplateId === activeDocument.letterTemplateId
           && latestDocument.templateId === activeDocument.templateId
           && latestDocument.customBackground === activeDocument.customBackground;
@@ -2289,7 +3654,8 @@ export default function App() {
       }
       window.scrollTo(0, 0);
       await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
-      const pageRects = getFlowExportRects();
+      const pageRects = prepareImageExportRects();
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
       if (!pageRects.length) {
         showStatus("没有可导出的内容", "warning");
         return;
@@ -2305,6 +3671,7 @@ export default function App() {
           canvas.scrollTop = previousCanvasScroll;
         });
       }
+      cleanupImageExportStage();
       setImageExportMode(false);
       setRightSidebarCollapsed(previousRightSidebarCollapsed);
       window.document.body.classList.remove("image-export-body");
@@ -2390,11 +3757,14 @@ export default function App() {
         document={documentState}
         savedSelectionRef={editorSelectionRef}
         updateState={updateState}
+        onNew={handleNew}
+        onOpen={handleOpen}
         onSave={handleSave}
         onExportPdf={handleExportPdf}
         onExportImages={handleExportImages}
         onInsertImage={handleInsertImage}
         onRunUpdate={handleRunUpdate}
+        onOpenHelp={openHelpTour}
       />
       <div className={appShellClassName}>
         {leftSidebarCollapsed ? (
@@ -2407,10 +3777,17 @@ export default function App() {
             folderState={folderState}
             mode={leftSidebarMode}
             outlineItems={outlineItems}
-            onNew={handleNew}
-            onOpen={handleOpen}
+            expandedFolders={expandedFolders}
             onOpenFolder={handleOpenFolder}
+            onOpenFolderPath={handleOpenFolderPath}
             onOpenFolderFile={handleOpenFolderFile}
+            onToggleFolder={handleToggleFolder}
+            onCreateFolder={handleCreateFolderInTree}
+            onCreateDocument={handleCreateDocumentInTree}
+            onRenameEntry={handleRenameTreeEntry}
+            onBackupDocument={handleBackupTreeDocument}
+            onDeleteEntry={handleDeleteTreeEntry}
+            onMoveEntry={handleMoveTreeEntry}
             onModeChange={setLeftSidebarMode}
             onOutlineItemClick={handleOutlineItemClick}
             onCollapse={() => setLeftSidebarCollapsed(true)}
@@ -2433,12 +3810,13 @@ export default function App() {
               imageExportMode={imageExportMode}
               onTitleChange={handleTitleChange}
               onAuthorChange={handleAuthorChange}
+              onDateChange={handleDateChange}
               savedSelectionRef={editorSelectionRef}
             />
           </div>
         </section>
         {rightSidebarCollapsed ? (
-          <button type="button" className="sidebar-float-toggle right" onClick={() => setRightSidebarCollapsed(false)} aria-label="展开信件模板" title="展开信件模板">
+          <button type="button" className="sidebar-float-toggle right" onClick={() => setRightSidebarCollapsed(false)} aria-label="展开信笺模板" title="展开信笺模板">
             <FileText size={21} />
           </button>
         ) : (
@@ -2455,8 +3833,15 @@ export default function App() {
           />
         )}
       </div>
-      <StatusBar document={documentState} stats={stats} dirty={dirty} />
+      <StatusBar document={documentState} stats={stats} dirty={dirty} version={updateState?.version} />
       <StatusToast status={status} />
+      <ImmersiveHelpTour
+        open={helpOpen}
+        section={helpSection}
+        stepIndex={helpStepIndex}
+        onStepChange={setHelpStepIndex}
+        onClose={closeHelpTour}
+      />
     </div>
   );
 }

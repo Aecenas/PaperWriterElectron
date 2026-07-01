@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain, screen } = require("electron");
+const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, screen, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -16,6 +16,7 @@ const DOCUMENT_FILTERS = [
   { name: "旧版 PaperWriter 文档", extensions: ["paperdoc"] },
   { name: "All Files", extensions: ["*"] },
 ];
+const AI_DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024;
 
 let mainWindow = null;
 let updateState = {
@@ -26,6 +27,48 @@ let updateState = {
 
 Menu.setApplicationMenu(null);
 autoUpdater.autoDownload = false;
+
+function aiDebugLogPath() {
+  return path.join(path.dirname(app.getPath("exe")), "ai-debug.log");
+}
+
+function fallbackAiDebugLogPath() {
+  return path.join(app.getPath("userData"), "ai-debug.log");
+}
+
+async function writeAiDebugLog(event, data = {}) {
+  const writeLog = async (logPath, fallbackReason = "") => {
+    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    try {
+      const stat = await fs.stat(logPath);
+      if (stat.size > AI_DEBUG_LOG_MAX_BYTES) {
+        await fs.rm(`${logPath}.old`, { force: true });
+        await fs.rename(logPath, `${logPath}.old`);
+      }
+    } catch {
+      // No existing log yet.
+    }
+    const payload = {
+      time: new Date().toISOString(),
+      pid: process.pid,
+      event,
+      data: fallbackReason ? { ...data, fallbackReason } : data,
+    };
+    await fs.appendFile(logPath, `${JSON.stringify(payload)}\n`, "utf8");
+    return logPath;
+  };
+
+  try {
+    return await writeLog(aiDebugLogPath());
+  } catch (error) {
+    try {
+      return await writeLog(fallbackAiDebugLogPath(), error?.message || "install-dir-write-failed");
+    } catch {
+      // Debug logging must never break user workflows.
+      return "";
+    }
+  }
+}
 
 function frontendDistPath() {
   if (app.isPackaged) {
@@ -133,6 +176,42 @@ function defaultDocumentsDir() {
   return path.join(app.getPath("documents"), "PaperWriter");
 }
 
+function sanitizeName(name, fallback = "未命名") {
+  return String(name || "")
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || fallback;
+}
+
+function timestampForFileName(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function formatPaperDate(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    return "今天";
+  }
+  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+}
+
+async function uniquePath(targetPath) {
+  const parsed = path.parse(targetPath);
+  let candidate = targetPath;
+  let index = 2;
+  while (true) {
+    try {
+      await fs.access(candidate);
+      candidate = path.join(parsed.dir, `${parsed.name} ${index}${parsed.ext}`);
+      index += 1;
+    } catch {
+      return candidate;
+    }
+  }
+}
+
 function autosavePath() {
   return path.join(app.getPath("userData"), "Autosave", `autosave${DOCUMENT_EXTENSION}`);
 }
@@ -147,6 +226,10 @@ function isSupportedDocument(filePath) {
 }
 
 function normalizeDocument(document = {}) {
+  const now = new Date().toISOString();
+  const createdAt = typeof document.createdAt === "string" && document.createdAt
+    ? document.createdAt
+    : (typeof document.updatedAt === "string" && document.updatedAt ? document.updatedAt : now);
   return {
     version: 1,
     title: typeof document.title === "string" && document.title.trim() ? document.title.trim() : "未命名信笺",
@@ -157,7 +240,11 @@ function normalizeDocument(document = {}) {
     fontSize: Number.isFinite(Number(document.fontSize)) ? Math.min(32, Math.max(12, Number(document.fontSize))) : 18,
     layoutMode: "flow",
     customBackground: typeof document.customBackground === "string" && document.customBackground ? document.customBackground : "",
-    updatedAt: new Date().toISOString(),
+    createdAt,
+    displayDate: typeof document.displayDate === "string" && document.displayDate.trim()
+      ? document.displayDate.trim().slice(0, 40)
+      : formatPaperDate(createdAt),
+    updatedAt: typeof document.updatedAt === "string" && document.updatedAt ? document.updatedAt : now,
   };
 }
 
@@ -275,7 +362,16 @@ async function loadPaperDocument(filePath) {
   }
 
   const raw = await documentFile.async("string");
-  const document = normalizeDocument(JSON.parse(raw));
+  const parsedDocument = JSON.parse(raw);
+  if (!parsedDocument.createdAt) {
+    try {
+      const stat = await fs.stat(filePath);
+      parsedDocument.createdAt = stat.birthtime?.toISOString?.() || stat.ctime?.toISOString?.() || parsedDocument.updatedAt;
+    } catch {
+      // Fall back to updatedAt in normalizeDocument.
+    }
+  }
+  const document = normalizeDocument(parsedDocument);
   document.html = await hydrateAssetImages(zip, document.html);
 
   if (document.customBackground && !document.customBackground.startsWith("data:")) {
@@ -293,10 +389,17 @@ ipcMain.handle("app:get-paths", async () => {
   await fs.mkdir(defaultDocumentsDir(), { recursive: true });
   await fs.mkdir(path.dirname(autosavePath()), { recursive: true });
   return {
+    desktop: app.getPath("desktop"),
     documents: defaultDocumentsDir(),
     autosave: autosavePath(),
     userData: app.getPath("userData"),
+    aiDebugLog: aiDebugLogPath(),
   };
+});
+
+ipcMain.handle("debug:log", async (_event, event, data) => {
+  const logPath = await writeAiDebugLog(String(event || "renderer"), data || {});
+  return { ok: true, path: logPath || aiDebugLogPath() };
 });
 
 ipcMain.handle("update:get-state", async () => updateState);
@@ -380,7 +483,7 @@ ipcMain.handle("document:open-path", async (_event, filePath) => {
 ipcMain.handle("folder:open", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "打开信笺文件夹",
-    defaultPath: defaultDocumentsDir(),
+    defaultPath: app.getPath("desktop"),
     properties: ["openDirectory", "createDirectory"],
   });
 
@@ -388,41 +491,247 @@ ipcMain.handle("folder:open", async () => {
     return { canceled: true };
   }
 
-  return { canceled: false, folderPath: result.filePaths[0], files: await listDocumentFiles(result.filePaths[0]) };
+  return { canceled: false, ...(await listFolderEntries(result.filePaths[0])) };
 });
 
 ipcMain.handle("folder:list", async (_event, folderPath) => {
+  const startedAt = Date.now();
   if (!folderPath) {
-    return { canceled: true, files: [] };
+    await writeAiDebugLog("folder:list:empty-path");
+    return { canceled: true, files: [], folders: [], entries: [] };
   }
   try {
-    return { canceled: false, folderPath, files: await listDocumentFiles(folderPath) };
-  } catch {
-    return { canceled: true, folderPath: "", files: [] };
+    await writeAiDebugLog("folder:list:start", { folderPath });
+    const listed = await listFolderEntries(folderPath);
+    await writeAiDebugLog("folder:list:success", {
+      folderPath,
+      ms: Date.now() - startedAt,
+      folders: listed.folders.length,
+      files: listed.files.length,
+    });
+    return { canceled: false, ...listed };
+  } catch (error) {
+    await writeAiDebugLog("folder:list:error", {
+      folderPath,
+      ms: Date.now() - startedAt,
+      name: error?.name,
+      code: error?.code,
+      message: error?.message,
+    });
+    return { canceled: true, folderPath: "", files: [], folders: [], entries: [] };
   }
 });
 
-async function listDocumentFiles(folderPath) {
+ipcMain.handle("folder:copy-path", async (_event, folderPath) => {
+  if (!folderPath) {
+    return { ok: false };
+  }
+  clipboard.writeText(String(folderPath));
+  return { ok: true };
+});
+
+ipcMain.handle("folder:show", async (_event, folderPath) => {
+  if (!folderPath) {
+    return { ok: false };
+  }
+  const error = await shell.openPath(String(folderPath));
+  return { ok: !error, error };
+});
+
+ipcMain.handle("folder:create", async (_event, parentPath, name) => {
+  if (!parentPath) {
+    return { ok: false, message: "缺少目标文件夹" };
+  }
+  const folderName = sanitizeName(name, "新建文件夹");
+  const targetPath = await uniquePath(path.join(String(parentPath), folderName));
+  await fs.mkdir(targetPath, { recursive: false });
+  return { ok: true, path: targetPath, ...(await listFolderEntries(String(parentPath))) };
+});
+
+ipcMain.handle("document:create-in-folder", async (_event, folderPath, title) => {
+  if (!folderPath) {
+    return { ok: false, message: "缺少目标文件夹" };
+  }
+  const safeTitle = sanitizeName(title, "未命名信笺");
+  const filePath = await uniquePath(path.join(String(folderPath), `${safeTitle}${DOCUMENT_EXTENSION}`));
+  const document = normalizeDocument({
+    title: safeTitle,
+    html: "<p></p>",
+  });
+  await savePaperDocument(filePath, document);
+  return { ok: true, path: filePath, document, ...(await listFolderEntries(String(folderPath))) };
+});
+
+ipcMain.handle("entry:rename", async (_event, targetPath, nextName) => {
+  if (!targetPath) {
+    return { ok: false, message: "缺少目标路径" };
+  }
+  const currentPath = String(targetPath);
+  const stat = await fs.stat(currentPath);
+  const parsed = path.parse(currentPath);
+  let safeName = sanitizeName(nextName, parsed.name);
+  if (stat.isFile() && isSupportedDocument(currentPath)) {
+    const typedExtension = path.extname(safeName).toLowerCase();
+    if (typedExtension === DOCUMENT_EXTENSION || typedExtension === LEGACY_DOCUMENT_EXTENSION) {
+      safeName = path.basename(safeName, typedExtension);
+    }
+  }
+  const nextPath = path.join(parsed.dir, stat.isFile() && isSupportedDocument(currentPath) ? `${safeName}${DOCUMENT_EXTENSION}` : safeName);
+  if (nextPath === currentPath) {
+    return { ok: true, path: currentPath, ...(await listFolderEntries(parsed.dir)) };
+  }
+  try {
+    await fs.access(nextPath);
+    return { ok: false, message: "同名项目已经存在" };
+  } catch {
+    await fs.rename(currentPath, nextPath);
+    return { ok: true, oldPath: currentPath, path: nextPath, ...(await listFolderEntries(parsed.dir)) };
+  }
+});
+
+ipcMain.handle("entry:delete", async (_event, targetPath) => {
+  if (!targetPath) {
+    return { ok: false, message: "缺少目标路径" };
+  }
+  const currentPath = String(targetPath);
+  const parentPath = path.dirname(currentPath);
+  if (typeof shell.trashItem === "function") {
+    await shell.trashItem(currentPath);
+  } else {
+    const stat = await fs.stat(currentPath);
+    await fs.rm(currentPath, { recursive: stat.isDirectory(), force: true });
+  }
+  return { ok: true, deletedPath: currentPath, ...(await listFolderEntries(parentPath)) };
+});
+
+ipcMain.handle("entry:move", async (_event, sourcePath, targetFolderPath) => {
+  if (!sourcePath || !targetFolderPath) {
+    return { ok: false, message: "缺少移动路径" };
+  }
+  const fromPath = String(sourcePath);
+  const toFolder = String(targetFolderPath);
+  const sourceStat = await fs.stat(fromPath);
+  const targetStat = await fs.stat(toFolder);
+  if (!targetStat.isDirectory()) {
+    return { ok: false, message: "目标不是文件夹" };
+  }
+  if (sourceStat.isDirectory()) {
+    const relative = path.relative(fromPath, toFolder);
+    if (!relative || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+      return { ok: false, message: "不能把文件夹移动到自身内部" };
+    }
+  }
+
+  const sourceParent = path.dirname(fromPath);
+  if (sourceParent === toFolder) {
+    return { ok: false, message: "已经在这个文件夹里" };
+  }
+
+  const targetPath = await uniquePath(path.join(toFolder, path.basename(fromPath)));
+  await fs.rename(fromPath, targetPath);
+  return {
+    ok: true,
+    oldPath: fromPath,
+    path: targetPath,
+    sourceParent,
+    targetFolderPath: toFolder,
+  };
+});
+
+ipcMain.handle("document:backup", async (_event, filePath) => {
+  if (!filePath || !isSupportedDocument(filePath)) {
+    return { ok: false, message: "只能备份信笺文件" };
+  }
+  const sourcePath = String(filePath);
+  const parsed = path.parse(sourcePath);
+  const backupPath = await uniquePath(path.join(parsed.dir, `${parsed.name}_备份_${timestampForFileName()}${DOCUMENT_EXTENSION}`));
+  await fs.copyFile(sourcePath, backupPath);
+  return { ok: true, path: backupPath, ...(await listFolderEntries(parsed.dir)) };
+});
+
+async function listFolderEntries(folderPath) {
+  const startedAt = Date.now();
   const entries = await fs.readdir(folderPath, { withFileTypes: true });
+  await writeAiDebugLog("folder:entries:readdir", {
+    folderPath,
+    ms: Date.now() - startedAt,
+    count: entries.length,
+  });
+  const parent = path.dirname(folderPath);
+  const parentPath = parent && parent !== folderPath ? parent : "";
+  const folders = [];
   const files = [];
   for (const entry of entries) {
-    if (!entry.isFile()) {
-      continue;
-    }
     const filePath = path.join(folderPath, entry.name);
-    if (!isSupportedDocument(filePath)) {
+    if (entry.isDirectory()) {
+      const childStartedAt = Date.now();
+      let hasLetterpapers = false;
+      try {
+        hasLetterpapers = await folderHasDocument(filePath);
+        await writeAiDebugLog("folder:child-scan", {
+          folderPath: filePath,
+          ms: Date.now() - childStartedAt,
+          hasLetterpapers,
+        });
+      } catch (error) {
+        await writeAiDebugLog("folder:child-scan:error", {
+          folderPath: filePath,
+          ms: Date.now() - childStartedAt,
+          code: error?.code,
+          message: error?.message,
+        });
+        // Ignore directories that cannot be read.
+      }
+      folders.push({
+        type: "folder",
+        name: entry.name,
+        path: filePath,
+        hasLetterpapers,
+        updatedAt: "",
+      });
       continue;
     }
+
+    if (!entry.isFile() || !isSupportedDocument(filePath)) {
+      continue;
+    }
+
     const stat = await fs.stat(filePath);
+    const displayName = path.basename(entry.name, path.extname(entry.name));
     files.push({
+      type: "file",
       name: entry.name,
+      displayName,
       path: filePath,
       extension: path.extname(entry.name).toLowerCase(),
       updatedAt: stat.mtime.toISOString(),
       size: stat.size,
     });
   }
-  return files.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+
+  folders.sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  files.sort((left, right) => left.displayName.localeCompare(right.displayName, "zh-CN"));
+  return {
+    folderPath,
+    parentPath,
+    folders,
+    files,
+    entries: [...folders, ...files],
+  };
+}
+
+async function folderHasDocument(folderPath) {
+  try {
+    const entries = await fs.readdir(folderPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && isSupportedDocument(path.join(folderPath, entry.name))) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 ipcMain.handle("document:save", async (_event, document, currentPath, saveAs) => {

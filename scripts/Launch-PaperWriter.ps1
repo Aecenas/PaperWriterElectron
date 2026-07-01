@@ -24,13 +24,42 @@ function Stop-KnownProcess {
   }
 }
 
+function Stop-ProcessTree {
+  param([int]$ProcessId)
+
+  if (-not $ProcessId -or $ProcessId -eq $PID) {
+    return
+  }
+
+  $children = Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcessId" -ErrorAction SilentlyContinue
+  foreach ($child in @($children)) {
+    Stop-ProcessTree -ProcessId ([int]$child.ProcessId)
+  }
+
+  Stop-KnownProcess -ProcessId $ProcessId
+}
+
+function Stop-ProjectProcesses {
+  $escapedRoot = [Regex]::Escape($ProjectRoot)
+  $candidates = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.ProcessId -ne $PID -and
+      $_.Name -in @("node.exe", "electron.exe") -and
+      $_.CommandLine -match $escapedRoot
+    }
+
+  foreach ($candidate in @($candidates)) {
+    Stop-ProcessTree -ProcessId ([int]$candidate.ProcessId)
+  }
+}
+
 function Stop-PreviousLaunch {
   if (Test-Path -LiteralPath $PidFile) {
     try {
       $state = Get-Content -LiteralPath $PidFile -Raw -Encoding UTF8 | ConvertFrom-Json
       foreach ($id in @($state.frontend_pid, $state.electron_pid)) {
         if ($id) {
-          Stop-KnownProcess -ProcessId ([int]$id)
+          Stop-ProcessTree -ProcessId ([int]$id)
         }
       }
     } catch {
@@ -38,10 +67,12 @@ function Stop-PreviousLaunch {
     }
   }
 
+  Stop-ProjectProcesses
+
   $owners = Get-NetTCPConnection -LocalAddress $HostName -LocalPort $FrontendPort -State Listen -ErrorAction SilentlyContinue |
     Select-Object -ExpandProperty OwningProcess -Unique
   foreach ($owner in $owners) {
-    Stop-KnownProcess -ProcessId ([int]$owner)
+    Stop-ProcessTree -ProcessId ([int]$owner)
   }
 
   Start-Sleep -Milliseconds 600
