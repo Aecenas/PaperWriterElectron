@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, screen, shell } = require("electron");
+const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, screen, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -9,6 +9,8 @@ const FRONTEND_URL = process.env.PAPERWRITER_FRONTEND_URL || "";
 const APP_ICON = path.resolve(__dirname, "assets", process.platform === "win32" ? "app-icon.ico" : "app-icon.png");
 const DATA_URL_PATTERN = /src=(["'])(data:image\/[^"']+)\1/gi;
 const ASSET_URL_PATTERN = /src=(["'])(assets\/[^"']+)\1/gi;
+const ASSET_PROTOCOL = "paperwriter-asset";
+const ASSET_PROTOCOL_URL_PATTERN = /src=(["'])(paperwriter-asset:\/\/[^"']+)\1/gi;
 const DOCUMENT_EXTENSION = ".letterpaper";
 const LEGACY_DOCUMENT_EXTENSION = ".paperdoc";
 const DOCUMENT_FILTERS = [
@@ -17,16 +19,47 @@ const DOCUMENT_FILTERS = [
   { name: "All Files", extensions: ["*"] },
 ];
 const AI_DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024;
+const AI_CONFIG_FILE = "ai-config.json";
+const AI_PROVIDERS = {
+  gemini: {
+    label: "Gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-3.1-pro-preview",
+  },
+  deepseek: {
+    label: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    model: "deepseek-v4-flash",
+  },
+};
+const TITLE_BAR_OVERLAY_DEFAULT = {
+  color: "#c8d8d4",
+  symbolColor: "#334155",
+  height: 40,
+};
+const ASSET_ZIP_CACHE_LIMIT = 5;
 
 let mainWindow = null;
+let closeRequestInFlight = false;
+let forceCloseWindow = false;
 let updateState = {
   status: "idle",
   message: "尚未检查更新",
   version: app.getVersion(),
 };
+const activeAiRequests = new Map();
+const assetZipCache = new Map();
 
 Menu.setApplicationMenu(null);
 autoUpdater.autoDownload = false;
+protocol.registerSchemesAsPrivileged([{
+  scheme: ASSET_PROTOCOL,
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+  },
+}]);
 
 function aiDebugLogPath() {
   return path.join(path.dirname(app.getPath("exe")), "ai-debug.log");
@@ -34,6 +67,10 @@ function aiDebugLogPath() {
 
 function fallbackAiDebugLogPath() {
   return path.join(app.getPath("userData"), "ai-debug.log");
+}
+
+function aiConfigPath() {
+  return path.join(app.getPath("userData"), AI_CONFIG_FILE);
 }
 
 async function writeAiDebugLog(event, data = {}) {
@@ -88,6 +125,8 @@ function emitUpdateState(patch) {
 }
 
 function createWindow() {
+  closeRequestInFlight = false;
+  forceCloseWindow = false;
   const workArea = screen.getPrimaryDisplay().workAreaSize;
   const windowWidth = Math.min(1440, Math.max(1080, Math.floor(workArea.width * 0.92)));
   const windowHeight = Math.min(940, Math.max(720, Math.floor(workArea.height * 0.9)));
@@ -101,11 +140,7 @@ function createWindow() {
     title: "信笺写作",
     icon: APP_ICON,
     titleBarStyle: "hidden",
-    titleBarOverlay: {
-      color: "#c8d8d4",
-      symbolColor: "#334155",
-      height: 40,
-    },
+    titleBarOverlay: TITLE_BAR_OVERLAY_DEFAULT,
     autoHideMenuBar: true,
     backgroundColor: "#edf6f4",
     webPreferences: {
@@ -114,6 +149,18 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
     },
+  });
+
+  mainWindow.on("close", (event) => {
+    if (forceCloseWindow) {
+      return;
+    }
+    event.preventDefault();
+    if (closeRequestInFlight) {
+      return;
+    }
+    closeRequestInFlight = true;
+    mainWindow.webContents.send("app:close-request", { requestedAt: Date.now() });
   });
 
   if (FRONTEND_URL) {
@@ -126,6 +173,31 @@ function createWindow() {
       "信笺写作",
       `Frontend build not found. Run npm run build in apps/writer/frontend first.\n\n${error.message}`,
     );
+  });
+}
+
+function registerAssetProtocol() {
+  protocol.handle(ASSET_PROTOCOL, async (request) => {
+    const parsed = parseAssetUrl(request.url);
+    if (!parsed) {
+      return new Response("Not found", { status: 404 });
+    }
+    try {
+      const { buffer, mime } = await readPackagedAsset(parsed.filePath, parsed.assetPath);
+      return new Response(buffer, {
+        headers: {
+          "content-type": mime,
+          "cache-control": "no-store",
+        },
+      });
+    } catch (error) {
+      await writeAiDebugLog("asset:protocol:error", {
+        filePath: parsed.filePath,
+        assetPath: parsed.assetPath,
+        message: error?.message,
+      });
+      return new Response("Not found", { status: 404 });
+    }
   });
 }
 
@@ -176,6 +248,392 @@ function defaultDocumentsDir() {
   return path.join(app.getPath("documents"), "PaperWriter");
 }
 
+function normalizeAiProvider(provider) {
+  return Object.prototype.hasOwnProperty.call(AI_PROVIDERS, provider) ? provider : "gemini";
+}
+
+function createAiModelId(provider, model = "") {
+  const source = String(model || "default").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${provider}-${source || "model"}`;
+}
+
+function normalizeAiModelConfig(provider, config = {}, index = 0) {
+  const providerDefaults = AI_PROVIDERS[provider];
+  const model = String(config.model || providerDefaults.model).trim() || providerDefaults.model;
+  return {
+    id: String(config.id || createAiModelId(provider, model || String(index + 1))).trim(),
+    name: String(config.name || config.modelName || (index === 0 ? "默认模型" : `模型 ${index + 1}`)).trim() || `模型 ${index + 1}`,
+    model,
+    testedOk: Boolean(config.testedOk),
+    testedAt: typeof config.testedAt === "string" ? config.testedAt : "",
+    testMessage: typeof config.testMessage === "string" ? config.testMessage : "",
+  };
+}
+
+function normalizeAiProviderConfig(provider, config = {}) {
+  const providerDefaults = AI_PROVIDERS[provider];
+  const legacyModel = {
+    id: config.activeModelId || createAiModelId(provider, config.model || providerDefaults.model),
+    name: config.modelName || "默认模型",
+    model: config.model,
+    testedOk: config.testedOk,
+    testedAt: config.testedAt,
+    testMessage: config.testMessage,
+  };
+  const modelsSource = Array.isArray(config.models) && config.models.length ? config.models : [legacyModel];
+  const models = modelsSource.map((modelConfig, index) => normalizeAiModelConfig(provider, modelConfig, index));
+  const activeModelId = config.activeModelId && models.some((model) => model.id === config.activeModelId)
+    ? config.activeModelId
+    : models[0].id;
+  const activeModel = models.find((model) => model.id === activeModelId) || models[0];
+  return {
+    baseUrl: String(config.baseUrl || providerDefaults.baseUrl).trim() || providerDefaults.baseUrl,
+    apiKey: typeof config.apiKey === "string" ? config.apiKey.trim() : "",
+    activeModelId,
+    models,
+    model: activeModel.model,
+    modelId: activeModel.id,
+    modelName: activeModel.name,
+    testedOk: Boolean(activeModel.testedOk),
+    testedAt: activeModel.testedAt || "",
+    testMessage: activeModel.testMessage || "",
+  };
+}
+
+function normalizeAiConfig(config = {}) {
+  const legacyProvider = normalizeAiProvider(config.provider);
+  const activeProvider = normalizeAiProvider(config.activeProvider || config.provider);
+  const providers = {};
+  Object.keys(AI_PROVIDERS).forEach((provider) => {
+    providers[provider] = normalizeAiProviderConfig(provider, config.providers?.[provider]);
+  });
+
+  if (!config.providers && config.provider) {
+    providers[legacyProvider] = normalizeAiProviderConfig(legacyProvider, {
+      model: config.model,
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      testedOk: config.testedOk,
+      testedAt: config.testedAt,
+      testMessage: config.testMessage,
+    });
+  }
+
+  return {
+    activeProvider,
+    activeModelId: (providers[activeProvider]?.models || []).some((model) => model.id === config.activeModelId)
+      ? config.activeModelId
+      : providers[activeProvider]?.activeModelId,
+    providers,
+  };
+}
+
+function activeAiProviderConfig(config, preferredProvider = "", preferredModelId = "") {
+  const normalized = normalizeAiConfig(config);
+  const provider = normalizeAiProvider(preferredProvider || normalized.activeProvider);
+  const providerConfig = normalized.providers[provider] || normalizeAiProviderConfig(provider);
+  const model = providerConfig.models.find((item) => item.id === preferredModelId)
+    || providerConfig.models.find((item) => item.id === normalized.activeModelId)
+    || providerConfig.models[0];
+  return {
+    provider,
+    baseUrl: providerConfig.baseUrl,
+    apiKey: providerConfig.apiKey,
+    model: model.model,
+    modelId: model.id,
+    modelName: model.name,
+    testedOk: Boolean(model.testedOk),
+    testedAt: model.testedAt || "",
+    testMessage: model.testMessage || "",
+  };
+}
+
+function publicAiConfig(config) {
+  const normalized = normalizeAiConfig(config);
+  const active = activeAiProviderConfig(normalized);
+  const publicProviders = {};
+  Object.entries(normalized.providers).forEach(([provider, providerConfig]) => {
+    const apiKey = providerConfig.apiKey || "";
+    publicProviders[provider] = {
+      provider,
+      providerLabel: AI_PROVIDERS[provider].label,
+      activeModelId: providerConfig.activeModelId,
+      models: providerConfig.models.map((model) => ({
+        id: model.id,
+        name: model.name,
+        model: model.model,
+        testedOk: Boolean(model.testedOk),
+        testedAt: model.testedAt || "",
+        testMessage: model.testMessage || "",
+      })),
+      model: providerConfig.model,
+      modelId: providerConfig.modelId,
+      modelName: providerConfig.modelName,
+      baseUrl: providerConfig.baseUrl,
+      hasApiKey: Boolean(apiKey),
+      apiKeyLast4: apiKey ? apiKey.slice(-4) : "",
+      testedOk: Boolean(providerConfig.testedOk),
+      testedAt: providerConfig.testedAt || "",
+      testMessage: providerConfig.testMessage || "",
+    };
+  });
+  return {
+    activeProvider: normalized.activeProvider,
+    activeModelId: normalized.activeModelId,
+    providers: publicProviders,
+    provider: active.provider,
+    providerLabel: AI_PROVIDERS[active.provider].label,
+    modelId: active.modelId,
+    modelName: active.modelName,
+    model: active.model,
+    baseUrl: active.baseUrl,
+    hasApiKey: Boolean(active.apiKey),
+    apiKeyLast4: active.apiKey ? active.apiKey.slice(-4) : "",
+    testedOk: Boolean(active.testedOk),
+    testedAt: active.testedAt || "",
+    testMessage: active.testMessage || "",
+  };
+}
+
+async function readAiConfig() {
+  try {
+    const raw = await fs.readFile(aiConfigPath(), "utf8");
+    return normalizeAiConfig(JSON.parse(raw));
+  } catch {
+    return normalizeAiConfig();
+  }
+}
+
+async function saveAiConfig(patch = {}) {
+  const existing = await readAiConfig();
+  const provider = normalizeAiProvider(patch.provider || existing.activeProvider);
+  const previousProviderConfig = existing.providers[provider] || normalizeAiProviderConfig(provider);
+  const modelId = String(patch.modelId || previousProviderConfig.activeModelId || createAiModelId(provider, patch.model || previousProviderConfig.model)).trim();
+  const previousModels = Array.isArray(patch.models) && patch.models.length
+    ? patch.models.map((modelConfig, index) => normalizeAiModelConfig(provider, modelConfig, index))
+    : (previousProviderConfig.models || []);
+  const existingModel = previousModels.find((model) => model.id === modelId);
+  const nextModel = normalizeAiModelConfig(provider, {
+    ...(existingModel || {}),
+    id: modelId,
+    name: patch.modelName || existingModel?.name,
+    model: patch.model || existingModel?.model,
+    testedOk: (patch.resetTest || patch.clearApiKey) ? false : existingModel?.testedOk,
+    testedAt: (patch.resetTest || patch.clearApiKey) ? "" : existingModel?.testedAt,
+    testMessage: (patch.resetTest || patch.clearApiKey) ? "" : existingModel?.testMessage,
+  });
+  const updatedModels = existingModel
+    ? previousModels.map((model) => (model.id === modelId ? nextModel : model))
+    : [...previousModels, nextModel];
+  const nextModels = patch.clearApiKey
+    ? updatedModels.map((model) => ({ ...model, testedOk: false, testedAt: "", testMessage: "" }))
+    : updatedModels;
+  const apiKey = patch.clearApiKey
+    ? ""
+    : (typeof patch.apiKey === "string" && patch.apiKey.trim() ? patch.apiKey : previousProviderConfig.apiKey);
+  const next = normalizeAiConfig({
+    ...existing,
+    activeProvider: patch.activate === true ? provider : existing.activeProvider,
+    activeModelId: patch.activate === true ? modelId : existing.activeModelId,
+    providers: {
+      ...existing.providers,
+      [provider]: {
+        ...previousProviderConfig,
+        baseUrl: patch.baseUrl || previousProviderConfig.baseUrl,
+        apiKey,
+        activeModelId: patch.activate === true ? modelId : previousProviderConfig.activeModelId,
+        models: nextModels,
+      },
+    },
+  });
+  await ensureParentDir(aiConfigPath());
+  await fs.writeFile(aiConfigPath(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  return next;
+}
+
+async function updateAiProviderTestState(provider, modelId, testState) {
+  const existing = await readAiConfig();
+  const normalizedProvider = normalizeAiProvider(provider);
+  const previousProviderConfig = existing.providers[normalizedProvider] || normalizeAiProviderConfig(normalizedProvider);
+  const normalizedModelId = String(modelId || previousProviderConfig.activeModelId || createAiModelId(normalizedProvider, testState.model || previousProviderConfig.model)).trim();
+  const previousModels = previousProviderConfig.models || [];
+  const existingModel = previousModels.find((model) => model.id === normalizedModelId);
+  const nextModel = normalizeAiModelConfig(normalizedProvider, {
+    ...(existingModel || {}),
+    id: normalizedModelId,
+    name: testState.modelName || existingModel?.name,
+    ...testState,
+  });
+  const nextModels = existingModel
+    ? previousModels.map((model) => (model.id === normalizedModelId ? nextModel : model))
+    : [...previousModels, nextModel];
+  const next = normalizeAiConfig({
+    ...existing,
+    activeProvider: existing.activeProvider,
+    providers: {
+      ...existing.providers,
+      [normalizedProvider]: {
+        ...previousProviderConfig,
+        baseUrl: testState.baseUrl || previousProviderConfig.baseUrl,
+        apiKey: testState.apiKey || previousProviderConfig.apiKey,
+        models: nextModels,
+      },
+    },
+  });
+  await ensureParentDir(aiConfigPath());
+  await fs.writeFile(aiConfigPath(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  return next;
+}
+
+function aiChatCompletionsUrl(config) {
+  return `${String(config.baseUrl || "").replace(/\/+$/, "")}/chat/completions`;
+}
+
+function aiRequestHeaders(config) {
+  return {
+    "content-type": "application/json",
+    authorization: `Bearer ${config.apiKey}`,
+  };
+}
+
+function aiThinkingOptions(config) {
+  if (config?.provider === "deepseek") {
+    return {
+      thinking: { type: "enabled" },
+      reasoning_effort: "max",
+      temperature: 1,
+    };
+  }
+  return {
+    reasoning_effort: "high",
+    temperature: 1,
+  };
+}
+
+async function readAiErrorBody(response) {
+  try {
+    const text = await response.text();
+    return text.replace(/\s+/g, " ").slice(0, 500);
+  } catch {
+    return "";
+  }
+}
+
+async function assertAiResponseOk(response) {
+  if (response.ok) {
+    return;
+  }
+  const details = await readAiErrorBody(response);
+  throw new Error(`AI 请求失败 ${response.status}${details ? `：${details}` : ""}`);
+}
+
+function aiFetch(url, options) {
+  return net.fetch(url, options);
+}
+
+async function testAiConfig(config) {
+  if (!config.apiKey) {
+    return { ok: false, message: "请先填写 API Key" };
+  }
+  const response = await aiFetch(aiChatCompletionsUrl(config), {
+    method: "POST",
+    headers: aiRequestHeaders(config),
+    body: JSON.stringify({
+      model: config.model,
+      messages: [{ role: "user", content: "请只回复 OK" }],
+      max_tokens: 8,
+      ...aiThinkingOptions(config),
+      stream: false,
+    }),
+  });
+  await assertAiResponseOk(response);
+  return { ok: true, message: "AI 连接可用" };
+}
+
+function extractAiDelta(payload) {
+  const choice = payload?.choices?.[0];
+  return choice?.delta?.content || choice?.message?.content || "";
+}
+
+function normalizeAiMessages(payload = {}) {
+  if (Array.isArray(payload.messages)) {
+    const messages = payload.messages
+      .map((message) => ({
+        role: ["system", "user", "assistant"].includes(message?.role) ? message.role : "user",
+        content: String(message?.content || "").slice(0, 200000),
+      }))
+      .filter((message) => message.content.trim());
+    if (messages.length) {
+      return messages;
+    }
+  }
+  return [{ role: "user", content: String(payload.prompt || "") }];
+}
+
+async function streamAiCompletion(sender, requestId, config, messages, signal) {
+  if (!config.apiKey) {
+    throw new Error("请先在 AI 设置里填写 API Key");
+  }
+  const response = await aiFetch(aiChatCompletionsUrl(config), {
+    method: "POST",
+    headers: aiRequestHeaders(config),
+    signal,
+    body: JSON.stringify({
+      model: config.model,
+      messages,
+      ...aiThinkingOptions(config),
+      stream: true,
+      stream_options: { include_usage: true },
+    }),
+  });
+  await assertAiResponseOk(response);
+  if (!response.body) {
+    const payload = await response.json();
+    const delta = extractAiDelta(payload);
+    if (delta) {
+      sender.send("ai:chunk", { requestId, delta });
+    }
+    return payload.usage || null;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let usage = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith(":") || !trimmed.startsWith("data:")) {
+        continue;
+      }
+      const data = trimmed.slice(5).trim();
+      if (data === "[DONE]") {
+        return usage;
+      }
+      try {
+        const payload = JSON.parse(data);
+        if (payload?.usage) {
+          usage = payload.usage;
+        }
+        const delta = extractAiDelta(payload);
+        if (delta) {
+          sender.send("ai:chunk", { requestId, delta });
+        }
+      } catch (error) {
+        await writeAiDebugLog("ai:stream:parse-error", { message: error?.message, data: data.slice(0, 200) });
+      }
+    }
+  }
+  return usage;
+}
+
 function sanitizeName(name, fallback = "未命名") {
   return String(name || "")
     .replace(/[\\/:*?"<>|]/g, "")
@@ -216,6 +674,11 @@ function autosavePath() {
   return path.join(app.getPath("userData"), "Autosave", `autosave${DOCUMENT_EXTENSION}`);
 }
 
+function autosaveSessionPath(tabId = "") {
+  const safeId = String(tabId || "tab").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80) || "tab";
+  return path.join(app.getPath("userData"), "Autosave", "Session", `${safeId}${DOCUMENT_EXTENSION}`);
+}
+
 async function ensureParentDir(filePath) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
 }
@@ -223,6 +686,169 @@ async function ensureParentDir(filePath) {
 function isSupportedDocument(filePath) {
   const extension = path.extname(filePath).toLowerCase();
   return extension === DOCUMENT_EXTENSION || extension === LEGACY_DOCUMENT_EXTENSION;
+}
+
+function createEmptyAiState() {
+  return {
+    version: 1,
+    lastMode: "",
+    optimize: {
+      output: "",
+      status: "ready",
+      error: "",
+      assets: { images: {}, quotes: [] },
+      elapsedSeconds: 0,
+      tokenStats: null,
+      provider: "",
+      modelId: "",
+      modelName: "",
+      updatedAt: "",
+    },
+    chat: {
+      messages: [],
+      input: "",
+      selectedTexts: [],
+      status: "idle",
+      error: "",
+      updatedAt: "",
+    },
+  };
+}
+
+function normalizeSavedAiState(state = {}) {
+  const empty = createEmptyAiState();
+  const optimize = state.optimize && typeof state.optimize === "object" ? state.optimize : {};
+  const chat = state.chat && typeof state.chat === "object" ? state.chat : {};
+  return {
+    version: 1,
+    lastMode: ["optimize", "chat"].includes(state.lastMode) ? state.lastMode : "",
+    optimize: {
+      ...empty.optimize,
+      ...optimize,
+      status: optimize.status === "done" || optimize.status === "error" ? optimize.status : "ready",
+      output: typeof optimize.output === "string" ? optimize.output : "",
+      error: typeof optimize.error === "string" ? optimize.error : "",
+      assets: optimize.assets && typeof optimize.assets === "object"
+        ? {
+            images: optimize.assets.images && typeof optimize.assets.images === "object" ? optimize.assets.images : {},
+            quotes: Array.isArray(optimize.assets.quotes) ? optimize.assets.quotes : [],
+          }
+        : empty.optimize.assets,
+      elapsedSeconds: Number.isFinite(Number(optimize.elapsedSeconds)) ? Math.max(0, Number(optimize.elapsedSeconds)) : 0,
+      tokenStats: optimize.tokenStats && typeof optimize.tokenStats === "object" ? optimize.tokenStats : null,
+    },
+    chat: {
+      ...empty.chat,
+      ...chat,
+      messages: Array.isArray(chat.messages) ? chat.messages : [],
+      input: typeof chat.input === "string" ? chat.input : "",
+      selectedTexts: Array.isArray(chat.selectedTexts) ? chat.selectedTexts : [],
+      status: chat.status === "error" ? "error" : "idle",
+      error: typeof chat.error === "string" ? chat.error : "",
+    },
+  };
+}
+
+function normalizeAssetPath(assetPath) {
+  const normalized = String(assetPath || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized.startsWith("assets/") || normalized.includes("..") || path.isAbsolute(normalized)) {
+    return "";
+  }
+  return normalized;
+}
+
+function assetUrlForDocument(filePath, assetPath) {
+  const normalizedAssetPath = normalizeAssetPath(assetPath);
+  if (!filePath || !normalizedAssetPath) {
+    return assetPath;
+  }
+  return `${ASSET_PROTOCOL}://document/${encodeURIComponent(String(filePath))}?asset=${encodeURIComponent(normalizedAssetPath)}`;
+}
+
+function parseAssetUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== `${ASSET_PROTOCOL}:`) {
+      return null;
+    }
+    const filePath = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+    const assetPath = normalizeAssetPath(decodeURIComponent(url.searchParams.get("asset") || ""));
+    if (!filePath || !assetPath || !isSupportedDocument(filePath)) {
+      return null;
+    }
+    return { filePath, assetPath };
+  } catch {
+    return null;
+  }
+}
+
+function rememberAssetZip(filePath, stat, zip) {
+  const key = String(filePath || "");
+  if (!key || !stat || !zip) {
+    return;
+  }
+  assetZipCache.set(key, {
+    zip,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    lastAccess: Date.now(),
+  });
+  if (assetZipCache.size <= ASSET_ZIP_CACHE_LIMIT) {
+    return;
+  }
+  const oldest = [...assetZipCache.entries()]
+    .sort((left, right) => left[1].lastAccess - right[1].lastAccess)[0]?.[0];
+  if (oldest) {
+    assetZipCache.delete(oldest);
+  }
+}
+
+async function getAssetZip(filePath) {
+  const sourcePath = String(filePath || "");
+  if (!sourcePath || !isSupportedDocument(sourcePath)) {
+    throw new Error("无效的信笺资源路径");
+  }
+  const stat = await fs.stat(sourcePath);
+  const cached = assetZipCache.get(sourcePath);
+  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+    cached.lastAccess = Date.now();
+    return cached.zip;
+  }
+  const buffer = await fs.readFile(sourcePath);
+  const zip = await JSZip.loadAsync(buffer);
+  rememberAssetZip(sourcePath, stat, zip);
+  return zip;
+}
+
+async function readPackagedAsset(filePath, assetPath) {
+  const normalizedAssetPath = normalizeAssetPath(assetPath);
+  if (!normalizedAssetPath) {
+    throw new Error("无效的资源路径");
+  }
+  const zip = await getAssetZip(filePath);
+  const file = zip.file(normalizedAssetPath);
+  if (!file) {
+    throw new Error("资源不存在");
+  }
+  const buffer = await file.async("nodebuffer");
+  return {
+    buffer,
+    mime: mimeFromPath(normalizedAssetPath),
+  };
+}
+
+function nextZipAssetPath(zip, preferredPath, extension = ".png") {
+  const normalizedPreferred = normalizeAssetPath(preferredPath);
+  if (normalizedPreferred && !zip.file(normalizedPreferred)) {
+    return normalizedPreferred;
+  }
+  let index = 1;
+  let assetPath = "";
+  do {
+    assetPath = `assets/image-${String(index).padStart(4, "0")}${extension}`;
+    index += 1;
+  } while (zip.file(assetPath));
+  return assetPath;
 }
 
 function normalizeDocument(document = {}) {
@@ -245,6 +871,7 @@ function normalizeDocument(document = {}) {
       ? document.displayDate.trim().slice(0, 40)
       : formatPaperDate(createdAt),
     updatedAt: typeof document.updatedAt === "string" && document.updatedAt ? document.updatedAt : now,
+    aiState: normalizeSavedAiState(document.aiState),
   };
 }
 
@@ -301,35 +928,109 @@ async function fileToDataUrl(filePath) {
 }
 
 function extractDataImages(zip, html) {
-  let index = 0;
   return html.replace(DATA_URL_PATTERN, (full, quote, dataUrl) => {
     const decoded = dataUrlToBuffer(dataUrl);
     if (!decoded) {
       return full;
     }
 
-    index += 1;
-    const assetPath = `assets/image-${String(index).padStart(4, "0")}${extensionFromMime(decoded.mime)}`;
+    const assetPath = nextZipAssetPath(zip, "", extensionFromMime(decoded.mime));
     zip.file(assetPath, decoded.buffer);
     return `src=${quote}${assetPath}${quote}`;
   });
 }
 
-async function hydrateAssetImages(zip, html) {
-  const matches = [...html.matchAll(ASSET_URL_PATTERN)];
-  let hydrated = html;
-  for (const match of matches) {
-    const [full, quote, assetPath] = match;
-    const file = zip.file(assetPath);
-    if (!file) {
+async function extractProtocolImages(zip, html) {
+  const matches = [...html.matchAll(ASSET_PROTOCOL_URL_PATTERN)];
+  const sourceUrls = [...new Set(matches.map((match) => match[2]))];
+  const copiedByUrl = new Map();
+  for (const sourceUrl of sourceUrls) {
+    const parsed = parseAssetUrl(sourceUrl);
+    if (!parsed) {
       continue;
     }
-
-    const buffer = await file.async("nodebuffer");
-    const dataUrl = `data:${mimeFromPath(assetPath)};base64,${buffer.toString("base64")}`;
-    hydrated = hydrated.replace(full, `src=${quote}${dataUrl}${quote}`);
+    const asset = await readPackagedAsset(parsed.filePath, parsed.assetPath);
+    const targetPath = nextZipAssetPath(zip, parsed.assetPath, path.extname(parsed.assetPath) || extensionFromMime(asset.mime));
+    zip.file(targetPath, asset.buffer);
+    copiedByUrl.set(sourceUrl, targetPath);
   }
-  return hydrated;
+  return html.replace(ASSET_PROTOCOL_URL_PATTERN, (full, quote, sourceUrl) => {
+    const targetPath = copiedByUrl.get(sourceUrl);
+    return targetPath ? `src=${quote}${targetPath}${quote}` : full;
+  });
+}
+
+async function copyProtocolAssetToZip(zip, sourceUrl, preferredPath = "") {
+  const parsed = parseAssetUrl(sourceUrl);
+  if (!parsed) {
+    return "";
+  }
+  const asset = await readPackagedAsset(parsed.filePath, parsed.assetPath);
+  const targetPath = nextZipAssetPath(zip, preferredPath || parsed.assetPath, path.extname(parsed.assetPath) || extensionFromMime(asset.mime));
+  zip.file(targetPath, asset.buffer);
+  return targetPath;
+}
+
+function linkAssetImages(filePath, html, metrics = null) {
+  const matches = [...html.matchAll(ASSET_URL_PATTERN)];
+  const linked = html.replace(ASSET_URL_PATTERN, (full, quote, assetPath) => {
+    const normalizedAssetPath = normalizeAssetPath(assetPath);
+    return normalizedAssetPath ? `src=${quote}${assetUrlForDocument(filePath, normalizedAssetPath)}${quote}` : full;
+  });
+  if (metrics) {
+    metrics.assetReferences = matches.length;
+    metrics.linkedAssets = new Set(matches.map((match) => normalizeAssetPath(match[2])).filter(Boolean)).size;
+  }
+  return linked;
+}
+
+async function packageAiStateAssets(zip, aiState) {
+  const normalized = normalizeSavedAiState(aiState);
+  const images = normalized.optimize?.assets?.images || {};
+  const nextImages = {};
+  for (const [key, image] of Object.entries(images)) {
+    const nextImage = { ...image };
+    if (typeof nextImage.src === "string" && nextImage.src.startsWith(`${ASSET_PROTOCOL}://`)) {
+      const copiedPath = await copyProtocolAssetToZip(zip, nextImage.src, "");
+      if (copiedPath) {
+        nextImage.src = copiedPath;
+      }
+    }
+    nextImages[key] = nextImage;
+  }
+  return {
+    ...normalized,
+    optimize: {
+      ...normalized.optimize,
+      assets: {
+        ...normalized.optimize.assets,
+        images: nextImages,
+      },
+    },
+  };
+}
+
+function linkAiStateAssets(filePath, aiState) {
+  const normalized = normalizeSavedAiState(aiState);
+  const images = normalized.optimize?.assets?.images || {};
+  const nextImages = {};
+  Object.entries(images).forEach(([key, image]) => {
+    const nextImage = { ...image };
+    if (typeof nextImage.src === "string" && normalizeAssetPath(nextImage.src)) {
+      nextImage.src = assetUrlForDocument(filePath, nextImage.src);
+    }
+    nextImages[key] = nextImage;
+  });
+  return {
+    ...normalized,
+    optimize: {
+      ...normalized.optimize,
+      assets: {
+        ...normalized.optimize.assets,
+        images: nextImages,
+      },
+    },
+  };
 }
 
 async function savePaperDocument(filePath, document) {
@@ -337,15 +1038,20 @@ async function savePaperDocument(filePath, document) {
   const zip = new JSZip();
   const packagedDocument = { ...normalized };
 
+  packagedDocument.html = await extractProtocolImages(zip, packagedDocument.html);
   packagedDocument.html = extractDataImages(zip, packagedDocument.html);
+  if (packagedDocument.customBackground?.startsWith(`${ASSET_PROTOCOL}://`)) {
+    packagedDocument.customBackground = await copyProtocolAssetToZip(zip, packagedDocument.customBackground, "assets/background.png");
+  }
   if (packagedDocument.customBackground?.startsWith("data:")) {
     const decoded = dataUrlToBuffer(packagedDocument.customBackground);
     if (decoded) {
-      const backgroundPath = `assets/background${extensionFromMime(decoded.mime)}`;
+      const backgroundPath = nextZipAssetPath(zip, `assets/background${extensionFromMime(decoded.mime)}`, extensionFromMime(decoded.mime));
       zip.file(backgroundPath, decoded.buffer);
       packagedDocument.customBackground = backgroundPath;
     }
   }
+  packagedDocument.aiState = await packageAiStateAssets(zip, packagedDocument.aiState);
 
   zip.file("document.json", JSON.stringify(packagedDocument, null, 2));
   const output = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
@@ -353,16 +1059,37 @@ async function savePaperDocument(filePath, document) {
   await fs.writeFile(filePath, output);
 }
 
-async function loadPaperDocument(filePath) {
+async function loadPaperDocument(filePath, metrics = null) {
+  const startedAt = Date.now();
   const buffer = await fs.readFile(filePath);
+  let sourceStat = null;
+  try {
+    sourceStat = await fs.stat(filePath);
+  } catch {
+    sourceStat = null;
+  }
+  if (metrics) {
+    metrics.readMs = Date.now() - startedAt;
+    metrics.fileBytes = buffer.byteLength;
+  }
+  const zipStartedAt = Date.now();
   const zip = await JSZip.loadAsync(buffer);
+  rememberAssetZip(filePath, sourceStat, zip);
+  if (metrics) {
+    metrics.zipLoadMs = Date.now() - zipStartedAt;
+  }
   const documentFile = zip.file("document.json");
   if (!documentFile) {
     throw new Error("这个信笺文档缺少 document.json。");
   }
 
+  const jsonStartedAt = Date.now();
   const raw = await documentFile.async("string");
   const parsedDocument = JSON.parse(raw);
+  if (metrics) {
+    metrics.jsonMs = Date.now() - jsonStartedAt;
+    metrics.documentJsonBytes = Buffer.byteLength(raw, "utf8");
+  }
   if (!parsedDocument.createdAt) {
     try {
       const stat = await fs.stat(filePath);
@@ -372,16 +1099,21 @@ async function loadPaperDocument(filePath) {
     }
   }
   const document = normalizeDocument(parsedDocument);
-  document.html = await hydrateAssetImages(zip, document.html);
-
-  if (document.customBackground && !document.customBackground.startsWith("data:")) {
-    const backgroundFile = zip.file(document.customBackground);
-    if (backgroundFile) {
-      const background = await backgroundFile.async("nodebuffer");
-      document.customBackground = `data:${mimeFromPath(document.customBackground)};base64,${background.toString("base64")}`;
-    }
+  const assetLinkStartedAt = Date.now();
+  document.html = linkAssetImages(filePath, document.html, metrics);
+  if (metrics) {
+    metrics.assetLinkMs = Date.now() - assetLinkStartedAt;
+    metrics.htmlBytes = Buffer.byteLength(document.html, "utf8");
   }
 
+  if (document.customBackground && !document.customBackground.startsWith("data:")) {
+    document.customBackground = assetUrlForDocument(filePath, document.customBackground);
+  }
+  document.aiState = linkAiStateAssets(filePath, document.aiState);
+
+  if (metrics) {
+    metrics.totalMs = Date.now() - startedAt;
+  }
   return document;
 }
 
@@ -400,6 +1132,141 @@ ipcMain.handle("app:get-paths", async () => {
 ipcMain.handle("debug:log", async (_event, event, data) => {
   const logPath = await writeAiDebugLog(String(event || "renderer"), data || {});
   return { ok: true, path: logPath || aiDebugLogPath() };
+});
+
+ipcMain.handle("window:set-modal-overlay", async () => {
+  try {
+    if (typeof mainWindow?.setTitleBarOverlay === "function") {
+      mainWindow.setTitleBarOverlay(TITLE_BAR_OVERLAY_DEFAULT);
+    }
+    return { ok: true };
+  } catch (error) {
+    await writeAiDebugLog("window:set-modal-overlay:error", { message: error?.message });
+    return { ok: false, message: error?.message };
+  }
+});
+
+ipcMain.handle("ai:get-config", async () => publicAiConfig(await readAiConfig()));
+
+ipcMain.handle("ai:save-config", async (_event, patch) => {
+  const config = await saveAiConfig(patch || {});
+  await writeAiDebugLog("ai:config:saved", {
+    provider: config.provider,
+    model: config.model,
+    hasApiKey: Boolean(config.apiKey),
+  });
+  return publicAiConfig(config);
+});
+
+ipcMain.handle("ai:test-config", async (_event, patch) => {
+  const provider = normalizeAiProvider(patch?.provider);
+  try {
+    const existing = await readAiConfig();
+    const previousProviderConfig = existing.providers[provider] || normalizeAiProviderConfig(provider);
+    const modelId = String(patch?.modelId || previousProviderConfig.activeModelId || createAiModelId(provider, patch?.model || previousProviderConfig.model)).trim();
+    const previousModelConfig = previousProviderConfig.models.find((model) => model.id === modelId) || previousProviderConfig.models[0];
+    const config = {
+      provider,
+      modelId,
+      modelName: patch?.modelName || previousModelConfig?.name,
+      model: patch?.model || previousModelConfig?.model || previousProviderConfig.model,
+      baseUrl: patch?.baseUrl || previousProviderConfig.baseUrl,
+      apiKey: typeof patch?.apiKey === "string" && patch.apiKey.trim() ? patch.apiKey : previousProviderConfig.apiKey,
+    };
+    await testAiConfig(config);
+    const next = await updateAiProviderTestState(provider, modelId, {
+      modelName: config.modelName,
+      model: config.model,
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      testedOk: true,
+      testedAt: new Date().toISOString(),
+      testMessage: "AI 连接可用",
+    });
+    await writeAiDebugLog("ai:test:success", { provider: config.provider, model: config.model });
+    return { ...publicAiConfig(next), ok: true, message: "AI 连接可用" };
+  } catch (error) {
+    const existing = await readAiConfig();
+    const previousProviderConfig = existing.providers[provider] || normalizeAiProviderConfig(provider);
+    const modelId = String(patch?.modelId || previousProviderConfig.activeModelId || createAiModelId(provider, patch?.model || previousProviderConfig.model)).trim();
+    const previousModelConfig = previousProviderConfig.models.find((model) => model.id === modelId) || previousProviderConfig.models[0];
+    const next = await updateAiProviderTestState(provider, modelId, {
+      modelName: patch?.modelName || previousModelConfig?.name,
+      model: patch?.model || previousModelConfig?.model || previousProviderConfig.model,
+      baseUrl: patch?.baseUrl || previousProviderConfig.baseUrl,
+      apiKey: typeof patch?.apiKey === "string" && patch.apiKey.trim() ? patch.apiKey : previousProviderConfig.apiKey,
+      testedOk: false,
+      testedAt: new Date().toISOString(),
+      testMessage: error?.message || "AI 连接失败",
+    });
+    await writeAiDebugLog("ai:test:error", {
+      provider: patch?.provider,
+      model: patch?.model,
+      baseUrl: patch?.baseUrl,
+      message: error?.message,
+      causeCode: error?.cause?.code,
+      causeMessage: error?.cause?.message,
+    });
+    return { ...publicAiConfig(next), ok: false, message: error?.message || "AI 连接失败" };
+  }
+});
+
+ipcMain.handle("ai:generate", async (event, payload) => {
+  const requestId = String(payload?.requestId || "");
+  const messages = normalizeAiMessages(payload || {});
+  if (!requestId || !messages.some((message) => message.content.trim())) {
+    return { ok: false, message: "AI 请求缺少内容" };
+  }
+  const config = activeAiProviderConfig(await readAiConfig(), payload?.provider, payload?.modelId);
+  if (!config.apiKey || !config.testedOk) {
+    return { ok: false, message: "请选择已测试可用的 AI 模型" };
+  }
+  const controller = new AbortController();
+  activeAiRequests.set(requestId, controller);
+  streamAiCompletion(event.sender, requestId, config, messages, controller.signal)
+    .then((usage) => {
+      event.sender.send("ai:done", { requestId, usage });
+      activeAiRequests.delete(requestId);
+    })
+    .catch(async (error) => {
+      const aborted = controller.signal.aborted;
+      await writeAiDebugLog("ai:generate:error", { requestId, aborted, message: error?.message });
+      event.sender.send("ai:error", {
+        requestId,
+        message: aborted ? "已停止生成" : (error?.message || "AI 生成失败"),
+        aborted,
+      });
+      activeAiRequests.delete(requestId);
+    });
+  return { ok: true, requestId };
+});
+
+ipcMain.handle("ai:cancel", async (_event, requestId) => {
+  const id = String(requestId || "");
+  const controller = activeAiRequests.get(id);
+  if (controller) {
+    controller.abort();
+    activeAiRequests.delete(id);
+  }
+  return { ok: true };
+});
+
+ipcMain.handle("ai:export-chat", async (_event, payload) => {
+  const title = sanitizeName(payload?.title || "AI问答");
+  const stamp = timestampForFileName();
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "另存 AI 问答记录",
+    defaultPath: path.join(defaultDocumentsDir(), `${title}-AI问答-${stamp}.md`),
+    filters: [
+      { name: "Markdown", extensions: ["md"] },
+      { name: "Text", extensions: ["txt"] },
+    ],
+  });
+  if (result.canceled || !result.filePath) {
+    return { canceled: true };
+  }
+  await fs.writeFile(result.filePath, String(payload?.markdown || ""), "utf8");
+  return { canceled: false, path: result.filePath };
 });
 
 ipcMain.handle("update:get-state", async () => updateState);
@@ -461,7 +1328,9 @@ ipcMain.handle("document:open", async () => {
   }
 
   const filePath = result.filePaths[0];
-  const document = await loadPaperDocument(filePath);
+  const metrics = {};
+  const document = await loadPaperDocument(filePath, metrics);
+  await writeAiDebugLog("document:open:loaded", { filePath, ...metrics });
   return { canceled: false, path: filePath, document };
 });
 
@@ -473,9 +1342,16 @@ ipcMain.handle("document:open-path", async (_event, filePath) => {
     return { canceled: true };
   }
   try {
-    const document = await loadPaperDocument(filePath);
+    const metrics = {};
+    const document = await loadPaperDocument(filePath, metrics);
+    await writeAiDebugLog("document:open-path:loaded", { filePath, ...metrics });
     return { canceled: false, path: filePath, document };
-  } catch {
+  } catch (error) {
+    await writeAiDebugLog("document:open-path:error", {
+      filePath,
+      message: error?.message,
+      code: error?.code,
+    });
     return { canceled: true };
   }
 });
@@ -660,33 +1536,15 @@ async function listFolderEntries(folderPath) {
   const parent = path.dirname(folderPath);
   const parentPath = parent && parent !== folderPath ? parent : "";
   const folders = [];
-  const files = [];
+  const fileReads = [];
   for (const entry of entries) {
     const filePath = path.join(folderPath, entry.name);
     if (entry.isDirectory()) {
-      const childStartedAt = Date.now();
-      let hasLetterpapers = false;
-      try {
-        hasLetterpapers = await folderHasDocument(filePath);
-        await writeAiDebugLog("folder:child-scan", {
-          folderPath: filePath,
-          ms: Date.now() - childStartedAt,
-          hasLetterpapers,
-        });
-      } catch (error) {
-        await writeAiDebugLog("folder:child-scan:error", {
-          folderPath: filePath,
-          ms: Date.now() - childStartedAt,
-          code: error?.code,
-          message: error?.message,
-        });
-        // Ignore directories that cannot be read.
-      }
       folders.push({
         type: "folder",
         name: entry.name,
         path: filePath,
-        hasLetterpapers,
+        hasLetterpapers: null,
         updatedAt: "",
       });
       continue;
@@ -696,19 +1554,31 @@ async function listFolderEntries(folderPath) {
       continue;
     }
 
-    const stat = await fs.stat(filePath);
-    const displayName = path.basename(entry.name, path.extname(entry.name));
-    files.push({
-      type: "file",
-      name: entry.name,
-      displayName,
-      path: filePath,
-      extension: path.extname(entry.name).toLowerCase(),
-      updatedAt: stat.mtime.toISOString(),
-      size: stat.size,
-    });
+    fileReads.push((async () => {
+      try {
+        const stat = await fs.stat(filePath);
+        const displayName = path.basename(entry.name, path.extname(entry.name));
+        return {
+          type: "file",
+          name: entry.name,
+          displayName,
+          path: filePath,
+          extension: path.extname(entry.name).toLowerCase(),
+          updatedAt: stat.mtime.toISOString(),
+          size: stat.size,
+        };
+      } catch (error) {
+        await writeAiDebugLog("folder:file-stat:error", {
+          filePath,
+          code: error?.code,
+          message: error?.message,
+        });
+        return null;
+      }
+    })());
   }
 
+  const files = (await Promise.all(fileReads)).filter(Boolean);
   folders.sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
   files.sort((left, right) => left.displayName.localeCompare(right.displayName, "zh-CN"));
   return {
@@ -718,20 +1588,6 @@ async function listFolderEntries(folderPath) {
     files,
     entries: [...folders, ...files],
   };
-}
-
-async function folderHasDocument(folderPath) {
-  try {
-    const entries = await fs.readdir(folderPath, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile() && isSupportedDocument(path.join(folderPath, entry.name))) {
-        return true;
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
 }
 
 ipcMain.handle("document:save", async (_event, document, currentPath, saveAs) => {
@@ -887,6 +1743,12 @@ ipcMain.handle("autosave:save", async (_event, document) => {
   return { path: filePath };
 });
 
+ipcMain.handle("autosave:save-tab", async (_event, document, tabId) => {
+  const filePath = autosaveSessionPath(tabId);
+  await savePaperDocument(filePath, document);
+  return { canceled: false, path: filePath };
+});
+
 ipcMain.handle("autosave:clear", async () => {
   try {
     await fs.rm(autosavePath(), { force: true });
@@ -896,10 +1758,44 @@ ipcMain.handle("autosave:clear", async () => {
   return { ok: true };
 });
 
+ipcMain.handle("app:confirm-close", async (_event, payload = {}) => {
+  const dirtyCount = Number(payload.dirtyCount) || 0;
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    title: "关闭信笺写作",
+    message: dirtyCount > 1 ? `有 ${dirtyCount} 篇信笺尚未保存` : "当前信笺尚未保存",
+    detail: "选择“保存并关闭”会先保存已有文件；未命名信笺会保存为临时会话文件，下次启动会恢复打开。",
+    buttons: ["保存并关闭", "不保存", "取消"],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  });
+  if (result.response === 0) {
+    return { action: "save" };
+  }
+  if (result.response === 1) {
+    return { action: "discard" };
+  }
+  return { action: "cancel" };
+});
+
+ipcMain.handle("app:close-ready", async () => {
+  forceCloseWindow = true;
+  closeRequestInFlight = false;
+  mainWindow?.close();
+  return { ok: true };
+});
+
+ipcMain.handle("app:close-canceled", async () => {
+  closeRequestInFlight = false;
+  return { ok: true };
+});
+
 app.whenReady().then(() => {
   if (process.platform === "win32") {
     app.setAppUserModelId("PaperWriter.Electron");
   }
+  registerAssetProtocol();
   createWindow();
 });
 
