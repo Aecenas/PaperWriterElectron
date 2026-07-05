@@ -2407,21 +2407,22 @@ button:disabled {
 .paper-editor h1[data-heading-number],
 .paper-editor h2[data-heading-number],
 .paper-editor h3[data-heading-number] {
-  display: flex;
-  align-items: baseline;
-  gap: 0.62em;
+  display: block;
 }
 
 .paper-editor h1[data-heading-number]::before,
 .paper-editor h2[data-heading-number]::before,
 .paper-editor h3[data-heading-number]::before {
-  flex: 0 0 auto;
+  display: inline-block;
+  margin-right: 0.62em;
   color: inherit;
   font-family: inherit;
   font-size: 1em;
   font-weight: inherit;
   line-height: inherit;
   content: attr(data-heading-number);
+  pointer-events: none;
+  user-select: none;
 }
 
 .paper-toc {

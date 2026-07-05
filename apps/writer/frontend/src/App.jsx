@@ -5429,10 +5429,11 @@ function PaperCanvas({
   aiCaptureEnabled = false,
   onCaptureAiSelection,
   onActivate,
+  canvasRef,
 }) {
   const { selectedTemplate, paperStyle } = useMemo(() => getPaperPresentation(document, letterTemplates), [document, letterTemplates]);
   return (
-    <main className={[printMode ? "canvas print-mode" : "canvas", className].filter(Boolean).join(" ")} onPointerDown={onActivate}>
+    <main ref={canvasRef} className={[printMode ? "canvas print-mode" : "canvas", className].filter(Boolean).join(" ")} onPointerDown={onActivate}>
       <SelectionBubbleToolbar
         editor={editor}
         disabled={printMode || imageExportMode || readOnly}
@@ -5905,8 +5906,27 @@ function createDocumentTab(document, path = "", dirty = false) {
     title: document?.title || "未命名信笺",
     document,
     editorJson: null,
+    scrollState: { top: 0, left: 0 },
     dirty,
   };
+}
+
+function readCanvasScrollState(canvas) {
+  if (!canvas) {
+    return { top: 0, left: 0 };
+  }
+  return {
+    top: Math.max(0, Math.round(canvas.scrollTop || 0)),
+    left: Math.max(0, Math.round(canvas.scrollLeft || 0)),
+  };
+}
+
+function restoreCanvasScrollState(canvas, scrollState) {
+  if (!canvas) {
+    return;
+  }
+  canvas.scrollTop = Math.max(0, Number(scrollState?.top) || 0);
+  canvas.scrollLeft = Math.max(0, Number(scrollState?.left) || 0);
 }
 
 function buildOutlineItems(editor) {
@@ -6137,6 +6157,7 @@ export default function App() {
   const openTabsRef = useRef(openTabs);
   const activeTabIdRef = useRef(activeTabId);
   const activeDocumentKeyRef = useRef(documentRuntimeKey(currentPath, activeTabId));
+  const mainCanvasRef = useRef(null);
   const currentPathRef = useRef(currentPath);
   const dirtyRef = useRef(dirty);
   const documentStateRef = useRef(documentState);
@@ -6538,6 +6559,7 @@ export default function App() {
     const activePath = currentPathRef.current;
     const activeDirty = dirtyRef.current;
     const activeDocument = getSaveDocumentRef.current?.() || documentStateRef.current;
+    const activeScrollState = readCanvasScrollState(mainCanvasRef.current);
     return openTabsRef.current.map((tab) => (
       tab.id === activeId
         ? {
@@ -6547,6 +6569,7 @@ export default function App() {
             document: activeDocument,
             dirty: activeDirty,
             editorJson: editor?.getJSON?.() || tab.editorJson,
+            scrollState: activeScrollState,
           }
         : tab
     ));
@@ -6947,6 +6970,11 @@ export default function App() {
           setContentMs: Math.round(setContentMs),
           totalMs: Math.round((window.performance?.now?.() || Date.now()) - startedAt),
         });
+        window.requestAnimationFrame(() => {
+          if (applyDocumentRunRef.current === runId) {
+            restoreCanvasScrollState(mainCanvasRef.current, options.scrollState);
+          }
+        });
         window.setTimeout(() => {
           if (applyDocumentRunRef.current === runId) {
             applyingRef.current = false;
@@ -7074,16 +7102,17 @@ export default function App() {
       const existingTab = nextPath ? openTabs.find((tab) => tab.path === nextPath) : null;
       const currentDocument = getSaveDocument();
       const currentEditorJson = editor?.getJSON?.() || null;
+      const currentScrollState = readCanvasScrollState(mainCanvasRef.current);
       if (existingTab) {
         if (existingTab.id !== activeTabId) {
           setOpenTabs((tabs) => tabs.map((tab) => (
             tab.id === activeTabId
-              ? { ...tab, document: currentDocument, editorJson: currentEditorJson, title: currentDocument.title, path: currentPath, dirty }
+              ? { ...tab, document: currentDocument, editorJson: currentEditorJson, title: currentDocument.title, path: currentPath, dirty, scrollState: currentScrollState }
               : tab
           )));
           setActiveTabId(existingTab.id);
           setActivePane("main");
-          applyDocument(existingTab.document, existingTab.path, existingTab.dirty, { editorJson: existingTab.editorJson });
+          applyDocument(existingTab.document, existingTab.path, existingTab.dirty, { editorJson: existingTab.editorJson, scrollState: existingTab.scrollState });
         }
         return existingTab.id;
       }
@@ -7103,7 +7132,7 @@ export default function App() {
         return [
           ...retainedTabs.map((existing) => (
             existing.id === activeTabId
-              ? { ...existing, document: currentDocument, editorJson: currentEditorJson, title: currentDocument.title, path: currentPath, dirty }
+              ? { ...existing, document: currentDocument, editorJson: currentEditorJson, title: currentDocument.title, path: currentPath, dirty, scrollState: currentScrollState }
               : existing
           )),
           tab,
@@ -7111,7 +7140,7 @@ export default function App() {
       });
       setActiveTabId(tab.id);
       setActivePane("main");
-      applyDocument(normalized, nextPath, nextDirty);
+      applyDocument(normalized, nextPath, nextDirty, { scrollState: tab.scrollState });
       return tab.id;
     },
     [activeTabId, applyDocument, currentPath, dirty, editor, getSaveDocument, letterTemplates, openTabs, tabCapacityFull],
@@ -7279,14 +7308,15 @@ export default function App() {
       }
       const currentDocument = getSaveDocument();
       const currentEditorJson = editor?.getJSON?.() || null;
+      const currentScrollState = readCanvasScrollState(mainCanvasRef.current);
       setOpenTabs((tabs) => tabs.map((tab) => (
         tab.id === activeTabId
-          ? { ...tab, document: currentDocument, editorJson: currentEditorJson, title: currentDocument.title, path: currentPath, dirty }
+          ? { ...tab, document: currentDocument, editorJson: currentEditorJson, title: currentDocument.title, path: currentPath, dirty, scrollState: currentScrollState }
           : tab
       )));
       setActiveTabId(target.id);
       setActivePane("main");
-      applyDocument(target.document, target.path, target.dirty, { editorJson: target.editorJson });
+      applyDocument(target.document, target.path, target.dirty, { editorJson: target.editorJson, scrollState: target.scrollState });
     },
     [activeTabId, applyDocument, currentPath, dirty, editor, getSaveDocument, openTabs],
   );
@@ -7324,14 +7354,14 @@ export default function App() {
         const nextTab = createDocumentTab(blank);
         setOpenTabs([nextTab]);
         setActiveTabId(nextTab.id);
-        applyDocument(blank, "", false);
+        applyDocument(blank, "", false, { scrollState: nextTab.scrollState });
         return;
       }
       setOpenTabs(remaining);
       if (isActive) {
         const nextTab = remaining[Math.max(0, closingIndex - 1)] || remaining[0];
         setActiveTabId(nextTab.id);
-        applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson });
+        applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson, scrollState: nextTab.scrollState });
       }
     },
     [activeTabId, applyDocument, dirty, openTabs, showConfirmDialog],
@@ -7607,14 +7637,14 @@ export default function App() {
           const nextTab = remainingTabs[0];
           setOpenTabs(remainingTabs);
           setActiveTabId(nextTab.id);
-          applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson });
+          applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson, scrollState: nextTab.scrollState });
           persistSession({ activePath: nextTab.path || "" });
         } else {
           const blank = createBlankDocument();
           const tab = createDocumentTab(blank);
           setOpenTabs([tab]);
           setActiveTabId(tab.id);
-          applyDocument(blank, "", false);
+          applyDocument(blank, "", false, { scrollState: tab.scrollState });
           persistSession({ activePath: "" });
         }
       } else {
@@ -7623,7 +7653,7 @@ export default function App() {
           const nextTab = remainingTabs[0];
           if (nextTab) {
             setActiveTabId(nextTab.id);
-            applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson });
+            applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson, scrollState: nextTab.scrollState });
           }
         }
       }
@@ -8502,6 +8532,7 @@ export default function App() {
                 readOnly={aiMode && aiStatus === "streaming"}
                 aiCaptureEnabled={aiMode && aiChatMode}
                 onCaptureAiSelection={handleCaptureAiChatSelection}
+                canvasRef={mainCanvasRef}
               />
               {!aiMode && rightSplitDocument ? (
                 <div className="right-split-pane">
