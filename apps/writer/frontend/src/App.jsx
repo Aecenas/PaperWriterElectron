@@ -122,6 +122,8 @@ const SESSION_STORAGE_KEY = "paperwriter.sessionState";
 const IMAGE_EXPORT_STAGE_ID = "paperwriter-image-export-stage";
 const IMAGE_EXPORT_SEGMENT_PADDING = 24;
 const FOLDER_LIST_TIMEOUT_MS = 8000;
+const FOLDER_DOUBLE_CLICK_MAX_MS = 300;
+const UPDATE_RESULT_RESET_MS = 2800;
 const UPDATE_AUTO_CHECK_STORAGE_KEY = "paperwriter.updateLastAutoCheckAt";
 const UPDATE_AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const AI_PROMPT_PREFIX = "这是我正在写的文章，请你帮我优化内容与表达：";
@@ -235,6 +237,10 @@ const ICON_ASSETS = {
   cacheBroom: new URL("./assets/icons/cache-broom.png", import.meta.url).href,
   updateArrow: new URL("./assets/icons/update-arrow.svg", import.meta.url).href,
   rightSplit: new URL("./assets/icons/right-split.png", import.meta.url).href,
+};
+
+const DECOR_ASSETS = {
+  tocTitleSignature: new URL("./assets/decor/toc-title-signature.png", import.meta.url).href,
 };
 
 const HELP_SCREENSHOTS = {
@@ -2480,7 +2486,10 @@ function PaperTocNodeView({ editor, selected, getPos }) {
       contentEditable={false}
       onMouseDown={preventTocSelection}
     >
-      <h2>目录</h2>
+      <h2 className="paper-toc-title" aria-label="目录">
+        <img src={DECOR_ASSETS.tocTitleSignature} alt="" aria-hidden="true" />
+        <span>目录</span>
+      </h2>
       {headings.length ? (
         <ol className="paper-toc-list">
           {headings.map((heading) => (
@@ -2517,7 +2526,10 @@ const PaperTableOfContents = Node.create({
         class: "paper-toc",
         contenteditable: "false",
       }),
-      ["h2", {}, "目录"],
+      ["h2", { class: "paper-toc-title", "aria-label": "目录" }, [
+        "img",
+        { src: DECOR_ASSETS.tocTitleSignature, alt: "", "aria-hidden": "true" },
+      ], ["span", {}, "目录"]],
     ];
   },
 
@@ -3188,16 +3200,22 @@ function FolderEntryRows({
   onConsumeDragClick = () => false,
   dragTargetPath = "",
 }) {
+  const lastFolderClickRef = useRef({ path: "", at: 0 });
+
   const handleFolderClick = useCallback((event, path) => {
     if (onConsumeDragClick()) {
       return;
     }
+    const now = window.performance?.now?.() || Date.now();
+    const previous = lastFolderClickRef.current;
     onToggleFolder(path);
-  }, [onConsumeDragClick, onToggleFolder]);
-
-  const handleFolderDoubleClick = useCallback((path) => {
-    onOpenFolderPath(path);
-  }, [onOpenFolderPath]);
+    if (previous.path === path && now - previous.at <= FOLDER_DOUBLE_CLICK_MAX_MS) {
+      lastFolderClickRef.current = { path: "", at: 0 };
+      onOpenFolderPath(path);
+      return;
+    }
+    lastFolderClickRef.current = { path, at: now };
+  }, [onConsumeDragClick, onOpenFolderPath, onToggleFolder]);
 
   return entries.map((entry) => {
     if (entry.type === "folder") {
@@ -3225,7 +3243,6 @@ function FolderEntryRows({
               className={dragTargetPath === entry.path ? "folder-entry-main drag-target" : "folder-entry-main"}
               data-drop-folder-path={entry.path}
               onClick={(event) => handleFolderClick(event, entry.path)}
-              onDoubleClick={() => handleFolderDoubleClick(entry.path)}
               onContextMenu={(event) => onContextMenu(event, entry)}
               onPointerDown={(event) => onDragPointerDown(event, entry)}
               title={`${entry.name}（单击展开/收起，双击进入）`}
@@ -5670,6 +5687,85 @@ function AppConfirmDialog({ dialog, onResolve }) {
   return createPortal(content, window.document.body);
 }
 
+function AppPromptDialog({ dialog, onResolve }) {
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (!dialog) {
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onResolve(null);
+      }
+    };
+    window.document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [dialog, onResolve]);
+
+  if (!dialog) {
+    return null;
+  }
+
+  const Icon = dialog.icon || Pencil;
+  const content = (
+    <div className="app-confirm-overlay" role="presentation" onMouseDown={() => onResolve(null)}>
+      <form
+        className="app-confirm-dialog app-prompt-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="app-prompt-title"
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          onResolve(inputRef.current?.value || "");
+        }}
+      >
+        <button type="button" className="app-confirm-close" onClick={() => onResolve(null)} aria-label="关闭提示" title="关闭提示">
+          <X size={17} />
+        </button>
+        <div className="app-confirm-icon" aria-hidden="true">
+          <Icon size={24} />
+        </div>
+        <div className="app-confirm-copy">
+          {dialog.eyebrow ? <span>{dialog.eyebrow}</span> : null}
+          <h2 id="app-prompt-title">{dialog.title}</h2>
+          {dialog.message ? <p className="app-confirm-message">{dialog.message}</p> : null}
+          <label className="app-prompt-field">
+            <span>{dialog.label || "名称"}</span>
+            <input
+              ref={inputRef}
+              type="text"
+              defaultValue={dialog.defaultValue || ""}
+              placeholder={dialog.placeholder || ""}
+              maxLength={dialog.maxLength || 120}
+            />
+          </label>
+        </div>
+        <footer className="app-confirm-actions">
+          <button type="button" className="ghost" onClick={() => onResolve(null)}>
+            <span>取消</span>
+          </button>
+          <button type="submit" className="primary">
+            <Check size={15} />
+            <span>{dialog.confirmLabel || "确定"}</span>
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+
+  return createPortal(content, window.document.body);
+}
+
 function StatusBar({ document, stats, dirty, version, cacheSummary, updateState, onRunUpdate, onClearCache }) {
   const cacheBytes = cacheSummary?.bytes || 0;
   const cacheCount = cacheSummary?.count || 0;
@@ -6011,6 +6107,7 @@ export default function App() {
   const [imageExportMode, setImageExportMode] = useState(false);
   const [tabCapacityFull, setTabCapacityFull] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [promptDialog, setPromptDialog] = useState(null);
   const [updateState, setUpdateState] = useState({ status: "idle", message: "尚未检查更新" });
   const [aiConfig, setAiConfig] = useState(DEFAULT_AI_CONFIG);
   const [aiSelectedProvider, setAiSelectedProvider] = useState(DEFAULT_AI_CONFIG.activeProvider);
@@ -6035,6 +6132,7 @@ export default function App() {
   const readyRef = useRef(false);
   const editorSelectionRef = useRef(null);
   const updateFlowRef = useRef({ active: false, handled: "" });
+  const updateResultResetTimerRef = useRef(0);
   const restoreRunRef = useRef(0);
   const openTabsRef = useRef(openTabs);
   const activeTabIdRef = useRef(activeTabId);
@@ -6059,6 +6157,7 @@ export default function App() {
   const aiChatAssistantIdRef = useRef("");
   const aiChatContextRef = useRef({ signature: "", context: "" });
   const confirmDialogResolverRef = useRef(null);
+  const promptDialogResolverRef = useRef(null);
   const aiChatMessagesRef = useRef([]);
   const rightSplitTab = useMemo(() => openTabs.find((tab) => tab.id === rightSplitTabId) || null, [openTabs, rightSplitTabId]);
   const rightSplitDocument = useMemo(() => {
@@ -6190,19 +6289,38 @@ export default function App() {
     });
   }), []);
 
+  const resolvePromptDialog = useCallback((value) => {
+    const resolver = promptDialogResolverRef.current;
+    promptDialogResolverRef.current = null;
+    setPromptDialog(null);
+    resolver?.(value);
+  }, []);
+
+  const showPromptDialog = useCallback((options) => new Promise((resolve) => {
+    promptDialogResolverRef.current?.(null);
+    promptDialogResolverRef.current = resolve;
+    setPromptDialog({
+      defaultValue: "",
+      confirmLabel: "确定",
+      ...options,
+    });
+  }), []);
+
   useEffect(() => {
-    if (!confirmDialog) {
+    if (!confirmDialog && !promptDialog) {
       return undefined;
     }
     bridge.setWindowModalOverlay?.(false);
     return () => {
       bridge.setWindowModalOverlay?.(false);
     };
-  }, [confirmDialog]);
+  }, [confirmDialog, promptDialog]);
 
   useEffect(() => () => {
     confirmDialogResolverRef.current?.("cancel");
     confirmDialogResolverRef.current = null;
+    promptDialogResolverRef.current?.(null);
+    promptDialogResolverRef.current = null;
   }, []);
 
   const updateDocumentAiStateForKey = useCallback((documentKey, updater) => {
@@ -6681,18 +6799,44 @@ export default function App() {
     setHelpOpen(false);
   }, []);
 
+  const clearUpdateResultReset = useCallback(() => {
+    if (!updateResultResetTimerRef.current) {
+      return;
+    }
+    window.clearTimeout(updateResultResetTimerRef.current);
+    updateResultResetTimerRef.current = 0;
+  }, []);
+
+  const scheduleUpdateResultReset = useCallback((state) => {
+    clearUpdateResultReset();
+    if (!["none", "dev", "error", "browser"].includes(state?.status)) {
+      return;
+    }
+    updateResultResetTimerRef.current = window.setTimeout(() => {
+      updateResultResetTimerRef.current = 0;
+      setUpdateState((current) => (
+        current?.status === state.status
+          ? { status: "idle", message: "尚未检查更新", version: current?.version }
+          : current
+      ));
+    }, UPDATE_RESULT_RESET_MS);
+  }, [clearUpdateResultReset]);
+
   useEffect(() => {
     let mounted = true;
     bridge.getUpdateState?.().then((state) => {
       if (mounted && state) {
         setUpdateState(state);
+        scheduleUpdateResultReset(state);
       }
     });
     const unsubscribe = bridge.onUpdateState?.((state) => {
+      clearUpdateResultReset();
       setUpdateState(state);
       if (state?.message) {
         showStatus(state.message, state.status === "error" ? "warning" : "success");
       }
+      scheduleUpdateResultReset(state);
       if (!updateFlowRef.current.active) {
         return;
       }
@@ -6712,11 +6856,13 @@ export default function App() {
     });
     return () => {
       mounted = false;
+      clearUpdateResultReset();
       unsubscribe?.();
     };
-  }, [showStatus]);
+  }, [clearUpdateResultReset, scheduleUpdateResultReset, showStatus]);
 
   const handleRunUpdate = useCallback(async () => {
+    clearUpdateResultReset();
     if (updateState?.status === "checking" || updateState?.status === "downloading") {
       return;
     }
@@ -6743,8 +6889,9 @@ export default function App() {
       if (["none", "error", "dev", "available", "downloaded", "browser"].includes(state.status)) {
         updateFlowRef.current = { active: false, handled: state.status };
       }
+      scheduleUpdateResultReset(state);
     }
-  }, [showStatus, updateState?.status]);
+  }, [clearUpdateResultReset, scheduleUpdateResultReset, showStatus, updateState?.status]);
 
   useEffect(() => {
     if (updateAutoCheckedRef.current) {
@@ -6759,11 +6906,12 @@ export default function App() {
     bridge.checkForUpdates?.().then((state) => {
       if (state) {
         setUpdateState(state);
+        scheduleUpdateResultReset(state);
       }
     }).catch((error) => {
       bridge.debugLog?.("renderer:update:auto-check:error", { message: error?.message });
     });
-  }, []);
+  }, [scheduleUpdateResultReset]);
 
   const applyDocument = useCallback(
     (nextDocument, nextPath = "", nextDirty = false, options = {}) => {
@@ -7325,7 +7473,13 @@ export default function App() {
     if (!parentPath) {
       return;
     }
-    const name = window.prompt("新建子文件夹名称", "新建文件夹");
+    const name = await showPromptDialog({
+      title: "新建子文件夹",
+      label: "文件夹名称",
+      defaultValue: "新建文件夹",
+      confirmLabel: "新建",
+      icon: FolderPlus,
+    });
     if (!name?.trim()) {
       return;
     }
@@ -7336,14 +7490,20 @@ export default function App() {
     }
     await refreshTreeAfterEntryChange(parentPath);
     showStatus("文件夹已新建", "success");
-  }, [folderState.path, refreshTreeAfterEntryChange, showStatus]);
+  }, [folderState.path, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
 
   const handleCreateDocumentInTree = useCallback(async (entry) => {
     const folderPath = entry?.path || folderState.path;
     if (!folderPath) {
       return;
     }
-    const title = window.prompt("新建信笺名称", "未命名信笺");
+    const title = await showPromptDialog({
+      title: "新建信笺",
+      label: "信笺名称",
+      defaultValue: "未命名信笺",
+      confirmLabel: "新建",
+      icon: FilePlus,
+    });
     if (!title?.trim()) {
       return;
     }
@@ -7355,14 +7515,20 @@ export default function App() {
     await refreshTreeAfterEntryChange(folderPath);
     addOrActivateDocumentTab(result.document || createBlankDocument(), result.path, false);
     showStatus("信笺已新建", "success");
-  }, [addOrActivateDocumentTab, folderState.path, refreshTreeAfterEntryChange, showStatus]);
+  }, [addOrActivateDocumentTab, folderState.path, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
 
   const handleRenameTreeEntry = useCallback(async (entry) => {
     if (!entry?.path) {
       return;
     }
     const currentName = entry.type === "file" ? (entry.displayName || entry.name.replace(/\.[^.]+$/, "")) : entry.name;
-    const nextName = window.prompt("重命名", currentName);
+    const nextName = await showPromptDialog({
+      title: "重命名",
+      label: entry.type === "file" ? "信笺名称" : "文件夹名称",
+      defaultValue: currentName,
+      confirmLabel: "保存",
+      icon: Pencil,
+    });
     if (!nextName?.trim() || nextName.trim() === currentName) {
       return;
     }
@@ -7391,7 +7557,7 @@ export default function App() {
 
     await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
     showStatus("已重命名", "success");
-  }, [currentPath, folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus]);
+  }, [currentPath, folderState.path, persistSession, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
 
   const handleBackupTreeDocument = useCallback(async (entry) => {
     if (!entry?.path || entry.type !== "file") {
@@ -7412,7 +7578,20 @@ export default function App() {
     }
     const label = entry.type === "file" ? (entry.displayName || entry.name) : entry.name;
     const scope = entry.type === "folder" ? "这个文件夹及其内部内容" : "这个信笺";
-    if (!window.confirm(`确定删除${scope}“${label}”吗？删除后会进入回收站。`)) {
+    const decision = await showConfirmDialog({
+      tone: "warning",
+      icon: Trash2,
+      eyebrow: entry.type === "folder" ? "删除文件夹" : "删除信笺",
+      title: entry.type === "folder" ? "删除这个文件夹？" : "删除这个信笺？",
+      message: `确定删除${scope}“${label}”吗？`,
+      detail: "删除后会进入回收站。",
+      cancelValue: "cancel",
+      actions: [
+        { value: "delete", label: "删除", variant: "danger", icon: Trash2 },
+        { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
+      ],
+    });
+    if (decision !== "delete") {
       return;
     }
     const result = await bridge.deleteEntry?.(entry.path);
@@ -7452,7 +7631,7 @@ export default function App() {
 
     await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
     showStatus("已删除", "success");
-  }, [activeTabId, applyDocument, currentPath, folderState.path, openTabs, persistSession, refreshTreeAfterEntryChange, showStatus]);
+  }, [activeTabId, applyDocument, currentPath, folderState.path, openTabs, persistSession, refreshTreeAfterEntryChange, showConfirmDialog, showStatus]);
 
   const handleMoveTreeEntry = useCallback(async (entry, targetFolderPath) => {
     if (!entry?.path || !targetFolderPath) {
@@ -8408,6 +8587,7 @@ export default function App() {
       />
       <StatusToast status={status} />
       <AppConfirmDialog dialog={confirmDialog} onResolve={resolveConfirmDialog} />
+      <AppPromptDialog dialog={promptDialog} onResolve={resolvePromptDialog} />
       <AiSettingsDialog
         open={aiSettingsOpen}
         config={aiConfig}
