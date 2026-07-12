@@ -2,38 +2,56 @@ const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, scr
 const { autoUpdater } = require("electron-updater");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { randomUUID } = require("node:crypto");
 const JSZip = require("jszip");
+const {
+  AI_PROTOCOLS,
+  BUILTIN_AI_PROVIDERS,
+  activeAiProviderConfig,
+  buildAiRequest,
+  createAiModelId,
+  extractAiStreamEvent,
+  mergeAiUsage,
+  normalizeAiConfig,
+  normalizeAiModelConfig,
+  normalizeAiProtocol,
+  normalizeAiProviderConfig,
+  publicAiConfig,
+} = require("./ai-provider-core.cjs");
+const {
+  CODEX_PROVIDER_ID,
+  refreshCodexStatus,
+  startCodexLogin,
+  streamCodexCompletion,
+} = require("./codex-cli-provider.cjs");
+const { normalizeCodexScope, resolveCodexScopeDirectory } = require("./codex-scope.cjs");
+const {
+  materializeCodexImageAttachments,
+  normalizeCodexImageMode,
+} = require("./codex-image-attachments.cjs");
 
 const APP_ROOT = path.resolve(__dirname, "..");
 const FRONTEND_URL = process.env.PAPERWRITER_FRONTEND_URL || "";
 const APP_ICON = path.resolve(__dirname, "assets", process.platform === "win32" ? "app-icon.ico" : "app-icon.png");
-const DATA_URL_PATTERN = /src=(["'])(data:image\/[^"']+)\1/gi;
+const DATA_URL_PATTERN = /src=(["'])(data:(?:image|audio|video)\/[^"']+)\1/gi;
 const ASSET_URL_PATTERN = /src=(["'])(assets\/[^"']+)\1/gi;
 const ASSET_PROTOCOL = "paperwriter-asset";
 const ASSET_PROTOCOL_URL_PATTERN = /src=(["'])(paperwriter-asset:\/\/[^"']+)\1/gi;
 const DOCUMENT_EXTENSION = ".letterpaper";
 const LEGACY_DOCUMENT_EXTENSION = ".paperdoc";
+const AUDIO_MAX_BYTES = 20 * 1024 * 1024;
+const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
+const AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "m4a", "aac", "flac"];
+const VIDEO_EXTENSIONS = ["mp4", "webm", "ogv"];
 const DOCUMENT_FILTERS = [
-  { name: "信笺写作文档", extensions: ["letterpaper"] },
+  { name: "笺间文档", extensions: ["letterpaper"] },
   { name: "旧版 PaperWriter 文档", extensions: ["paperdoc"] },
   { name: "All Files", extensions: ["*"] },
 ];
 const AI_DEBUG_LOG_MAX_BYTES = 2 * 1024 * 1024;
 const AI_CONFIG_FILE = "ai-config.json";
-const AI_PROVIDERS = {
-  gemini: {
-    label: "Gemini",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    model: "gemini-3.1-pro-preview",
-  },
-  deepseek: {
-    label: "DeepSeek",
-    baseUrl: "https://api.deepseek.com",
-    model: "deepseek-v4-flash",
-  },
-};
 const TITLE_BAR_OVERLAY_DEFAULT = {
-  color: "#c8d8d4",
+  color: "#cdd7d2",
   symbolColor: "#334155",
   height: 40,
 };
@@ -49,6 +67,14 @@ let updateState = {
 };
 const activeAiRequests = new Map();
 const assetZipCache = new Map();
+let codexRuntimeStatus = {
+  installed: false,
+  authenticated: false,
+  ready: false,
+  catalogFresh: false,
+  checkedAt: "",
+  message: "尚未检查本地 Codex CLI",
+};
 
 Menu.setApplicationMenu(null);
 autoUpdater.autoDownload = false;
@@ -137,7 +163,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 720,
     center: true,
-    title: "信笺写作",
+    title: "笺间",
     icon: APP_ICON,
     titleBarStyle: "hidden",
     titleBarOverlay: TITLE_BAR_OVERLAY_DEFAULT,
@@ -170,7 +196,7 @@ function createWindow() {
 
   mainWindow.loadFile(frontendDistPath()).catch((error) => {
     dialog.showErrorBox(
-      "信笺写作",
+      "笺间",
       `Frontend build not found. Run npm run build in apps/writer/frontend first.\n\n${error.message}`,
     );
   });
@@ -184,10 +210,48 @@ function registerAssetProtocol() {
     }
     try {
       const { buffer, mime } = await readPackagedAsset(parsed.filePath, parsed.assetPath);
+      const rangeHeader = request.headers.get("range");
+      const commonHeaders = {
+        "content-type": mime,
+        "cache-control": "no-store",
+        "accept-ranges": "bytes",
+      };
+      if (rangeHeader) {
+        const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim());
+        if (!match || buffer.length === 0 || (!match[1] && !match[2])) {
+          return new Response(null, { status: 416, headers: { ...commonHeaders, "content-range": `bytes */${buffer.length}` } });
+        }
+        let start;
+        let end;
+        if (!match[1]) {
+          const suffixLength = Number(match[2]);
+          if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+            return new Response(null, { status: 416, headers: { ...commonHeaders, "content-range": `bytes */${buffer.length}` } });
+          }
+          start = Math.max(0, buffer.length - suffixLength);
+          end = buffer.length - 1;
+        } else {
+          start = Number(match[1]);
+          end = match[2] ? Number(match[2]) : buffer.length - 1;
+          if (!Number.isFinite(start) || !Number.isFinite(end) || start >= buffer.length || end < start) {
+            return new Response(null, { status: 416, headers: { ...commonHeaders, "content-range": `bytes */${buffer.length}` } });
+          }
+          end = Math.min(end, buffer.length - 1);
+        }
+        const chunk = buffer.subarray(start, end + 1);
+        return new Response(chunk, {
+          status: 206,
+          headers: {
+            ...commonHeaders,
+            "content-length": String(chunk.length),
+            "content-range": `bytes ${start}-${end}/${buffer.length}`,
+          },
+        });
+      }
       return new Response(buffer, {
         headers: {
-          "content-type": mime,
-          "cache-control": "no-store",
+          ...commonHeaders,
+          "content-length": String(buffer.length),
         },
       });
     } catch (error) {
@@ -248,151 +312,9 @@ function defaultDocumentsDir() {
   return path.join(app.getPath("documents"), "PaperWriter");
 }
 
-function normalizeAiProvider(provider) {
-  return Object.prototype.hasOwnProperty.call(AI_PROVIDERS, provider) ? provider : "gemini";
-}
-
-function createAiModelId(provider, model = "") {
-  const source = String(model || "default").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${provider}-${source || "model"}`;
-}
-
-function normalizeAiModelConfig(provider, config = {}, index = 0) {
-  const providerDefaults = AI_PROVIDERS[provider];
-  const model = String(config.model || providerDefaults.model).trim() || providerDefaults.model;
-  return {
-    id: String(config.id || createAiModelId(provider, model || String(index + 1))).trim(),
-    name: String(config.name || config.modelName || (index === 0 ? "默认模型" : `模型 ${index + 1}`)).trim() || `模型 ${index + 1}`,
-    model,
-    testedOk: Boolean(config.testedOk),
-    testedAt: typeof config.testedAt === "string" ? config.testedAt : "",
-    testMessage: typeof config.testMessage === "string" ? config.testMessage : "",
-  };
-}
-
-function normalizeAiProviderConfig(provider, config = {}) {
-  const providerDefaults = AI_PROVIDERS[provider];
-  const legacyModel = {
-    id: config.activeModelId || createAiModelId(provider, config.model || providerDefaults.model),
-    name: config.modelName || "默认模型",
-    model: config.model,
-    testedOk: config.testedOk,
-    testedAt: config.testedAt,
-    testMessage: config.testMessage,
-  };
-  const modelsSource = Array.isArray(config.models) && config.models.length ? config.models : [legacyModel];
-  const models = modelsSource.map((modelConfig, index) => normalizeAiModelConfig(provider, modelConfig, index));
-  const activeModelId = config.activeModelId && models.some((model) => model.id === config.activeModelId)
-    ? config.activeModelId
-    : models[0].id;
-  const activeModel = models.find((model) => model.id === activeModelId) || models[0];
-  return {
-    baseUrl: String(config.baseUrl || providerDefaults.baseUrl).trim() || providerDefaults.baseUrl,
-    apiKey: typeof config.apiKey === "string" ? config.apiKey.trim() : "",
-    activeModelId,
-    models,
-    model: activeModel.model,
-    modelId: activeModel.id,
-    modelName: activeModel.name,
-    testedOk: Boolean(activeModel.testedOk),
-    testedAt: activeModel.testedAt || "",
-    testMessage: activeModel.testMessage || "",
-  };
-}
-
-function normalizeAiConfig(config = {}) {
-  const legacyProvider = normalizeAiProvider(config.provider);
-  const activeProvider = normalizeAiProvider(config.activeProvider || config.provider);
-  const providers = {};
-  Object.keys(AI_PROVIDERS).forEach((provider) => {
-    providers[provider] = normalizeAiProviderConfig(provider, config.providers?.[provider]);
-  });
-
-  if (!config.providers && config.provider) {
-    providers[legacyProvider] = normalizeAiProviderConfig(legacyProvider, {
-      model: config.model,
-      baseUrl: config.baseUrl,
-      apiKey: config.apiKey,
-      testedOk: config.testedOk,
-      testedAt: config.testedAt,
-      testMessage: config.testMessage,
-    });
-  }
-
-  return {
-    activeProvider,
-    activeModelId: (providers[activeProvider]?.models || []).some((model) => model.id === config.activeModelId)
-      ? config.activeModelId
-      : providers[activeProvider]?.activeModelId,
-    providers,
-  };
-}
-
-function activeAiProviderConfig(config, preferredProvider = "", preferredModelId = "") {
+function resolveAiProvider(config, provider) {
   const normalized = normalizeAiConfig(config);
-  const provider = normalizeAiProvider(preferredProvider || normalized.activeProvider);
-  const providerConfig = normalized.providers[provider] || normalizeAiProviderConfig(provider);
-  const model = providerConfig.models.find((item) => item.id === preferredModelId)
-    || providerConfig.models.find((item) => item.id === normalized.activeModelId)
-    || providerConfig.models[0];
-  return {
-    provider,
-    baseUrl: providerConfig.baseUrl,
-    apiKey: providerConfig.apiKey,
-    model: model.model,
-    modelId: model.id,
-    modelName: model.name,
-    testedOk: Boolean(model.testedOk),
-    testedAt: model.testedAt || "",
-    testMessage: model.testMessage || "",
-  };
-}
-
-function publicAiConfig(config) {
-  const normalized = normalizeAiConfig(config);
-  const active = activeAiProviderConfig(normalized);
-  const publicProviders = {};
-  Object.entries(normalized.providers).forEach(([provider, providerConfig]) => {
-    const apiKey = providerConfig.apiKey || "";
-    publicProviders[provider] = {
-      provider,
-      providerLabel: AI_PROVIDERS[provider].label,
-      activeModelId: providerConfig.activeModelId,
-      models: providerConfig.models.map((model) => ({
-        id: model.id,
-        name: model.name,
-        model: model.model,
-        testedOk: Boolean(model.testedOk),
-        testedAt: model.testedAt || "",
-        testMessage: model.testMessage || "",
-      })),
-      model: providerConfig.model,
-      modelId: providerConfig.modelId,
-      modelName: providerConfig.modelName,
-      baseUrl: providerConfig.baseUrl,
-      hasApiKey: Boolean(apiKey),
-      apiKeyLast4: apiKey ? apiKey.slice(-4) : "",
-      testedOk: Boolean(providerConfig.testedOk),
-      testedAt: providerConfig.testedAt || "",
-      testMessage: providerConfig.testMessage || "",
-    };
-  });
-  return {
-    activeProvider: normalized.activeProvider,
-    activeModelId: normalized.activeModelId,
-    providers: publicProviders,
-    provider: active.provider,
-    providerLabel: AI_PROVIDERS[active.provider].label,
-    modelId: active.modelId,
-    modelName: active.modelName,
-    model: active.model,
-    baseUrl: active.baseUrl,
-    hasApiKey: Boolean(active.apiKey),
-    apiKeyLast4: active.apiKey ? active.apiKey.slice(-4) : "",
-    testedOk: Boolean(active.testedOk),
-    testedAt: active.testedAt || "",
-    testMessage: active.testMessage || "",
-  };
+  return normalized.providers[provider] ? provider : normalized.activeProvider;
 }
 
 async function readAiConfig() {
@@ -404,27 +326,74 @@ async function readAiConfig() {
   }
 }
 
+function publicAiConfigWithRuntime(config) {
+  return publicAiConfig(config, { [CODEX_PROVIDER_ID]: codexRuntimeStatus });
+}
+
+async function persistAiConfig(config) {
+  await ensureParentDir(aiConfigPath());
+  await fs.writeFile(aiConfigPath(), `${JSON.stringify(normalizeAiConfig(config), null, 2)}\n`, "utf8");
+}
+
+async function refreshCodexCliConfig() {
+  const existing = await readAiConfig();
+  const previousProvider = existing.providers[CODEX_PROVIDER_ID];
+  const status = await refreshCodexStatus({
+    previousModels: previousProvider.models,
+    appVersion: app.getVersion(),
+  });
+  const models = Array.isArray(status.models) ? status.models : previousProvider.models;
+  const activeModelId = models.some((model) => model.id === previousProvider.activeModelId)
+    ? previousProvider.activeModelId
+    : (models.find((model) => model.catalogDefault)?.id || models[0]?.id || "");
+  const next = normalizeAiConfig({
+    ...existing,
+    activeModelId: existing.activeProvider === CODEX_PROVIDER_ID ? activeModelId : existing.activeModelId,
+    providers: {
+      ...existing.providers,
+      [CODEX_PROVIDER_ID]: { ...previousProvider, activeModelId, models },
+    },
+  });
+  await persistAiConfig(next);
+  const { models: _models, email, ...runtime } = status;
+  codexRuntimeStatus = {
+    ...runtime,
+    accountLabel: email ? email.replace(/^(.{2}).*(@.*)$/, "$1•••$2") : "",
+    ready: Boolean(status.authenticated && models.length && activeModelId),
+  };
+  return publicAiConfigWithRuntime(next);
+}
+
 async function saveAiConfig(patch = {}) {
   const existing = await readAiConfig();
-  const provider = normalizeAiProvider(patch.provider || existing.activeProvider);
-  const previousProviderConfig = existing.providers[provider] || normalizeAiProviderConfig(provider);
-  const modelId = String(patch.modelId || previousProviderConfig.activeModelId || createAiModelId(provider, patch.model || previousProviderConfig.model)).trim();
-  const previousModels = Array.isArray(patch.models) && patch.models.length
+  const provider = resolveAiProvider(existing, patch.provider || existing.activeProvider);
+  const previousProviderConfig = existing.providers[provider];
+  const nextProviderLabel = previousProviderConfig.builtin
+    ? previousProviderConfig.providerLabel
+    : String(patch.providerLabel ?? previousProviderConfig.providerLabel).trim();
+  if (!nextProviderLabel) throw new Error("请填写供应商名称");
+  if (!previousProviderConfig.builtin && Object.values(existing.providers).some((item) => item.provider !== provider && item.providerLabel.toLocaleLowerCase() === nextProviderLabel.toLocaleLowerCase())) {
+    throw new Error("供应商名称已存在");
+  }
+  const hasModelPatch = Boolean(patch.modelId || patch.model || (Array.isArray(patch.models) && patch.models.length));
+  const modelId = hasModelPatch
+    ? String(patch.modelId || previousProviderConfig.activeModelId || createAiModelId(provider, patch.model || previousProviderConfig.model)).trim()
+    : "";
+  const previousModels = Array.isArray(patch.models)
     ? patch.models.map((modelConfig, index) => normalizeAiModelConfig(provider, modelConfig, index))
     : (previousProviderConfig.models || []);
   const existingModel = previousModels.find((model) => model.id === modelId);
-  const nextModel = normalizeAiModelConfig(provider, {
-    ...(existingModel || {}),
-    id: modelId,
+  const nextModel = hasModelPatch ? normalizeAiModelConfig(provider, {
+    ...(existingModel || {}), id: modelId,
     name: patch.modelName || existingModel?.name,
     model: patch.model || existingModel?.model,
     testedOk: (patch.resetTest || patch.clearApiKey) ? false : existingModel?.testedOk,
     testedAt: (patch.resetTest || patch.clearApiKey) ? "" : existingModel?.testedAt,
     testMessage: (patch.resetTest || patch.clearApiKey) ? "" : existingModel?.testMessage,
-  });
-  const updatedModels = existingModel
+  }) : null;
+  const updatedModels = !nextModel ? previousModels : (existingModel
     ? previousModels.map((model) => (model.id === modelId ? nextModel : model))
-    : [...previousModels, nextModel];
+    : [...previousModels, nextModel]);
   const nextModels = patch.clearApiKey
     ? updatedModels.map((model) => ({ ...model, testedOk: false, testedAt: "", testMessage: "" }))
     : updatedModels;
@@ -439,9 +408,10 @@ async function saveAiConfig(patch = {}) {
       ...existing.providers,
       [provider]: {
         ...previousProviderConfig,
-        baseUrl: patch.baseUrl || previousProviderConfig.baseUrl,
+        providerLabel: nextProviderLabel,
+        baseUrl: patch.baseUrl ? normalizeProviderBaseUrl(patch.baseUrl) : previousProviderConfig.baseUrl,
         apiKey,
-        activeModelId: patch.activate === true ? modelId : previousProviderConfig.activeModelId,
+        activeModelId: patch.activate === true && modelId ? modelId : previousProviderConfig.activeModelId,
         models: nextModels,
       },
     },
@@ -451,10 +421,81 @@ async function saveAiConfig(patch = {}) {
   return next;
 }
 
+function normalizeProviderBaseUrl(value) {
+  const baseUrl = String(value || "").trim().replace(/\/+$/, "");
+  let parsed;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error("请输入有效的 Base URL");
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("Base URL 仅支持 HTTP 或 HTTPS");
+  }
+  if (/\/(chat\/completions|messages)$/i.test(parsed.pathname.replace(/\/+$/, ""))) {
+    throw new Error("Base URL 不需要包含具体请求端点");
+  }
+  return baseUrl;
+}
+
+async function createAiProvider(input = {}) {
+  const existing = await readAiConfig();
+  const providerLabel = String(input.providerLabel || input.label || "").trim();
+  if (!providerLabel) {
+    throw new Error("请填写供应商名称");
+  }
+  const duplicate = Object.values(existing.providers).some((provider) => provider.providerLabel.toLocaleLowerCase() === providerLabel.toLocaleLowerCase());
+  if (duplicate) {
+    throw new Error("供应商名称已存在");
+  }
+  const protocol = normalizeAiProtocol(input.protocol);
+  const baseUrl = normalizeProviderBaseUrl(input.baseUrl || AI_PROTOCOLS[protocol].baseUrl);
+  const provider = `custom-${randomUUID()}`;
+  const next = normalizeAiConfig({
+    ...existing,
+    providers: {
+      ...existing.providers,
+      [provider]: {
+        provider,
+        providerLabel,
+        protocol,
+        builtin: false,
+        baseUrl,
+        apiKey: "",
+        activeModelId: "",
+        models: [],
+      },
+    },
+  });
+  await ensureParentDir(aiConfigPath());
+  await fs.writeFile(aiConfigPath(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  return { config: next, provider };
+}
+
+async function deleteAiProvider(provider) {
+  const existing = await readAiConfig();
+  const providerConfig = existing.providers[provider];
+  if (!providerConfig) {
+    throw new Error("供应商不存在");
+  }
+  if (providerConfig.builtin || BUILTIN_AI_PROVIDERS[provider]) {
+    throw new Error("内置供应商不可删除");
+  }
+  if (existing.activeProvider === provider) {
+    throw new Error("请先切换默认供应商后再删除");
+  }
+  const providers = { ...existing.providers };
+  delete providers[provider];
+  const next = normalizeAiConfig({ ...existing, providers });
+  await ensureParentDir(aiConfigPath());
+  await fs.writeFile(aiConfigPath(), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  return next;
+}
+
 async function updateAiProviderTestState(provider, modelId, testState) {
   const existing = await readAiConfig();
-  const normalizedProvider = normalizeAiProvider(provider);
-  const previousProviderConfig = existing.providers[normalizedProvider] || normalizeAiProviderConfig(normalizedProvider);
+  const normalizedProvider = resolveAiProvider(existing, provider);
+  const previousProviderConfig = existing.providers[normalizedProvider];
   const normalizedModelId = String(modelId || previousProviderConfig.activeModelId || createAiModelId(normalizedProvider, testState.model || previousProviderConfig.model)).trim();
   const previousModels = previousProviderConfig.models || [];
   const existingModel = previousModels.find((model) => model.id === normalizedModelId);
@@ -485,31 +526,6 @@ async function updateAiProviderTestState(provider, modelId, testState) {
   return next;
 }
 
-function aiChatCompletionsUrl(config) {
-  return `${String(config.baseUrl || "").replace(/\/+$/, "")}/chat/completions`;
-}
-
-function aiRequestHeaders(config) {
-  return {
-    "content-type": "application/json",
-    authorization: `Bearer ${config.apiKey}`,
-  };
-}
-
-function aiThinkingOptions(config) {
-  if (config?.provider === "deepseek") {
-    return {
-      thinking: { type: "enabled" },
-      reasoning_effort: "max",
-      temperature: 1,
-    };
-  }
-  return {
-    reasoning_effort: "high",
-    temperature: 1,
-  };
-}
-
 async function readAiErrorBody(response) {
   try {
     const text = await response.text();
@@ -533,26 +549,19 @@ function aiFetch(url, options) {
 
 async function testAiConfig(config) {
   if (!config.apiKey) {
-    return { ok: false, message: "请先填写 API Key" };
+    throw new Error("请先填写 API Key");
   }
-  const response = await aiFetch(aiChatCompletionsUrl(config), {
+  if (!config.model) {
+    throw new Error("请先添加模型");
+  }
+  const request = buildAiRequest(config, [{ role: "user", content: "请只回复 OK" }], { test: true });
+  const response = await aiFetch(request.url, {
     method: "POST",
-    headers: aiRequestHeaders(config),
-    body: JSON.stringify({
-      model: config.model,
-      messages: [{ role: "user", content: "请只回复 OK" }],
-      max_tokens: 8,
-      ...aiThinkingOptions(config),
-      stream: false,
-    }),
+    headers: request.headers,
+    body: JSON.stringify(request.body),
   });
   await assertAiResponseOk(response);
   return { ok: true, message: "AI 连接可用" };
-}
-
-function extractAiDelta(payload) {
-  const choice = payload?.choices?.[0];
-  return choice?.delta?.content || choice?.message?.content || "";
 }
 
 function normalizeAiMessages(payload = {}) {
@@ -574,26 +583,23 @@ async function streamAiCompletion(sender, requestId, config, messages, signal) {
   if (!config.apiKey) {
     throw new Error("请先在 AI 设置里填写 API Key");
   }
-  const response = await aiFetch(aiChatCompletionsUrl(config), {
+  const request = buildAiRequest(config, messages, { stream: true });
+  const response = await aiFetch(request.url, {
     method: "POST",
-    headers: aiRequestHeaders(config),
+    headers: request.headers,
     signal,
-    body: JSON.stringify({
-      model: config.model,
-      messages,
-      ...aiThinkingOptions(config),
-      stream: true,
-      stream_options: { include_usage: true },
-    }),
+    body: JSON.stringify(request.body),
   });
   await assertAiResponseOk(response);
   if (!response.body) {
     const payload = await response.json();
-    const delta = extractAiDelta(payload);
+    const delta = config.protocol === "anthropic"
+      ? (payload?.content || []).filter((item) => item?.type === "text").map((item) => item.text || "").join("")
+      : extractAiStreamEvent(config.protocol, payload).delta;
     if (delta) {
       sender.send("ai:chunk", { requestId, delta });
     }
-    return payload.usage || null;
+    return mergeAiUsage(config.protocol, payload, null);
   }
 
   const reader = response.body.getReader();
@@ -617,21 +623,81 @@ async function streamAiCompletion(sender, requestId, config, messages, signal) {
       if (data === "[DONE]") {
         return usage;
       }
+      let payload;
       try {
-        const payload = JSON.parse(data);
-        if (payload?.usage) {
-          usage = payload.usage;
-        }
-        const delta = extractAiDelta(payload);
-        if (delta) {
-          sender.send("ai:chunk", { requestId, delta });
-        }
+        payload = JSON.parse(data);
       } catch (error) {
         await writeAiDebugLog("ai:stream:parse-error", { message: error?.message, data: data.slice(0, 200) });
+        continue;
+      }
+      usage = mergeAiUsage(config.protocol, payload, usage);
+      const streamEvent = extractAiStreamEvent(config.protocol, payload);
+      if (streamEvent.error) {
+        throw new Error(streamEvent.error);
+      }
+      if (streamEvent.delta) {
+        sender.send("ai:chunk", { requestId, delta: streamEvent.delta });
+      }
+      if (streamEvent.done) {
+        return usage;
       }
     }
   }
   return usage;
+}
+
+async function streamCodexForPayload(event, requestId, config, messages, payload, controller) {
+  let resolvedScope;
+  if (payload?.codexScope) {
+    resolvedScope = await resolveCodexScopeDirectory({
+      scope: payload.codexScope,
+      workspacePath: payload?.workspacePath,
+      documentPath: payload?.documentPath,
+      tempRoot: path.join(app.getPath("temp"), "PaperWriterCodex"),
+    });
+  } else {
+    const candidates = [payload?.workspacePath, payload?.documentPath ? path.dirname(payload.documentPath) : ""].filter(Boolean);
+    let cwd = "";
+    for (const candidate of candidates) {
+      try {
+        const stat = await fs.stat(candidate);
+        if (stat.isDirectory()) {
+          cwd = candidate;
+          break;
+        }
+      } catch { /* Continue with the legacy fallback order. */ }
+    }
+    cwd ||= path.join(app.getPath("userData"), "CodexWorkspace");
+    await fs.mkdir(cwd, { recursive: true });
+    resolvedScope = { cwd, scope: normalizeCodexScope(), cleanup: async () => {} };
+  }
+  let resolvedImages = { attachments: [], imagePaths: [], cleanup: async () => {} };
+  try {
+    if (normalizeCodexImageMode(payload?.codexImageMode) === "original" && Array.isArray(payload?.codexImages) && payload.codexImages.length) {
+      resolvedImages = await materializeCodexImageAttachments({
+        images: payload.codexImages,
+        tempRoot: path.join(app.getPath("temp"), "PaperWriterCodex"),
+        readProtocolAsset: async (sourceUrl) => {
+          const parsed = parseAssetUrl(sourceUrl);
+          if (!parsed) throw new Error("无效的信笺资源地址");
+          return readPackagedAsset(parsed.filePath, parsed.assetPath);
+        },
+      });
+    }
+    return await streamCodexCompletion({
+      executable: codexRuntimeStatus.executablePath,
+      config,
+      messages,
+      cwd: resolvedScope.cwd,
+      scope: resolvedScope.scope,
+      attachments: resolvedImages.attachments,
+      imagePaths: resolvedImages.imagePaths,
+      signal: controller.signal,
+      onDelta: (delta) => event.sender.send("ai:chunk", { requestId, delta }),
+    });
+  } finally {
+    await Promise.allSettled([resolvedImages.cleanup(), resolvedScope.cleanup()]);
+  }
 }
 
 function sanitizeName(name, fallback = "未命名") {
@@ -690,7 +756,7 @@ function isSupportedDocument(filePath) {
 
 function createEmptyAiState() {
   return {
-    version: 1,
+    version: 3,
     lastMode: "",
     optimize: {
       output: "",
@@ -708,6 +774,8 @@ function createEmptyAiState() {
       messages: [],
       input: "",
       selectedTexts: [],
+      codexScope: normalizeCodexScope(),
+      codexImageMode: normalizeCodexImageMode(),
       status: "idle",
       error: "",
       updatedAt: "",
@@ -720,7 +788,7 @@ function normalizeSavedAiState(state = {}) {
   const optimize = state.optimize && typeof state.optimize === "object" ? state.optimize : {};
   const chat = state.chat && typeof state.chat === "object" ? state.chat : {};
   return {
-    version: 1,
+    version: 3,
     lastMode: ["optimize", "chat"].includes(state.lastMode) ? state.lastMode : "",
     optimize: {
       ...empty.optimize,
@@ -743,6 +811,8 @@ function normalizeSavedAiState(state = {}) {
       messages: Array.isArray(chat.messages) ? chat.messages : [],
       input: typeof chat.input === "string" ? chat.input : "",
       selectedTexts: Array.isArray(chat.selectedTexts) ? chat.selectedTexts : [],
+      codexScope: normalizeCodexScope(chat.codexScope),
+      codexImageMode: normalizeCodexImageMode(chat.codexImageMode),
       status: chat.status === "error" ? "error" : "idle",
       error: typeof chat.error === "string" ? chat.error : "",
     },
@@ -861,6 +931,9 @@ function normalizeDocument(document = {}) {
     title: typeof document.title === "string" && document.title.trim() ? document.title.trim() : "未命名信笺",
     author: typeof document.author === "string" ? document.author.trim().slice(0, 40) : "",
     html: typeof document.html === "string" && document.html.trim() ? document.html : "<p></p>",
+    letterTemplateId: typeof document.letterTemplateId === "string" && document.letterTemplateId
+      ? document.letterTemplateId
+      : "",
     templateId: typeof document.templateId === "string" && document.templateId ? document.templateId : "warm",
     fontFamily: typeof document.fontFamily === "string" && document.fontFamily ? document.fontFamily : "LXGW WenKai Screen",
     fontSize: Number.isFinite(Number(document.fontSize)) ? Math.min(32, Math.max(12, Number(document.fontSize))) : 18,
@@ -871,8 +944,41 @@ function normalizeDocument(document = {}) {
       ? document.displayDate.trim().slice(0, 40)
       : formatPaperDate(createdAt),
     updatedAt: typeof document.updatedAt === "string" && document.updatedAt ? document.updatedAt : now,
+    comments: normalizeDocumentComments(document.comments),
     aiState: normalizeSavedAiState(document.aiState),
   };
+}
+
+function normalizeDocumentComments(comments = []) {
+  if (!Array.isArray(comments)) {
+    return [];
+  }
+  const seen = new Set();
+  return comments
+    .map((comment, index) => {
+      const from = Math.max(1, Math.floor(Number(comment?.from) || 0));
+      const to = Math.max(1, Math.floor(Number(comment?.to) || 0));
+      const text = typeof comment?.text === "string" ? comment.text.trim().slice(0, 2000) : "";
+      if (!text || from === to) {
+        return null;
+      }
+      const fallbackId = `comment-${Date.now().toString(36)}-${index}`;
+      const idSource = typeof comment?.id === "string" && comment.id.trim() ? comment.id.trim() : fallbackId;
+      const id = seen.has(idSource) ? `${idSource}-${index}` : idSource;
+      seen.add(id);
+      const createdAt = typeof comment?.createdAt === "string" && comment.createdAt ? comment.createdAt : new Date().toISOString();
+      const updatedAt = typeof comment?.updatedAt === "string" && comment.updatedAt ? comment.updatedAt : createdAt;
+      return {
+        id,
+        from: Math.min(from, to),
+        to: Math.max(from, to),
+        text,
+        quote: typeof comment?.quote === "string" ? comment.quote.trim().slice(0, 280) : "",
+        createdAt,
+        updatedAt,
+      };
+    })
+    .filter(Boolean);
 }
 
 function dataUrlToBuffer(dataUrl) {
@@ -899,6 +1005,26 @@ function extensionFromMime(mime) {
       return ".bmp";
     case "image/svg+xml":
       return ".svg";
+    case "audio/mpeg":
+      return ".mp3";
+    case "audio/wav":
+    case "audio/x-wav":
+      return ".wav";
+    case "audio/ogg":
+      return ".ogg";
+    case "audio/mp4":
+    case "audio/x-m4a":
+      return ".m4a";
+    case "audio/aac":
+      return ".aac";
+    case "audio/flac":
+      return ".flac";
+    case "video/webm":
+      return ".webm";
+    case "video/ogg":
+      return ".ogv";
+    case "video/mp4":
+      return ".mp4";
     default:
       return ".png";
   }
@@ -917,6 +1043,24 @@ function mimeFromPath(filePath) {
       return "image/bmp";
     case ".svg":
       return "image/svg+xml";
+    case ".mp3":
+      return "audio/mpeg";
+    case ".wav":
+      return "audio/wav";
+    case ".ogg":
+      return "audio/ogg";
+    case ".m4a":
+      return "audio/mp4";
+    case ".aac":
+      return "audio/aac";
+    case ".flac":
+      return "audio/flac";
+    case ".webm":
+      return "video/webm";
+    case ".ogv":
+      return "video/ogg";
+    case ".mp4":
+      return "video/mp4";
     default:
       return "image/png";
   }
@@ -935,7 +1079,7 @@ function extractDataImages(zip, html) {
     }
 
     const assetPath = nextZipAssetPath(zip, "", extensionFromMime(decoded.mime));
-    zip.file(assetPath, decoded.buffer);
+    zip.file(assetPath, decoded.buffer, /^(?:audio|video)\//i.test(decoded.mime) ? { compression: "STORE" } : undefined);
     return `src=${quote}${assetPath}${quote}`;
   });
 }
@@ -951,7 +1095,7 @@ async function extractProtocolImages(zip, html) {
     }
     const asset = await readPackagedAsset(parsed.filePath, parsed.assetPath);
     const targetPath = nextZipAssetPath(zip, parsed.assetPath, path.extname(parsed.assetPath) || extensionFromMime(asset.mime));
-    zip.file(targetPath, asset.buffer);
+    zip.file(targetPath, asset.buffer, /^(?:audio|video)\//i.test(asset.mime) ? { compression: "STORE" } : undefined);
     copiedByUrl.set(sourceUrl, targetPath);
   }
   return html.replace(ASSET_PROTOCOL_URL_PATTERN, (full, quote, sourceUrl) => {
@@ -967,7 +1111,7 @@ async function copyProtocolAssetToZip(zip, sourceUrl, preferredPath = "") {
   }
   const asset = await readPackagedAsset(parsed.filePath, parsed.assetPath);
   const targetPath = nextZipAssetPath(zip, preferredPath || parsed.assetPath, path.extname(parsed.assetPath) || extensionFromMime(asset.mime));
-  zip.file(targetPath, asset.buffer);
+  zip.file(targetPath, asset.buffer, /^(?:audio|video)\//i.test(asset.mime) ? { compression: "STORE" } : undefined);
   return targetPath;
 }
 
@@ -1146,27 +1290,69 @@ ipcMain.handle("window:set-modal-overlay", async () => {
   }
 });
 
-ipcMain.handle("ai:get-config", async () => publicAiConfig(await readAiConfig()));
+ipcMain.handle("ai:get-config", async () => publicAiConfigWithRuntime(await readAiConfig()));
+
+ipcMain.handle("ai:refresh-codex", async () => {
+  const config = await refreshCodexCliConfig();
+  await writeAiDebugLog("ai:codex:refreshed", {
+    installed: codexRuntimeStatus.installed,
+    authenticated: codexRuntimeStatus.authenticated,
+    ready: codexRuntimeStatus.ready,
+    version: codexRuntimeStatus.version,
+  });
+  return { ...config, ok: codexRuntimeStatus.ready, message: codexRuntimeStatus.message };
+});
+
+ipcMain.handle("ai:start-codex-login", async () => {
+  if (!codexRuntimeStatus.executablePath) {
+    await refreshCodexCliConfig();
+  }
+  if (!codexRuntimeStatus.executablePath) {
+    return { ...publicAiConfigWithRuntime(await readAiConfig()), ok: false, message: "未检测到 Codex CLI" };
+  }
+  startCodexLogin(codexRuntimeStatus.executablePath, () => {
+    refreshCodexCliConfig().then((config) => {
+      mainWindow?.webContents.send("ai:codex-status", config);
+    }).catch(() => {});
+  });
+  return { ...publicAiConfigWithRuntime(await readAiConfig()), ok: true, message: "已启动 Codex 登录" };
+});
+
+ipcMain.handle("ai:create-provider", async (_event, input) => {
+  const result = await createAiProvider(input || {});
+  await writeAiDebugLog("ai:provider:created", { provider: result.provider, protocol: input?.protocol });
+  return { ...publicAiConfigWithRuntime(result.config), createdProvider: result.provider, ok: true };
+});
+
+ipcMain.handle("ai:delete-provider", async (_event, provider) => {
+  const config = await deleteAiProvider(String(provider || ""));
+  await writeAiDebugLog("ai:provider:deleted", { provider });
+  return { ...publicAiConfigWithRuntime(config), ok: true };
+});
 
 ipcMain.handle("ai:save-config", async (_event, patch) => {
   const config = await saveAiConfig(patch || {});
   await writeAiDebugLog("ai:config:saved", {
-    provider: config.provider,
-    model: config.model,
-    hasApiKey: Boolean(config.apiKey),
+    provider: patch?.provider || config.activeProvider,
+    model: patch?.model || "",
+    hasApiKey: Boolean(patch?.apiKey),
   });
-  return publicAiConfig(config);
+  return publicAiConfigWithRuntime(config);
 });
 
 ipcMain.handle("ai:test-config", async (_event, patch) => {
-  const provider = normalizeAiProvider(patch?.provider);
+  const initial = await readAiConfig();
+  const provider = resolveAiProvider(initial, patch?.provider);
   try {
-    const existing = await readAiConfig();
-    const previousProviderConfig = existing.providers[provider] || normalizeAiProviderConfig(provider);
+    const existing = initial;
+    const previousProviderConfig = existing.providers[provider];
     const modelId = String(patch?.modelId || previousProviderConfig.activeModelId || createAiModelId(provider, patch?.model || previousProviderConfig.model)).trim();
     const previousModelConfig = previousProviderConfig.models.find((model) => model.id === modelId) || previousProviderConfig.models[0];
     const config = {
       provider,
+      providerLabel: previousProviderConfig.providerLabel,
+      protocol: previousProviderConfig.protocol,
+      builtin: previousProviderConfig.builtin,
       modelId,
       modelName: patch?.modelName || previousModelConfig?.name,
       model: patch?.model || previousModelConfig?.model || previousProviderConfig.model,
@@ -1184,10 +1370,10 @@ ipcMain.handle("ai:test-config", async (_event, patch) => {
       testMessage: "AI 连接可用",
     });
     await writeAiDebugLog("ai:test:success", { provider: config.provider, model: config.model });
-    return { ...publicAiConfig(next), ok: true, message: "AI 连接可用" };
+    return { ...publicAiConfigWithRuntime(next), ok: true, message: "AI 连接可用" };
   } catch (error) {
     const existing = await readAiConfig();
-    const previousProviderConfig = existing.providers[provider] || normalizeAiProviderConfig(provider);
+    const previousProviderConfig = existing.providers[provider];
     const modelId = String(patch?.modelId || previousProviderConfig.activeModelId || createAiModelId(provider, patch?.model || previousProviderConfig.model)).trim();
     const previousModelConfig = previousProviderConfig.models.find((model) => model.id === modelId) || previousProviderConfig.models[0];
     const next = await updateAiProviderTestState(provider, modelId, {
@@ -1207,7 +1393,7 @@ ipcMain.handle("ai:test-config", async (_event, patch) => {
       causeCode: error?.cause?.code,
       causeMessage: error?.cause?.message,
     });
-    return { ...publicAiConfig(next), ok: false, message: error?.message || "AI 连接失败" };
+    return { ...publicAiConfigWithRuntime(next), ok: false, message: error?.message || "AI 连接失败" };
   }
 });
 
@@ -1218,12 +1404,19 @@ ipcMain.handle("ai:generate", async (event, payload) => {
     return { ok: false, message: "AI 请求缺少内容" };
   }
   const config = activeAiProviderConfig(await readAiConfig(), payload?.provider, payload?.modelId);
-  if (!config.apiKey || !config.testedOk) {
+  if (config.transport === "codex-cli") {
+    if (!codexRuntimeStatus.ready || !codexRuntimeStatus.executablePath || !config.model) {
+      return { ok: false, message: codexRuntimeStatus.message || "请先在 AI 设置中配置 Codex CLI" };
+    }
+  } else if (!config.apiKey || !config.testedOk) {
     return { ok: false, message: "请选择已测试可用的 AI 模型" };
   }
   const controller = new AbortController();
   activeAiRequests.set(requestId, controller);
-  streamAiCompletion(event.sender, requestId, config, messages, controller.signal)
+  const completion = config.transport === "codex-cli"
+    ? streamCodexForPayload(event, requestId, config, messages, payload, controller)
+    : streamAiCompletion(event.sender, requestId, config, messages, controller.signal);
+  completion
     .then((usage) => {
       event.sender.send("ai:done", { requestId, usage });
       activeAiRequests.delete(requestId);
@@ -1424,13 +1617,14 @@ ipcMain.handle("folder:create", async (_event, parentPath, name) => {
   return { ok: true, path: targetPath, ...(await listFolderEntries(String(parentPath))) };
 });
 
-ipcMain.handle("document:create-in-folder", async (_event, folderPath, title) => {
+ipcMain.handle("document:create-in-folder", async (_event, folderPath, title, templateDocument = {}) => {
   if (!folderPath) {
     return { ok: false, message: "缺少目标文件夹" };
   }
   const safeTitle = sanitizeName(title, "未命名信笺");
   const filePath = await uniquePath(path.join(String(folderPath), `${safeTitle}${DOCUMENT_EXTENSION}`));
   const document = normalizeDocument({
+    ...templateDocument,
     title: safeTitle,
     html: "<p></p>",
   });
@@ -1611,22 +1805,57 @@ ipcMain.handle("document:save", async (_event, document, currentPath, saveAs) =>
   return { canceled: false, path: filePath };
 });
 
-ipcMain.handle("document:export-pdf", async (_event, suggestedName) => {
-  const safeName = String(suggestedName || "未命名信笺").replace(/[\\/:*?"<>|]/g, "").slice(0, 60) || "未命名信笺";
+function exportSafeName(suggestedName) {
+  return String(suggestedName || "未命名信笺").replace(/[\\/:*?"<>|]/g, "").slice(0, 60) || "未命名信笺";
+}
+
+async function pickDocumentExportPath(format, suggestedName) {
+  const safeName = exportSafeName(suggestedName);
+  if (format === "images") {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "选择分页图片导出文件夹",
+      defaultPath: path.join(defaultDocumentsDir(), safeName),
+      properties: ["openDirectory", "createDirectory"],
+    });
+    return result.canceled || !result.filePaths?.[0]
+      ? { canceled: true }
+      : { canceled: false, path: result.filePaths[0], format: "images" };
+  }
+
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: "导出 PDF",
+    title: "选择 PDF 导出位置",
     defaultPath: path.join(defaultDocumentsDir(), `${safeName}.pdf`),
     filters: [
       { name: "PDF 文档", extensions: ["pdf"] },
       { name: "All Files", extensions: ["*"] },
     ],
   });
+  return result.canceled || !result.filePath
+    ? { canceled: true }
+    : { canceled: false, path: ensureExtension(result.filePath, ".pdf"), format: "pdf" };
+}
 
-  if (result.canceled || !result.filePath) {
+function sendExportProgress(event, payload) {
+  if (!event?.sender?.isDestroyed?.()) {
+    event.sender.send("document:export-progress", payload);
+  }
+}
+
+ipcMain.handle("document:pick-export-path", async (_event, format, suggestedName) => (
+  pickDocumentExportPath(format === "images" ? "images" : "pdf", suggestedName)
+));
+
+ipcMain.handle("document:export-pdf", async (event, suggestedName, targetPath) => {
+  const safeName = String(suggestedName || "未命名信笺").replace(/[\\/:*?"<>|]/g, "").slice(0, 60) || "未命名信笺";
+  const destination = targetPath
+    ? { canceled: false, path: ensureExtension(String(targetPath), ".pdf") }
+    : await pickDocumentExportPath("pdf", safeName);
+  if (destination.canceled || !destination.path) {
     return { canceled: true };
   }
 
-  const filePath = ensureExtension(result.filePath, ".pdf");
+  const filePath = destination.path;
+  sendExportProgress(event, { format: "pdf", percent: 12, message: "正在整理信笺版面…" });
   const pdf = await mainWindow.webContents.printToPDF({
     printBackground: true,
     preferCSSPageSize: true,
@@ -1635,12 +1864,14 @@ ipcMain.handle("document:export-pdf", async (_event, suggestedName) => {
       marginType: "none",
     },
   });
+  sendExportProgress(event, { format: "pdf", percent: 78, message: "正在写入 PDF 文件…" });
   await ensureParentDir(filePath);
   await fs.writeFile(filePath, pdf);
+  sendExportProgress(event, { format: "pdf", percent: 100, message: "PDF 导出完成" });
   return { canceled: false, path: filePath };
 });
 
-ipcMain.handle("document:export-page-images", async (_event, suggestedName, pageRects) => {
+ipcMain.handle("document:export-page-images", async (event, suggestedName, pageRects, targetPath) => {
   const safeName = String(suggestedName || "未命名信笺").replace(/[\\/:*?"<>|]/g, "").slice(0, 60) || "未命名信笺";
   const rects = Array.isArray(pageRects)
     ? pageRects
@@ -1657,17 +1888,15 @@ ipcMain.handle("document:export-page-images", async (_event, suggestedName, page
     return { canceled: true };
   }
 
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: "导出分页图片",
-    defaultPath: path.join(defaultDocumentsDir(), safeName),
-    properties: ["openDirectory", "createDirectory"],
-  });
-
-  if (result.canceled || !result.filePaths?.[0]) {
+  const destination = targetPath
+    ? { canceled: false, path: String(targetPath) }
+    : await pickDocumentExportPath("images", safeName);
+  if (destination.canceled || !destination.path) {
     return { canceled: true };
   }
 
-  const outputDir = result.filePaths[0];
+  const outputDir = destination.path;
+  sendExportProgress(event, { format: "images", percent: 8, message: `正在准备 ${rects.length} 张分页图片…` });
   await fs.mkdir(outputDir, { recursive: true });
   const debuggerApi = mainWindow.webContents.debugger;
   let attachedHere = false;
@@ -1677,6 +1906,7 @@ ipcMain.handle("document:export-page-images", async (_event, suggestedName, page
       attachedHere = true;
     }
     await debuggerApi.sendCommand("Page.enable");
+    sendExportProgress(event, { format: "images", percent: 14, message: "已准备图像渲染环境" });
     const files = [];
     for (let index = 0; index < rects.length; index += 1) {
       const rect = rects[index];
@@ -1695,6 +1925,14 @@ ipcMain.handle("document:export-page-images", async (_event, suggestedName, page
       const filePath = path.join(outputDir, `${safeName}-${String(index + 1).padStart(2, "0")}.png`);
       await fs.writeFile(filePath, Buffer.from(capture.data, "base64"));
       files.push(filePath);
+      const completed = index + 1;
+      sendExportProgress(event, {
+        format: "images",
+        percent: Math.round(14 + (completed / rects.length) * 86),
+        message: `正在导出第 ${completed} / ${rects.length} 张图片`,
+        completed,
+        total: rects.length,
+      });
     }
     return { canceled: false, path: outputDir, files, count: files.length };
   } finally {
@@ -1703,6 +1941,49 @@ ipcMain.handle("document:export-page-images", async (_event, suggestedName, page
     }
   }
 });
+
+async function pickLocalMediaAsset(kind) {
+  const isAudio = kind === "audio";
+  const extensions = isAudio ? AUDIO_EXTENSIONS : VIDEO_EXTENSIONS;
+  const maxBytes = isAudio ? AUDIO_MAX_BYTES : VIDEO_MAX_BYTES;
+  const label = isAudio ? "音频" : "视频";
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: `选择${label}`,
+    properties: ["openFile"],
+    filters: [
+      { name: label, extensions },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+
+  if (result.canceled || !result.filePaths?.[0]) {
+    return { canceled: true };
+  }
+
+  const filePath = result.filePaths[0];
+  const extension = path.extname(filePath).toLowerCase().replace(/^\./, "");
+  if (!extensions.includes(extension)) {
+    return { canceled: false, error: "unsupported-type", kind, extension };
+  }
+  try {
+    const stat = await fs.stat(filePath);
+    if (stat.size > maxBytes) {
+      return { canceled: false, error: "too-large", kind, size: stat.size, maxBytes };
+    }
+    return {
+      canceled: false,
+      kind,
+      path: filePath,
+      name: path.basename(filePath, path.extname(filePath)),
+      fileName: path.basename(filePath),
+      mime: mimeFromPath(filePath),
+      size: stat.size,
+      dataUrl: await fileToDataUrl(filePath),
+    };
+  } catch {
+    return { canceled: false, error: "read-failed", kind };
+  }
+}
 
 ipcMain.handle("asset:pick-image", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -1725,6 +2006,22 @@ ipcMain.handle("asset:pick-image", async () => {
     name: path.basename(filePath, path.extname(filePath)),
     dataUrl: await fileToDataUrl(filePath),
   };
+});
+
+ipcMain.handle("asset:pick-audio", async () => pickLocalMediaAsset("audio"));
+ipcMain.handle("asset:pick-video", async () => pickLocalMediaAsset("video"));
+
+ipcMain.handle("external:open", async (_event, urlValue) => {
+  try {
+    const url = new URL(String(urlValue || ""));
+    if (!["http:", "https:", "mailto:"].includes(url.protocol)) {
+      return { ok: false, error: "unsupported-protocol" };
+    }
+    await shell.openExternal(url.toString());
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "invalid-url" };
+  }
 });
 
 ipcMain.handle("autosave:load", async () => {
@@ -1762,7 +2059,7 @@ ipcMain.handle("app:confirm-close", async (_event, payload = {}) => {
   const dirtyCount = Number(payload.dirtyCount) || 0;
   const result = await dialog.showMessageBox(mainWindow, {
     type: "question",
-    title: "关闭信笺写作",
+    title: "关闭笺间",
     message: dirtyCount > 1 ? `有 ${dirtyCount} 篇信笺尚未保存` : "当前信笺尚未保存",
     detail: "选择“保存并关闭”会先保存已有文件；未命名信笺会保存为临时会话文件，下次启动会恢复打开。",
     buttons: ["保存并关闭", "不保存", "取消"],

@@ -1,12 +1,13 @@
 {
   "name": "paperwriter-electron",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "private": false,
   "main": "main.cjs",
   "scripts": {
     "dev": "electron .",
     "dev:vite": "node dev-vite.cjs",
-    "check": "node --check main.cjs && node --check preload.cjs",
+    "check": "node --check main.cjs && node --check preload.cjs && node --check codex-cli-provider.cjs && node --check codex-scope.cjs && node --check codex-image-attachments.cjs",
+    "test": "node --test *.test.cjs",
     "dist": "electron-builder --win nsis --x64",
     "pack": "electron-builder --win dir --x64",
     "publish": "electron-builder --win nsis --x64 --publish always"
@@ -19,8 +20,8 @@
     "electron": "^41.5.0",
     "electron-builder": "^26.15.3"
   },
-  "productName": "信笺写作",
-  "description": "漂亮信纸上的个人写作软件",
+  "productName": "笺间",
+  "description": "面向个人长文、日记、复盘与资料整理的沉浸式 Windows 写作软件",
   "author": "Aecenas",
   "repository": {
     "type": "git",
@@ -29,7 +30,7 @@
   "homepage": "https://github.com/Aecenas/PaperWriterElectron#readme",
   "build": {
     "appId": "com.aecenas.paperwriter",
-    "productName": "信笺写作",
+    "productName": "笺间",
     "artifactName": "PaperWriter-${version}-${arch}.${ext}",
     "directories": {
       "output": "../../release"
@@ -53,7 +54,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "信笺写作"
+      "shortcutName": "笺间"
     },
     "publish": [
       {
