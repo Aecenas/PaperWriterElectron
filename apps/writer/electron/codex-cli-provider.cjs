@@ -195,6 +195,15 @@ function reconcileCodexModels(previousModels = [], catalog = []) {
   });
 }
 
+function mergeCodexRefreshedModels(currentModels = [], refreshedModels = []) {
+  return reconcileCodexModels(currentModels, refreshedModels.map((model) => ({
+    ...model,
+    displayName: model.displayName || model.name || model.model,
+    isDefault: Boolean(model.isDefault || model.catalogDefault),
+    hidden: false,
+  })));
+}
+
 async function refreshCodexStatus({ previousModels = [], appVersion = "0.0.0", executable = "" } = {}) {
   const checkedAt = new Date().toISOString();
   const resolvedExecutable = executable || await findCodexExecutable();
@@ -363,6 +372,7 @@ module.exports = {
   codexPrompt,
   codexUsage,
   findCodexExecutable,
+  mergeCodexRefreshedModels,
   reconcileCodexModels,
   refreshCodexStatus,
   startCodexLogin,

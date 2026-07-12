@@ -6,6 +6,7 @@ const {
   codexExecutableCandidates,
   codexPrompt,
   codexUsage,
+  mergeCodexRefreshedModels,
   reconcileCodexModels,
 } = require("./codex-cli-provider.cjs");
 
@@ -45,6 +46,25 @@ test("falls back to catalog default effort when a saved effort disappears", () =
     supportedReasoningEfforts: [{ reasoningEffort: "medium", description: "默认" }],
   }]);
   assert.equal(models[0].reasoningEffort, "medium");
+});
+
+test("merges a refreshed catalog with the latest saved reasoning effort", () => {
+  const models = mergeCodexRefreshedModels([
+    { id: "latest-id", model: "gpt-test", reasoningEffort: "high" },
+  ], [{
+    id: "catalog-id",
+    name: "GPT Test",
+    model: "gpt-test",
+    defaultReasoningEffort: "medium",
+    supportedReasoningEfforts: [
+      { reasoningEffort: "medium", description: "默认" },
+      { reasoningEffort: "high", description: "深入" },
+    ],
+    catalogDefault: true,
+  }]);
+  assert.equal(models[0].id, "catalog-id");
+  assert.equal(models[0].reasoningEffort, "high");
+  assert.equal(models[0].catalogDefault, true);
 });
 
 test("builds an isolated read-only Codex exec command", () => {

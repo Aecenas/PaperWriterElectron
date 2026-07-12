@@ -20,6 +20,7 @@ const {
 } = require("./ai-provider-core.cjs");
 const {
   CODEX_PROVIDER_ID,
+  mergeCodexRefreshedModels,
   refreshCodexStatus,
   startCodexLogin,
   streamCodexCompletion,
@@ -342,16 +343,22 @@ async function refreshCodexCliConfig() {
     previousModels: previousProvider.models,
     appVersion: app.getVersion(),
   });
-  const models = Array.isArray(status.models) ? status.models : previousProvider.models;
-  const activeModelId = models.some((model) => model.id === previousProvider.activeModelId)
-    ? previousProvider.activeModelId
+  // Codex inspection can take several seconds. Re-read before persisting so a
+  // concurrent HTTP provider save/test is never replaced by this stale snapshot.
+  const latest = await readAiConfig();
+  const latestProvider = latest.providers[CODEX_PROVIDER_ID];
+  const models = Array.isArray(status.models)
+    ? mergeCodexRefreshedModels(latestProvider.models, status.models)
+    : latestProvider.models;
+  const activeModelId = models.some((model) => model.id === latestProvider.activeModelId)
+    ? latestProvider.activeModelId
     : (models.find((model) => model.catalogDefault)?.id || models[0]?.id || "");
   const next = normalizeAiConfig({
-    ...existing,
-    activeModelId: existing.activeProvider === CODEX_PROVIDER_ID ? activeModelId : existing.activeModelId,
+    ...latest,
+    activeModelId: latest.activeProvider === CODEX_PROVIDER_ID ? activeModelId : latest.activeModelId,
     providers: {
-      ...existing.providers,
-      [CODEX_PROVIDER_ID]: { ...previousProvider, activeModelId, models },
+      ...latest.providers,
+      [CODEX_PROVIDER_ID]: { ...latestProvider, activeModelId, models },
     },
   });
   await persistAiConfig(next);

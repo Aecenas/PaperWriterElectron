@@ -12723,8 +12723,15 @@ export default function App() {
 
   const handleTestAiConfig = useCallback(async (draft) => {
     const result = await bridge.testAiConfig?.(draft);
-    showStatus(result?.message || "AI 连接测试完成", result?.ok ? "success" : "warning");
-    return result || { ok: false, message: "AI 连接测试失败" };
+    if (!result) {
+      showStatus("AI 连接测试失败", "warning");
+      return { ok: false, message: "AI 连接测试失败" };
+    }
+    const normalized = normalizePublicAiConfig(result);
+    setAiConfig(normalized);
+    const message = result.message || "AI 连接测试完成";
+    showStatus(message, result.ok ? "success" : "warning");
+    return { ...normalized, ok: Boolean(result.ok), message };
   }, [showStatus]);
 
   const handleClearAiConfig = useCallback(async (draft) => {
