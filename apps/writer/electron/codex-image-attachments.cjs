@@ -2,6 +2,9 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 
 const CODEX_IMAGE_MODES = new Set(["original", "caption-only"]);
+const MAX_CODEX_IMAGE_ATTACHMENTS = 32;
+const MAX_CODEX_IMAGE_BYTES = 64 * 1024 * 1024;
+const MAX_CODEX_IMAGE_TOTAL_BYTES = 256 * 1024 * 1024;
 const IMAGE_MIME_EXTENSIONS = new Map([
   ["image/png", ".png"],
   ["image/jpeg", ".jpg"],
@@ -9,6 +12,7 @@ const IMAGE_MIME_EXTENSIONS = new Map([
   ["image/webp", ".webp"],
   ["image/bmp", ".bmp"],
   ["image/svg+xml", ".svg"],
+  ["image/avif", ".avif"],
 ]);
 
 function normalizeCodexImageMode(value) {
@@ -25,11 +29,14 @@ function normalizeCodexImageAttachments(images = []) {
   }));
 }
 
-function decodeImageDataUrl(value) {
+function decodeImageDataUrl(value, maximumBytes = Infinity) {
   const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i.exec(String(value || ""));
   if (!match) return null;
   const mime = match[1].toLowerCase();
-  const buffer = Buffer.from(match[2].replace(/\s/g, ""), "base64");
+  const encoded = match[2].replace(/\s/g, "");
+  if (Math.floor(encoded.length * 3 / 4) > maximumBytes) throw new Error("图片数据超过 AI 附件安全上限");
+  const buffer = Buffer.from(encoded, "base64");
+  if (buffer.length > maximumBytes) throw new Error("图片数据超过 AI 附件安全上限");
   return buffer.length ? { mime, buffer } : null;
 }
 
@@ -49,6 +56,9 @@ async function materializeCodexImageAttachments({
   fsApi = fs,
   pathApi = path,
 } = {}) {
+  if (Array.isArray(images) && images.length > MAX_CODEX_IMAGE_ATTACHMENTS) {
+    throw new Error(`一次最多向 Codex 附加 ${MAX_CODEX_IMAGE_ATTACHMENTS} 张原图`);
+  }
   const normalized = normalizeCodexImageAttachments(images);
   if (!normalized.length) {
     return { attachments: [], imagePaths: [], cleanup: async () => {} };
@@ -61,17 +71,21 @@ async function materializeCodexImageAttachments({
   };
   try {
     const attachments = [];
+    let totalBytes = 0;
     for (let index = 0; index < normalized.length; index += 1) {
       const image = normalized[index];
-      let asset = decodeImageDataUrl(image.src);
+      let asset = decodeImageDataUrl(image.src, MAX_CODEX_IMAGE_BYTES);
       if (!asset && image.src.startsWith("paperwriter-asset://") && typeof readProtocolAsset === "function") {
         try {
-          asset = await readProtocolAsset(image.src);
+          asset = await readProtocolAsset(image.src, { maxBytes: MAX_CODEX_IMAGE_BYTES });
         } catch (error) {
           throw attachmentError(image, error?.message || "内嵌资源不存在");
         }
       }
       if (!asset?.buffer?.length) throw attachmentError(image, "图片数据为空或来源无效");
+      if (asset.buffer.length > MAX_CODEX_IMAGE_BYTES) throw attachmentError(image, "图片超过 64 MB 安全上限");
+      totalBytes += asset.buffer.length;
+      if (totalBytes > MAX_CODEX_IMAGE_TOTAL_BYTES) throw new Error("Codex 原图附件总量超过 256 MB 安全上限");
       const mime = String(asset.mime || image.mime || "").toLowerCase();
       const extension = imageExtension(mime);
       if (!extension) throw attachmentError(image, `不支持的图片格式 ${mime || "未知"}`);
@@ -90,6 +104,9 @@ module.exports = {
   decodeImageDataUrl,
   imageExtension,
   materializeCodexImageAttachments,
+  MAX_CODEX_IMAGE_ATTACHMENTS,
+  MAX_CODEX_IMAGE_BYTES,
+  MAX_CODEX_IMAGE_TOTAL_BYTES,
   normalizeCodexImageAttachments,
   normalizeCodexImageMode,
 };

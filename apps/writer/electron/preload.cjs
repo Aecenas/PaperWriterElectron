@@ -59,9 +59,18 @@ contextBridge.exposeInMainWorld("paperWriter", {
   deleteEntry: (targetPath) => ipcRenderer.invoke("entry:delete", targetPath || ""),
   moveEntry: (sourcePath, targetFolderPath) => ipcRenderer.invoke("entry:move", sourcePath || "", targetFolderPath || ""),
   backupDocument: (filePath) => ipcRenderer.invoke("document:backup", filePath || ""),
-  saveDocument: (document, currentPath, saveAs = false) =>
-    ipcRenderer.invoke("document:save", document, currentPath || "", Boolean(saveAs)),
+  saveDocument: (document, currentPath, saveAs = false, reservedPaths = []) =>
+    ipcRenderer.invoke(
+      "document:save",
+      document,
+      currentPath || "",
+      Boolean(saveAs),
+      Array.isArray(reservedPaths)
+        ? reservedPaths.filter((value) => typeof value === "string").slice(0, 100).map((value) => value.slice(0, 32768))
+        : [],
+    ),
   saveTempDocument: (document, tabId) => ipcRenderer.invoke("autosave:save-tab", document, tabId || ""),
+  deleteTempDocument: (tabId) => ipcRenderer.invoke("autosave:delete-tab", tabId || ""),
   pickExportPath: (format, suggestedName) => (
     ipcRenderer.invoke("document:pick-export-path", format === "images" ? "images" : "pdf", suggestedName || "未命名信笺")
   ),

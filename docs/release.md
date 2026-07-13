@@ -1,6 +1,6 @@
 # 发布与维护
 
-本文档记录 `0.9.1` 版本的发布准备流程。
+本文档记录 `0.9.2` 版本的发布准备流程。
 
 ## 版本号位置
 
@@ -12,7 +12,17 @@
 - `apps/writer/electron/package-lock.json`
 - `README.md`
 
-当前目标版本：`0.9.1`
+当前目标版本：`0.9.2`
+
+## 0.9.2 发布摘要
+
+- 修复 5000+ 字、多图文档连续输入卡顿：移除逐字 HTML/JSON 序列化和应用根组件更新，改由 ProseMirror 派生状态插件增量提供统计、大纲与目录状态。
+- 图片改为无损暂存资源协议，保留 GIF、透明度和原始字节；保存、恢复、AI 原图附件与旧 Data URL 共用安全资源读取链路，并增加 SHA-256 完整性校验。
+- 修复自动保存、另存为、多标签关闭、恢复文件清理及文件重命名、移动、删除之间的竞态，避免错误覆盖、误标已保存或丢失最新编辑。
+- 加固 Electron IPC、文件系统能力、CSP、ASAR 与生产 fuses，并防护 ZIP bomb、路径穿越、资源伪造、缓存残留和超量解压。
+- 加固 AI 配置密钥存储、重定向、响应限量和连接测试竞态；Codex CLI 默认运行在隔离临时目录且只接收受控正文与附件。
+- 日常启动默认使用生产构建，开发热更新迁移到显式 `PaperWriter-Dev.cmd` 入口。
+- 性能基准中，5260 字与 10 张约 2.1 MB 图片连续输入 P95 为 16.3–16.5 ms，未出现 50 ms 以上长任务。
 
 ## 0.9.1 发布摘要
 
@@ -57,6 +67,13 @@ cd apps\writer\electron
 npm run check
 ```
 
+```powershell
+cd ..\..\..
+.\scripts\Test-Launch-PaperWriter.ps1 -Smoke
+```
+
+启动器 smoke test 会校验 PowerShell 语法、安全清理约束、npm 依赖和生产前端构建完整性，但不会启动或结束 Electron/Vite 进程。正式发布前还应分别运行一次 `scripts\PaperWriter.cmd` 与 `scripts\PaperWriter-Dev.cmd`，确认生产单实例唤起和显式开发入口均可用；启动开发模式前需先从应用内正常退出生产实例。
+
 如果需要本地生成安装包：
 
 ```powershell
@@ -75,7 +92,7 @@ apps\release
 1. 确认工作区只包含本次发布需要的改动。
 2. 确认前端构建和 Electron 检查通过。
 3. 提交代码。
-4. 创建版本标签，例如 `v0.9.1`。
+4. 创建版本标签，例如 `v0.9.2`。
 5. 使用 GitHub Release 发布安装包。
 
 如使用 electron-builder 自动发布，需要配置 GitHub 发布权限，然后执行：

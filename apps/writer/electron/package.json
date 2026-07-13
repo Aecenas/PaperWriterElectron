@@ -1,12 +1,12 @@
 {
   "name": "paperwriter-electron",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "private": false,
   "main": "main.cjs",
   "scripts": {
     "dev": "electron .",
     "dev:vite": "node dev-vite.cjs",
-    "check": "node --check main.cjs && node --check preload.cjs && node --check codex-cli-provider.cjs && node --check codex-scope.cjs && node --check codex-image-attachments.cjs",
+    "check": "node --check main.cjs && node --check preload.cjs && node --check ai-provider-core.cjs && node --check ai-config-security.cjs && node --check asset-packager.cjs && node --check document-assets.cjs && node --check document-storage.cjs && node --check filesystem-access.cjs && node --check codex-cli-provider.cjs && node --check codex-scope.cjs && node --check codex-image-attachments.cjs",
     "test": "node --test *.test.cjs",
     "dist": "electron-builder --win nsis --x64",
     "pack": "electron-builder --win dir --x64",
@@ -31,17 +31,27 @@
   "build": {
     "appId": "com.aecenas.paperwriter",
     "productName": "笺间",
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
     "artifactName": "PaperWriter-${version}-${arch}.${ext}",
     "directories": {
       "output": "../../release"
     },
     "files": [
-      "**/*"
-    ],
-    "extraResources": [
+      "**/*",
       {
         "from": "../frontend/dist",
-        "to": "frontend/dist"
+        "to": "frontend/dist",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

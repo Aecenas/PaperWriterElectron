@@ -25,68 +25,93 @@ const AI_PROTOCOLS = {
   anthropic: { label: "Anthropic 原生", baseUrl: "https://api.anthropic.com/v1" },
 };
 
+const MAX_CUSTOM_AI_PROVIDERS = 64;
+const MAX_AI_MODELS_PER_PROVIDER = 256;
+const MAX_AI_REASONING_EFFORTS = 32;
+const RESERVED_PROVIDER_IDS = new Set(["__proto__", "prototype", "constructor", "tostring", "valueof"]);
+
+function hasOwn(object, key) {
+  return Boolean(object && Object.prototype.hasOwnProperty.call(object, key));
+}
+
+function safeProviderId(value) {
+  const raw = String(value || "");
+  if (raw.length > 128) return "";
+  const provider = raw.trim();
+  if (!/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(provider) || RESERVED_PROVIDER_IDS.has(provider.toLowerCase())) return "";
+  return provider;
+}
+
+function sourceObject(value) {
+  return value && typeof value === "object" ? value : {};
+}
+
 function normalizeAiProtocol(value) {
   return Object.prototype.hasOwnProperty.call(AI_PROTOCOLS, value) ? value : "openai";
 }
 
 function createAiModelId(provider, model = "") {
-  const source = String(model || "default").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${provider}-${source || "model"}`;
+  const providerId = safeProviderId(provider) || "provider";
+  const source = String(model || "default").slice(0, 256).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${providerId}-${source || "model"}`.slice(0, 256);
 }
 
 function providerDefinition(provider, config = {}) {
-  const builtin = BUILTIN_AI_PROVIDERS[provider];
+  const source = sourceObject(config);
+  const builtin = hasOwn(BUILTIN_AI_PROVIDERS, provider) ? BUILTIN_AI_PROVIDERS[provider] : null;
   if (builtin) {
     return { id: provider, transport: "http", ...builtin, builtin: true };
   }
-  const protocol = normalizeAiProtocol(config.protocol);
+  const protocol = normalizeAiProtocol(source.protocol);
   return {
     id: provider,
-    label: String(config.providerLabel || config.label || "自定义供应商").trim() || "自定义供应商",
+    label: String(source.providerLabel || source.label || "自定义供应商").slice(0, 1024).trim().slice(0, 120) || "自定义供应商",
     transport: "http",
     protocol,
-    baseUrl: String(config.baseUrl || AI_PROTOCOLS[protocol].baseUrl).trim() || AI_PROTOCOLS[protocol].baseUrl,
+    baseUrl: String(source.baseUrl || AI_PROTOCOLS[protocol].baseUrl).slice(0, 2048).trim() || AI_PROTOCOLS[protocol].baseUrl,
     model: "",
     builtin: false,
   };
 }
 
 function normalizeAiModelConfig(provider, config = {}, index = 0, fallbackModel = "") {
-  const model = String(config.model || fallbackModel || "").trim();
+  const source = sourceObject(config);
+  const model = String(source.model || fallbackModel || "").slice(0, 256).trim();
   return {
-    id: String(config.id || createAiModelId(provider, model || String(index + 1))).trim(),
-    name: String(config.name || config.modelName || (index === 0 ? "默认模型" : `模型 ${index + 1}`)).trim() || `模型 ${index + 1}`,
+    id: String(source.id || createAiModelId(provider, model || String(index + 1))).slice(0, 256).trim(),
+    name: String(source.name || source.modelName || (index === 0 ? "默认模型" : `模型 ${index + 1}`)).slice(0, 256).trim() || `模型 ${index + 1}`,
     model,
-    reasoningEffort: typeof config.reasoningEffort === "string" ? config.reasoningEffort : "",
-    defaultReasoningEffort: typeof config.defaultReasoningEffort === "string" ? config.defaultReasoningEffort : "",
-    supportedReasoningEfforts: Array.isArray(config.supportedReasoningEfforts)
-      ? config.supportedReasoningEfforts.map((option) => ({
-        reasoningEffort: String(option?.reasoningEffort || option || "").trim(),
-        description: String(option?.description || "").trim(),
+    reasoningEffort: typeof source.reasoningEffort === "string" ? source.reasoningEffort.slice(0, 64) : "",
+    defaultReasoningEffort: typeof source.defaultReasoningEffort === "string" ? source.defaultReasoningEffort.slice(0, 64) : "",
+    supportedReasoningEfforts: Array.isArray(source.supportedReasoningEfforts)
+      ? source.supportedReasoningEfforts.slice(0, MAX_AI_REASONING_EFFORTS).map((option) => ({
+        reasoningEffort: String(option?.reasoningEffort || option || "").slice(0, 64).trim(),
+        description: String(option?.description || "").slice(0, 500).trim(),
       })).filter((option) => option.reasoningEffort)
       : [],
-    description: typeof config.description === "string" ? config.description : "",
-    catalogManaged: Boolean(config.catalogManaged),
-    testedOk: Boolean(config.testedOk),
-    testedAt: typeof config.testedAt === "string" ? config.testedAt : "",
-    testMessage: typeof config.testMessage === "string" ? config.testMessage : "",
+    description: typeof source.description === "string" ? source.description.slice(0, 2000) : "",
+    catalogManaged: Boolean(source.catalogManaged),
+    testedOk: Boolean(source.testedOk),
+    testedAt: typeof source.testedAt === "string" ? source.testedAt.slice(0, 64) : "",
+    testMessage: typeof source.testMessage === "string" ? source.testMessage.slice(0, 2000) : "",
   };
 }
 
 function normalizeAiProviderConfig(provider, config = {}) {
-  const definition = providerDefinition(provider, config);
+  const source = sourceObject(config);
+  const definition = providerDefinition(provider, source);
   const legacyModel = {
-    id: config.activeModelId || createAiModelId(provider, config.model || definition.model),
-    name: config.modelName || "默认模型",
-    model: config.model || definition.model,
-    testedOk: config.testedOk,
-    testedAt: config.testedAt,
-    testMessage: config.testMessage,
+    id: source.activeModelId || createAiModelId(provider, source.model || definition.model),
+    name: source.modelName || "默认模型",
+    model: source.model || definition.model,
+    testedOk: source.testedOk,
+    testedAt: source.testedAt,
+    testMessage: source.testMessage,
   };
   let modelsSource;
-  if (Array.isArray(config.models)) {
-    modelsSource = config.models;
-  } else if ((definition.builtin && definition.transport !== "codex-cli") || config.model) {
+  if (Array.isArray(source.models)) {
+    modelsSource = source.models.slice(0, MAX_AI_MODELS_PER_PROVIDER);
+  } else if ((definition.builtin && definition.transport !== "codex-cli") || source.model) {
     modelsSource = [legacyModel];
   } else {
     modelsSource = [];
@@ -94,11 +119,17 @@ function normalizeAiProviderConfig(provider, config = {}) {
   if (definition.builtin && definition.transport !== "codex-cli" && modelsSource.length === 0) {
     modelsSource = [legacyModel];
   }
+  const seenModelIds = new Set();
   const models = modelsSource
     .map((modelConfig, index) => normalizeAiModelConfig(provider, modelConfig, index, definition.model))
-    .filter((model) => model.model);
-  const activeModelId = config.activeModelId && models.some((model) => model.id === config.activeModelId)
-    ? config.activeModelId
+    .filter((model) => {
+      if (!model.model || !model.id || seenModelIds.has(model.id)) return false;
+      seenModelIds.add(model.id);
+      return true;
+    });
+  const requestedModelId = typeof source.activeModelId === "string" ? source.activeModelId.slice(0, 256) : "";
+  const activeModelId = requestedModelId && models.some((model) => model.id === requestedModelId)
+    ? requestedModelId
     : (models[0]?.id || "");
   const activeModel = models.find((model) => model.id === activeModelId) || models[0] || null;
   return {
@@ -107,8 +138,8 @@ function normalizeAiProviderConfig(provider, config = {}) {
     transport: definition.transport || "http",
     protocol: definition.protocol,
     builtin: definition.builtin,
-    baseUrl: definition.transport === "codex-cli" ? "" : (String(config.baseUrl || definition.baseUrl).trim() || definition.baseUrl),
-    apiKey: typeof config.apiKey === "string" ? config.apiKey.trim() : "",
+    baseUrl: definition.transport === "codex-cli" ? "" : (String(source.baseUrl || definition.baseUrl).slice(0, 2048).trim() || definition.baseUrl),
+    apiKey: typeof source.apiKey === "string" ? source.apiKey.slice(0, 16384).trim() : "",
     activeModelId,
     models,
     model: activeModel?.model || "",
@@ -121,28 +152,37 @@ function normalizeAiProviderConfig(provider, config = {}) {
 }
 
 function normalizeAiConfig(config = {}) {
-  const providers = {};
+  const source = sourceObject(config);
+  const providers = Object.create(null);
   Object.keys(BUILTIN_AI_PROVIDERS).forEach((provider) => {
-    const legacy = !config.providers && config.provider === provider ? config : {};
-    providers[provider] = normalizeAiProviderConfig(provider, config.providers?.[provider] || legacy);
+    const legacy = !source.providers && source.provider === provider ? source : {};
+    providers[provider] = normalizeAiProviderConfig(provider, hasOwn(source.providers, provider) ? source.providers[provider] : legacy);
   });
-  Object.entries(config.providers || {}).forEach(([provider, providerConfig]) => {
-    if (!BUILTIN_AI_PROVIDERS[provider] && providerConfig && typeof providerConfig === "object") {
-      providers[provider] = normalizeAiProviderConfig(provider, providerConfig);
-    }
-  });
-  const requestedActiveProvider = String(config.activeProvider || config.provider || "gemini");
-  const activeProvider = providers[requestedActiveProvider] ? requestedActiveProvider : "gemini";
+  let customProviderCount = 0;
+  const providerSource = source.providers && typeof source.providers === "object" ? source.providers : {};
+  for (const rawProvider in providerSource) {
+    if (!hasOwn(providerSource, rawProvider) || hasOwn(BUILTIN_AI_PROVIDERS, rawProvider)) continue;
+    const provider = safeProviderId(rawProvider);
+    const providerConfig = providerSource[rawProvider];
+    if (!provider || !providerConfig || typeof providerConfig !== "object") continue;
+    providers[provider] = normalizeAiProviderConfig(provider, providerConfig);
+    customProviderCount += 1;
+    if (customProviderCount >= MAX_CUSTOM_AI_PROVIDERS) break;
+  }
+  const requestedActiveProvider = safeProviderId(source.activeProvider || source.provider || "gemini");
+  const activeProvider = requestedActiveProvider && hasOwn(providers, requestedActiveProvider) ? requestedActiveProvider : "gemini";
   const activeProviderConfig = providers[activeProvider];
-  const activeModelId = activeProviderConfig.models.some((model) => model.id === config.activeModelId)
-    ? config.activeModelId
+  const requestedActiveModelId = typeof source.activeModelId === "string" ? source.activeModelId.slice(0, 256) : "";
+  const activeModelId = activeProviderConfig.models.some((model) => model.id === requestedActiveModelId)
+    ? requestedActiveModelId
     : activeProviderConfig.activeModelId;
   return { activeProvider, activeModelId, providers };
 }
 
 function activeAiProviderConfig(config, preferredProvider = "", preferredModelId = "") {
   const normalized = normalizeAiConfig(config);
-  const provider = normalized.providers[preferredProvider] ? preferredProvider : normalized.activeProvider;
+  const safePreferredProvider = safeProviderId(preferredProvider);
+  const provider = safePreferredProvider && hasOwn(normalized.providers, safePreferredProvider) ? safePreferredProvider : normalized.activeProvider;
   const providerConfig = normalized.providers[provider] || normalized.providers.gemini;
   const model = providerConfig.models.find((item) => item.id === preferredModelId)
     || providerConfig.models.find((item) => item.id === normalized.activeModelId)
@@ -170,10 +210,10 @@ function activeAiProviderConfig(config, preferredProvider = "", preferredModelId
 function publicAiConfig(config, runtimeByProvider = {}) {
   const normalized = normalizeAiConfig(config);
   const active = activeAiProviderConfig(normalized);
-  const publicProviders = {};
+  const publicProviders = Object.create(null);
   Object.entries(normalized.providers).forEach(([provider, providerConfig]) => {
     const apiKey = providerConfig.apiKey || "";
-    const runtimeSource = runtimeByProvider[provider] || null;
+    const runtimeSource = hasOwn(runtimeByProvider, provider) ? runtimeByProvider[provider] : null;
     const runtime = runtimeSource ? { ...runtimeSource } : null;
     if (runtime) {
       delete runtime.email;
@@ -212,7 +252,7 @@ function publicAiConfig(config, runtimeByProvider = {}) {
       runtime,
     };
   });
-  const publicActiveProvider = publicProviders[active.provider] || publicProviders.gemini;
+  const publicActiveProvider = hasOwn(publicProviders, active.provider) ? publicProviders[active.provider] : publicProviders.gemini;
   const publicActiveModel = publicActiveProvider?.models.find((model) => model.id === active.modelId)
     || publicActiveProvider?.models[0]
     || {};

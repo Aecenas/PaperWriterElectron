@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { codexScopeLabel, normalizeCodexImageMode, normalizeCodexScope, relativeCodexScopePath } from "./codex-scope.js";
 
-test("migrates legacy chat scope to the workspace", () => {
+test("keeps parsing legacy scope values for document migration", () => {
   assert.deepEqual(normalizeCodexScope(), { mode: "workspace", relativePath: "" });
   assert.equal(normalizeCodexImageMode(), "original");
   assert.equal(normalizeCodexImageMode("caption-only"), "caption-only");
 });
 
-test("normalizes all scope modes and portable relative paths", () => {
+test("legacy scope parser validates all historical modes and portable paths", () => {
   assert.deepEqual(normalizeCodexScope({ mode: "document-only" }), { mode: "document-only", relativePath: "" });
   assert.deepEqual(normalizeCodexScope({ mode: "document-directory" }), { mode: "document-directory", relativePath: "" });
   assert.deepEqual(normalizeCodexScope({ mode: "subdirectory", relativePath: "素材\\参考/" }), { mode: "subdirectory", relativePath: "素材/参考" });

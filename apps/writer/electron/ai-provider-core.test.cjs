@@ -122,3 +122,57 @@ test("parses Anthropic text deltas, usage, completion and errors", () => {
   assert.deepEqual(extractAiStreamEvent("anthropic", { type: "message_stop" }), { done: true });
   assert.deepEqual(extractAiStreamEvent("anthropic", { type: "error", error: { message: "overloaded" } }), { error: "overloaded" });
 });
+
+test("rejects prototype-like provider ids without mutating object prototypes", () => {
+  const malicious = JSON.parse(`{
+    "activeProvider": "__proto__",
+    "providers": {
+      "__proto__": { "providerLabel": "polluted", "model": "evil" },
+      "constructor": { "providerLabel": "constructor", "model": "evil" },
+      "toString": { "providerLabel": "toString", "model": "evil" },
+      "custom-safe": { "providerLabel": "Safe", "models": [{ "id": "safe", "model": "safe-model" }] }
+    }
+  }`);
+  const config = normalizeAiConfig(malicious);
+  assert.equal(Object.getPrototypeOf(config.providers), null);
+  assert.equal(Object.hasOwn(config.providers, "__proto__"), false);
+  assert.equal(Object.hasOwn(config.providers, "constructor"), false);
+  assert.equal(Object.hasOwn(config.providers, "toString"), false);
+  assert.equal(Object.hasOwn(config.providers, "custom-safe"), true);
+  assert.equal(config.activeProvider, "gemini");
+  assert.equal({}.polluted, undefined);
+});
+
+test("bounds custom providers, models, reasoning options and metadata", () => {
+  const providers = {};
+  for (let providerIndex = 0; providerIndex < 70; providerIndex += 1) {
+    providers[`custom-${providerIndex}`] = {
+      providerLabel: "P".repeat(200),
+      apiKey: "k".repeat(20000),
+      models: providerIndex === 0 ? Array.from({ length: 300 }, (_value, modelIndex) => ({
+        id: `model-${modelIndex}-${"i".repeat(300)}`,
+        name: "N".repeat(300),
+        model: `gpt-${modelIndex}-${"m".repeat(300)}`,
+        description: "D".repeat(3000),
+        supportedReasoningEfforts: Array.from({ length: 40 }, () => ({
+          reasoningEffort: "e".repeat(100),
+          description: "x".repeat(1000),
+        })),
+      })) : [],
+    };
+  }
+  const config = normalizeAiConfig({ providers });
+  const customProviders = Object.keys(config.providers).filter((provider) => provider.startsWith("custom-"));
+  assert.equal(customProviders.length, 64);
+  const first = config.providers[customProviders[0]];
+  assert.equal(first.providerLabel.length, 120);
+  assert.equal(first.apiKey.length, 16384);
+  assert.equal(first.models.length, 256);
+  assert.equal(first.models[0].id.length, 256);
+  assert.equal(first.models[0].name.length, 256);
+  assert.equal(first.models[0].model.length, 256);
+  assert.equal(first.models[0].description.length, 2000);
+  assert.equal(first.models[0].supportedReasoningEfforts.length, 32);
+  assert.equal(first.models[0].supportedReasoningEfforts[0].reasoningEffort.length, 64);
+  assert.equal(first.models[0].supportedReasoningEfforts[0].description.length, 500);
+});

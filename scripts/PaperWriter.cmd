@@ -1,2 +1,4 @@
 @echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0Launch-PaperWriter.ps1"
+setlocal
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Launch-PaperWriter.ps1"
+exit /b %errorlevel%

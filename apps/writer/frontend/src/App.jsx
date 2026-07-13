@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Extension, mergeAttributes, Node } from "@tiptap/core";
-import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor } from "@tiptap/react";
+import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -82,7 +82,38 @@ import {
 } from "lucide-react";
 import { bridge } from "./bridge.js";
 import { groupTestedAiProviders } from "./ai-provider-selector.js";
-import { codexScopeLabel, normalizeCodexImageMode, normalizeCodexScope, relativeCodexScopePath } from "./codex-scope.js";
+import { normalizeCodexImageMode, normalizeCodexScope } from "./codex-scope.js";
+import { computePaperDerivedState, EMPTY_PAPER_DERIVED_STATE } from "./editor-derived-state.js";
+import { createDocumentCommentId, mapDocumentCommentsThroughTransaction, normalizeDocumentComments } from "./editor-comments.js";
+import {
+  deleteRecoveryBestEffort,
+  replaceEditorContentWithoutHistory,
+  sameDocumentPath,
+  selectAutosaveSnapshotTabs,
+  sessionTabSignature,
+  snapshotRevisionIsCurrent,
+  snapshotTabsWithRevisions,
+} from "./editor-lifecycle.js";
+import {
+  boundedAiImageEntries,
+  DOCUMENT_TITLE_MAX_CHARS,
+  IMAGE_CAPTION_MAX_CHARS,
+  normalizeBoundedAiChatMessages,
+  normalizeBoundedAiQuotes,
+  normalizeDocumentTitle,
+  normalizeImageCaption,
+  normalizeImageText,
+  normalizeMediaFileName,
+  normalizeMediaMime,
+} from "./content-limits.js";
+import {
+  normalizeCustomBackgroundSource,
+  normalizeEmbedWidth,
+  normalizeImageSource,
+  normalizeMediaSource,
+  SAFE_EMBED_WIDTHS,
+  toSafeCssImageUrl,
+} from "./resource-safety.js";
 
 const COLOR_OPTIONS = [
   { label: "默认墨色", value: "" },
@@ -127,10 +158,10 @@ const UNDERLINE_STYLE_OPTIONS = [
 ];
 const UNDERLINE_STYLE_VALUES = new Set(UNDERLINE_STYLE_OPTIONS.map((option) => option.value));
 const IMAGE_WIDTH_OPTIONS = [
-  { label: "小", value: "45%" },
-  { label: "中", value: "62%" },
-  { label: "大", value: "78%" },
-  { label: "满", value: "100%" },
+  { label: "小", value: SAFE_EMBED_WIDTHS[0] },
+  { label: "中", value: SAFE_EMBED_WIDTHS[1] },
+  { label: "大", value: SAFE_EMBED_WIDTHS[2] },
+  { label: "满", value: SAFE_EMBED_WIDTHS[3] },
 ];
 const AUDIO_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
@@ -151,9 +182,11 @@ const UPDATE_AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const AI_PROMPT_PREFIX = "这是我正在写的文章，请你帮我优化内容与表达：";
 const AI_FIXED_LETTER_TEMPLATE_ID = "fiber-letter";
 const AI_CHAT_SYSTEM_PREFIX = "你是笺间的 AI 问答助手。你可以阅读用户当前正在写的信笺内容，并围绕内容、结构、表达、事实一致性和写作策略回答问题。回答要具体、克制、可执行。";
+const CODEX_DOCUMENT_ONLY_SCOPE = Object.freeze({ mode: "document-only", relativePath: "" });
 const AI_CHAT_SELECTION_PLUGIN_KEY = new PluginKey("paperwriterAiChatSelections");
 const DOCUMENT_COMMENT_PLUGIN_KEY = new PluginKey("paperwriterDocumentComments");
 const HEADING_NUMBERING_PLUGIN_KEY = new PluginKey("paperwriterHeadingNumbers");
+const PAPER_DERIVED_STATE_PLUGIN_KEY = new PluginKey("paperwriterDerivedState");
 const COMMENT_COLOR_PALETTE = [
   { border: "rgba(154, 86, 53, 0.72)", bg: "rgba(246, 226, 169, 0.24)", ink: "#9a5635", anchorBg: "rgba(255, 248, 236, 0.96)" },
   { border: "rgba(80, 126, 116, 0.72)", bg: "rgba(200, 227, 211, 0.24)", ink: "#4e8580", anchorBg: "rgba(239, 250, 245, 0.96)" },
@@ -280,7 +313,6 @@ const LAYOUT_MODES = {
   FLOW: "flow",
   PAGED: "paged",
 };
-const PAGED_CONTENT_UNITS = 720;
 
 const PAPER_ASSETS = {
   "minimal-red-margin": new URL("./assets/papers/minimal-red-margin-paper.png", import.meta.url).href,
@@ -341,7 +373,6 @@ const HELP_SCREENSHOTS = {
   "codex-cli": new URL("./assets/help/screenshots/codex-cli.webp", import.meta.url).href,
   "ai-optimize": new URL("./assets/help/screenshots/ai-optimize.webp", import.meta.url).href,
   "ai-chat": new URL("./assets/help/screenshots/ai-chat.webp", import.meta.url).href,
-  "codex-scope-images": new URL("./assets/help/screenshots/codex-scope-images.webp", import.meta.url).href,
   "split-view": new URL("./assets/help/screenshots/split-view.webp", import.meta.url).href,
   "templates-gallery": new URL("./assets/help/screenshots/templates-gallery.webp", import.meta.url).href,
   "template-editor": new URL("./assets/help/screenshots/template-editor.webp", import.meta.url).href,
@@ -493,18 +524,18 @@ const HELP_TOPICS = [
     illustrationAlt: "AI 问答左右分栏，右侧显示模型、问答记录、快捷问题和输入框。",
     illustrationCaption: "可直接围绕全文提问，也可重点引用左侧标记文字。",
     steps: ["进入 AI 问答后选择已测试模型，可使用审阅全文、改写标记等快捷问题。", "直接输入问题，或先在左侧选中文字并标记给 AI。", "可导出当前问答记录；输入草稿和消息会按**信笺**保存。"],
-    tips: ["清空只影响当前信笺的问答，不会清除 AI 优化结果或 Codex 范围设置。", "切换信笺或模型不会混用不同信笺的对话上下文。"],
+    tips: ["清空只影响当前信笺的问答，不会清除 AI 优化结果。", "切换信笺或模型不会混用不同信笺的对话上下文。"],
   },
   {
     id: "codex-scope-images",
     categoryId: "ai",
-    title: "Codex 目录范围与原图",
-    summary: "Codex 问答可控制[[只读目录边界]]，并选择附加原图或仅发送 `[图N.标题]`。",
-    illustration: "codex-scope-images",
-    illustrationAlt: "Codex 目录范围菜单显示四种读取范围，底部提供信笺原图开关和图片数量。",
-    illustrationCaption: "目录范围与图片模式都按信笺保存，只影响下一次提问。",
-    steps: ["在切换模型右侧打开目录范围，选择仅当前信笺、信笺目录、整个工作区或指定子目录。", "选择子目录时从当前工作区目录树中定位，Codex 不会获得工作区外的项目路径。", "在菜单底部切换信笺图片：默认附加全部原图，也可改为仅标题。"],
-    tips: ["目录失效或符号链接逃出工作区时会要求重新选择，不会自动扩大范围。", "原图模式会增加图片 token；图片失效时会明确提示图号，不会静默漏图。"],
+    title: "Codex 信笺隔离与原图",
+    summary: "Codex 问答固定为[[仅当前信笺]]，并可选择附加原图或仅发送 `[图N.标题]`。",
+    illustration: "ai-chat",
+    illustrationAlt: "Codex 问答工具栏显示仅当前信笺隔离，并提供信笺原图开关。",
+    illustrationCaption: "Codex 无法读取信笺目录、工作区或其他本地文件。",
+    steps: ["Codex 工具栏固定显示仅当前信笺（隔离），此范围不可扩大。", "提问时只发送当前信笺正文和本次对话所需内容。", "在设置菜单切换信笺图片：默认附加全部原图，也可改为仅标题。"],
+    tips: ["旧文档保存的目录范围会自动迁移为仅当前信笺。", "原图模式会增加图片 token；图片失效时会明确提示图号，不会静默漏图。"],
   },
   {
     id: "split-view",
@@ -1164,7 +1195,10 @@ function loadSessionState() {
     const parsed = raw ? JSON.parse(raw) : {};
     const tabs = Array.isArray(parsed.tabs)
       ? parsed.tabs
-        .map((tab) => ({ path: typeof tab?.path === "string" ? tab.path : "" }))
+        .map((tab) => ({
+          path: typeof tab?.path === "string" ? tab.path : "",
+          temporary: Boolean(tab?.temporary),
+        }))
         .filter((tab) => tab.path)
       : [];
     return {
@@ -1186,7 +1220,10 @@ function saveSessionState(state) {
     activePath: typeof state.activePath === "string" ? state.activePath : "",
     tabs: Array.isArray(state.tabs)
       ? state.tabs
-        .map((tab) => ({ path: typeof tab?.path === "string" ? tab.path : "" }))
+        .map((tab) => ({
+          path: typeof tab?.path === "string" ? tab.path : "",
+          temporary: Boolean(tab?.temporary),
+        }))
         .filter((tab) => tab.path)
       : [],
     updatedAt: new Date().toISOString(),
@@ -1474,18 +1511,6 @@ function tableTextFromNode(node) {
     .join("\n");
 }
 
-function editorHasNodeType(editor, typeName) {
-  let found = false;
-  editor?.state?.doc?.descendants((node) => {
-    if (node.type.name === typeName) {
-      found = true;
-      return false;
-    }
-    return true;
-  });
-  return found;
-}
-
 function extractAiBodyContent(editor, { includeFinalizedBoundary = true, includeImageCaptions = true } = {}) {
   const json = editor?.getJSON?.();
   const rootBlocks = json?.content || [];
@@ -1560,14 +1585,14 @@ function extractAiBodyContent(editor, { includeFinalizedBoundary = true, include
     if (node.type === "image") {
       imageIndex += 1;
       const caption = includeImageCaptions
-        ? (node.attrs?.caption || node.attrs?.alt || "图片").trim()
+        ? normalizeImageCaption(node.attrs?.caption || normalizeImageText(node.attrs?.alt) || "图片").trim()
         : "图片";
       assets.images[imageIndex] = {
         number: imageIndex,
         caption,
-        src: node.attrs?.src || "",
-        alt: node.attrs?.alt || caption,
-        width: node.attrs?.width || "78%",
+        src: normalizeImageSource(node.attrs?.src),
+        alt: normalizeImageText(node.attrs?.alt || caption),
+        width: normalizeEmbedWidth(node.attrs?.width),
       };
       pushLine(includeImageCaptions ? `[图${imageIndex}.${caption}]` : "[图片]");
       return;
@@ -1575,7 +1600,7 @@ function extractAiBodyContent(editor, { includeFinalizedBoundary = true, include
 
     if (node.type === "paperMedia") {
       const kind = node.attrs?.kind === "video" ? "视频" : "音频";
-      const fileName = String(node.attrs?.fileName || `未命名${kind}`).trim();
+      const fileName = normalizeMediaFileName(node.attrs?.fileName, `未命名${kind}`);
       pushLine(`[${kind}：${fileName}]`);
       return;
     }
@@ -1610,20 +1635,15 @@ function imageMimeFromSource(source = "") {
 }
 
 function aiChatImagesFromAssets(assets = {}) {
-  return Object.values(assets.images || {}).map((image, index) => ({
-    number: Math.max(1, Number(image?.number) || index + 1),
-    caption: String(image?.caption || image?.alt || "图片").trim() || "图片",
-    src: typeof image?.src === "string" ? image.src : "",
-    mime: imageMimeFromSource(image?.src || ""),
-  }));
-}
-
-function countEditorImages(editor) {
-  let count = 0;
-  editor?.state?.doc?.descendants((node) => {
-    if (node.type?.name === "image") count += 1;
+  return Object.values(assets.images || {}).map((image, index) => {
+    const source = normalizeImageSource(image?.src);
+    return {
+      number: Math.max(1, Number(image?.number) || index + 1),
+      caption: String(image?.caption || image?.alt || "图片").trim() || "图片",
+      src: source,
+      mime: imageMimeFromSource(source),
+    };
   });
-  return count;
 }
 
 function buildAiPromptInput(editor, presentation = DEFAULT_TEMPLATE_PRESENTATION) {
@@ -1998,7 +2018,7 @@ function aiBlockHtml(block) {
     return `<table><thead><tr>${headers.map((cell) => `<th>${inlineStrongHtml(cell)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${inlineStrongHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   }
   if (block.type === "image") {
-    const src = block.asset?.src || "";
+    const src = normalizeImageSource(block.asset?.src);
     const caption = `图${block.number}. ${block.caption}`;
     return src
       ? `<figure><img src="${escapeHtml(src)}" alt="${escapeHtml(block.asset?.alt || block.caption)}"><figcaption>${escapeHtml(caption)}</figcaption></figure>`
@@ -2138,7 +2158,7 @@ function createEmptyAiChatState() {
     messages: [],
     input: "",
     selectedTexts: [],
-    codexScope: normalizeCodexScope(),
+    codexScope: { ...CODEX_DOCUMENT_ONLY_SCOPE },
     codexImageMode: normalizeCodexImageMode(),
     status: "idle",
     error: "",
@@ -2151,15 +2171,25 @@ function normalizeAiOptimizeState(state = {}) {
     ? state.status
     : "ready";
   const assets = state.assets && typeof state.assets === "object" ? state.assets : {};
+  const images = Object.fromEntries(
+    boundedAiImageEntries(assets.images)
+      .map(([key, image], index) => [String(key).slice(0, 128), {
+        number: Math.max(1, Math.floor(Number(image?.number) || index + 1)),
+        caption: String(image?.caption || image?.alt || "图片").slice(0, 240),
+        src: normalizeImageSource(image?.src),
+        alt: typeof image?.alt === "string" ? image.alt.slice(0, 240) : "",
+        width: normalizeEmbedWidth(image?.width),
+      }]),
+  );
   return {
     ...createEmptyAiOptimizeState(),
     ...state,
-    output: typeof state.output === "string" ? state.output : "",
+    output: typeof state.output === "string" ? state.output.slice(0, 8 * 1024 * 1024) : "",
     status,
-    error: typeof state.error === "string" ? state.error : "",
+    error: typeof state.error === "string" ? state.error.slice(0, 2000) : "",
     assets: {
-      images: assets.images && typeof assets.images === "object" ? assets.images : {},
-      quotes: Array.isArray(assets.quotes) ? assets.quotes : [],
+      images,
+      quotes: normalizeBoundedAiQuotes(assets.quotes),
     },
     elapsedSeconds: Number.isFinite(Number(state.elapsedSeconds)) ? Math.max(0, Number(state.elapsedSeconds)) : 0,
     tokenStats: state.tokenStats && typeof state.tokenStats === "object" ? state.tokenStats : null,
@@ -2170,41 +2200,29 @@ function normalizeAiOptimizeState(state = {}) {
   };
 }
 
-function normalizeAiChatMessage(message = {}) {
-  return {
-    id: typeof message.id === "string" && message.id ? message.id : `message-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-    role: message.role === "assistant" ? "assistant" : "user",
-    content: typeof message.content === "string" ? message.content : "",
-    status: typeof message.status === "string" ? message.status : "done",
-    elapsedSeconds: Number.isFinite(Number(message.elapsedSeconds)) ? Math.max(0, Number(message.elapsedSeconds)) : 0,
-    createdAt: Number.isFinite(Number(message.createdAt)) ? Number(message.createdAt) : Date.now(),
-    usage: Number.isFinite(Number(message.usage)) ? Number(message.usage) : undefined,
-    usageEstimated: Boolean(message.usageEstimated),
-    cachedTokens: Number.isFinite(Number(message.cachedTokens)) ? Number(message.cachedTokens) : undefined,
-  };
-}
-
 function normalizeAiChatSelection(selection = {}) {
   return {
-    ...selection,
-    id: typeof selection.id === "string" && selection.id ? selection.id : createAiChatSelectionId(),
-    text: typeof selection.text === "string" ? selection.text : "",
+    id: typeof selection.id === "string" && selection.id ? selection.id.slice(0, 128) : createAiChatSelectionId(),
+    text: typeof selection.text === "string" ? selection.text.slice(0, 20000) : "",
     from: Number.isFinite(Number(selection.from)) ? Number(selection.from) : 1,
     to: Number.isFinite(Number(selection.to)) ? Number(selection.to) : 1,
   };
 }
 
 function normalizeAiChatState(state = {}) {
+  // Parse legacy values so older documents remain loadable, then migrate them
+  // to the only scope the isolated backend accepts.
+  normalizeCodexScope(state.codexScope);
   return {
     ...createEmptyAiChatState(),
     ...state,
-    messages: Array.isArray(state.messages) ? state.messages.map(normalizeAiChatMessage) : [],
-    input: typeof state.input === "string" ? state.input : "",
-    selectedTexts: Array.isArray(state.selectedTexts) ? state.selectedTexts.map(normalizeAiChatSelection).filter((selection) => selection.text) : [],
-    codexScope: normalizeCodexScope(state.codexScope),
+    messages: normalizeBoundedAiChatMessages(state.messages),
+    input: typeof state.input === "string" ? state.input.slice(0, 200000) : "",
+    selectedTexts: Array.isArray(state.selectedTexts) ? state.selectedTexts.slice(0, 100).map(normalizeAiChatSelection).filter((selection) => selection.text) : [],
+    codexScope: { ...CODEX_DOCUMENT_ONLY_SCOPE },
     codexImageMode: normalizeCodexImageMode(state.codexImageMode),
     status: ["idle", "streaming", "error"].includes(state.status) ? state.status : "idle",
-    error: typeof state.error === "string" ? state.error : "",
+    error: typeof state.error === "string" ? state.error.slice(0, 2000) : "",
     updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : "",
   };
 }
@@ -2297,65 +2315,6 @@ function createBlankDocument(
   };
 }
 
-function createDocumentCommentId() {
-  return `comment-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function normalizeDocumentComments(comments = []) {
-  if (!Array.isArray(comments)) {
-    return [];
-  }
-  const seen = new Set();
-  return comments
-    .map((comment) => {
-      const from = Math.max(1, Math.floor(Number(comment?.from) || 0));
-      const to = Math.max(1, Math.floor(Number(comment?.to) || 0));
-      const text = typeof comment?.text === "string" ? comment.text.trim().slice(0, 2000) : "";
-      if (!text || from === to) {
-        return null;
-      }
-      const idSource = typeof comment?.id === "string" && comment.id.trim()
-        ? comment.id.trim()
-        : createDocumentCommentId();
-      const id = seen.has(idSource) ? createDocumentCommentId() : idSource;
-      seen.add(id);
-      const createdAt = typeof comment?.createdAt === "string" && comment.createdAt ? comment.createdAt : new Date().toISOString();
-      const updatedAt = typeof comment?.updatedAt === "string" && comment.updatedAt ? comment.updatedAt : createdAt;
-      return {
-        id,
-        from: Math.min(from, to),
-        to: Math.max(from, to),
-        text,
-        quote: typeof comment?.quote === "string" ? comment.quote.trim().slice(0, 280) : "",
-        createdAt,
-        updatedAt,
-      };
-    })
-    .filter(Boolean);
-}
-
-function mapDocumentCommentsThroughTransaction(comments = [], transaction, maxPosition = 1) {
-  const normalized = normalizeDocumentComments(comments);
-  if (!transaction?.docChanged) {
-    return normalized;
-  }
-  return normalized
-    .map((comment) => {
-      const fromResult = transaction.mapping.mapResult(comment.from, 1);
-      const toResult = transaction.mapping.mapResult(comment.to, -1);
-      const from = Math.max(1, Math.min(fromResult.pos, maxPosition));
-      const to = Math.max(1, Math.min(toResult.pos, maxPosition));
-      if (fromResult.deleted && toResult.deleted) {
-        return null;
-      }
-      if (from >= to) {
-        return null;
-      }
-      return { ...comment, from, to };
-    })
-    .filter(Boolean);
-}
-
 function getCommentAnchorTop(editor, from) {
   if (!editor?.view) {
     return null;
@@ -2387,24 +2346,27 @@ function assignDocumentCommentPresentations(comments = [], anchorTopById = new M
     .sort((a, b) => {
       const topA = anchorTopById.get(a.id);
       const topB = anchorTopById.get(b.id);
-      if (Number.isFinite(topA) && Number.isFinite(topB) && topA !== topB) {
-        return topA - topB;
-      }
+      const orderA = Number.isFinite(topA) ? topA : Number.POSITIVE_INFINITY;
+      const orderB = Number.isFinite(topB) ? topB : Number.POSITIVE_INFINITY;
+      if (orderA !== orderB) return orderA - orderB;
       return (a.from - b.from) || (a.to - b.to) || a.createdAt.localeCompare(b.createdAt);
     });
   const presentations = new Map();
-  const placedAnchors = [];
+  const activeAnchors = [];
+  const trackUseCounts = COMMENT_TRACKS.map(() => 0);
+  let activeStart = 0;
   sortedComments.forEach((comment) => {
     const top = anchorTopById.get(comment.id);
-    const usedTracks = new Set();
     if (Number.isFinite(top)) {
-      placedAnchors.forEach((anchor) => {
-        if (Math.abs(anchor.top - top) < COMMENT_ANCHOR_COLLISION_DISTANCE) {
-          usedTracks.add(anchor.trackIndex);
-        }
-      });
+      while (
+        activeStart < activeAnchors.length
+        && top - activeAnchors[activeStart].top >= COMMENT_ANCHOR_COLLISION_DISTANCE
+      ) {
+        trackUseCounts[activeAnchors[activeStart].trackIndex] -= 1;
+        activeStart += 1;
+      }
     }
-    let trackIndex = COMMENT_TRACKS.findIndex((_, index) => !usedTracks.has(index));
+    let trackIndex = COMMENT_TRACKS.findIndex((_, index) => trackUseCounts[index] === 0);
     if (trackIndex < 0) {
       trackIndex = COMMENT_TRACKS.length - 1;
     }
@@ -2416,11 +2378,12 @@ function assignDocumentCommentPresentations(comments = [], anchorTopById = new M
     };
     presentations.set(comment.id, presentation);
     if (Number.isFinite(top)) {
-      placedAnchors.push({
+      activeAnchors.push({
         id: comment.id,
         top,
         trackIndex,
       });
+      trackUseCounts[trackIndex] += 1;
     }
   });
   return presentations;
@@ -2445,7 +2408,7 @@ function commentAnchorTrackAvailable(editor, comments = [], range) {
 }
 
 function normalizeDocument(document, letterTemplates = DEFAULT_LETTER_TEMPLATES) {
-  const customBackground = document?.customBackground || "";
+  const customBackground = normalizeCustomBackgroundSource(document?.customBackground);
   const letterTemplateId = normalizeLetterTemplateId(document?.letterTemplateId, document?.templateId, letterTemplates);
   const letterTemplate = letterTemplates.find((template) => template.id === letterTemplateId) || DEFAULT_LETTER_TEMPLATES[0];
   const templateId = customBackground && document?.templateId === "custom" ? "custom" : letterTemplate.paperId;
@@ -2458,7 +2421,7 @@ function normalizeDocument(document, letterTemplates = DEFAULT_LETTER_TEMPLATES)
   return {
     ...createBlankDocument(),
     ...document,
-    title: document?.title?.trim() || "未命名信笺",
+    title: normalizeDocumentTitle(document?.title),
     author: typeof document?.author === "string" ? document.author.trim().slice(0, 40) : "",
     html: document?.html || "<p></p>",
     createdAt,
@@ -2468,6 +2431,7 @@ function normalizeDocument(document, letterTemplates = DEFAULT_LETTER_TEMPLATES)
     fontFamily: letterTemplate.typography.bodyFont,
     fontSize: letterTemplate.typography.bodySize,
     layoutMode: LAYOUT_MODES.FLOW,
+    customBackground,
     comments: normalizeDocumentComments(document?.comments),
     aiState: normalizeAiState(document?.aiState),
   };
@@ -2493,7 +2457,7 @@ function replacePathPrefix(targetPath, fromPath, toPath) {
   if (!pathIsSameOrInside(targetPath, fromPath)) {
     return targetPath;
   }
-  if (targetPath === fromPath) {
+  if (sameDocumentPath(targetPath, fromPath)) {
     return toPath;
   }
   const separator = targetPath[fromPath.length] || "\\";
@@ -2509,71 +2473,6 @@ function parentPathFromPath(filePath) {
 
 function documentRuntimeKey(pathValue, tabId = "") {
   return pathValue ? `path:${String(pathValue).replace(/\//g, "\\").toLowerCase()}` : `tab:${tabId || "untitled"}`;
-}
-
-function wordStats(text, html = "") {
-  const chineseChars = (text.match(/[\u4e00-\u9fff]/g) || []).length;
-  const latinWords = (text.match(/[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*/g) || []).length;
-  const paragraphs = text.split(/\n+/).filter((part) => part.trim()).length;
-  const template = document.createElement("template");
-  template.innerHTML = html || "";
-  const images = template.content.querySelectorAll("img").length;
-  const quotes = template.content.querySelectorAll("blockquote").length;
-  const pageBreaks = template.content.querySelectorAll(".paper-page-break, [data-type='paper-page-break']").length;
-  return {
-    words: chineseChars + latinWords,
-    paragraphs,
-    images,
-    quotes,
-    pageBreaks,
-    pages: pageBreaks + 1,
-  };
-}
-
-function statsTextFromHtml(html = "") {
-  const template = document.createElement("template");
-  template.innerHTML = html || "<p></p>";
-  const blocks = Array.from(template.content.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th"));
-  const text = blocks
-    .map((element) => element.textContent || "")
-    .filter((value) => value.trim())
-    .join("\n");
-  return text || template.content.textContent || "";
-}
-
-function blockWeight(element) {
-  const textLength = element.textContent?.trim().length || 0;
-  const imageWeight = element.querySelectorAll("img").length * 320;
-  const mediaWeight = element.matches("[data-type='paper-media']") || element.querySelector("audio, video") ? 260 : 0;
-  const quoteWeight = element.matches("blockquote") ? 100 : 0;
-  const headingWeight = /^H[1-6]$/.test(element.tagName) ? 80 : 0;
-  return Math.max(80, textLength + imageWeight + mediaWeight + quoteWeight + headingWeight);
-}
-
-function paginateHtml(html) {
-  const template = document.createElement("template");
-  template.innerHTML = html || "<p></p>";
-  const blocks = Array.from(template.content.children);
-  const pages = [];
-  let current = [];
-  let currentWeight = 0;
-
-  for (const block of blocks.length ? blocks : [document.createElement("p")]) {
-    const weight = blockWeight(block);
-    if (current.length && currentWeight + weight > PAGED_CONTENT_UNITS) {
-      pages.push(current.map((item) => item.outerHTML).join(""));
-      current = [];
-      currentWeight = 0;
-    }
-    current.push(block);
-    currentWeight += weight;
-  }
-
-  if (current.length) {
-    pages.push(current.map((item) => item.outerHTML).join(""));
-  }
-
-  return pages.length ? pages : ["<p></p>"];
 }
 
 function formatPaperDate(value) {
@@ -2916,6 +2815,7 @@ function createPaperEditorExtensions() {
     StyledUnderlineExtension,
     Highlight.configure({ multicolor: true }),
     FontFamily,
+    PaperDerivedState,
     HeadingMetadata,
     Table.configure({
       resizable: true,
@@ -2966,7 +2866,7 @@ function getActiveTableElement(editor) {
 }
 
 function insertFinalizedBreak(editor, savedSelectionRef) {
-  if (editorHasNodeType(editor, "paperFinalizedBreak")) {
+  if (getPaperDerivedState(editor).hasFinalizedBreak) {
     return;
   }
   runEditorCommand(editor, savedSelectionRef, (chain) => chain.insertContent({ type: "paperFinalizedBreak" }));
@@ -2976,14 +2876,7 @@ function insertTableOfContents(editor, savedSelectionRef) {
   if (!editor) {
     return;
   }
-  const positions = [];
-  editor.state.doc.descendants((node, pos) => {
-    if (node.type.name === "paperTableOfContents") {
-      positions.push({ pos, nodeSize: node.nodeSize });
-      return false;
-    }
-    return true;
-  });
+  const positions = getPaperDerivedState(editor).tableOfContentsPositions;
   if (positions.length) {
     const tr = editor.state.tr;
     positions
@@ -3156,9 +3049,19 @@ function resizeCaptionField(field) {
   field.style.height = `${Math.max(24, field.scrollHeight)}px`;
 }
 
+function parsedImageElement(element) {
+  if (element?.matches?.("img")) {
+    return element;
+  }
+  return element?.querySelector?.("img") || null;
+}
+
 function PaperImageNodeView({ node, updateAttributes, selected }) {
-  const width = node.attrs.width || "78%";
-  const caption = node.attrs.caption || "";
+  const width = normalizeEmbedWidth(node.attrs.width);
+  const source = normalizeImageSource(node.attrs.src);
+  const caption = normalizeImageCaption(node.attrs.caption);
+  const alt = normalizeImageText(node.attrs.alt);
+  const title = normalizeImageText(node.attrs.title);
   const captionRef = useRef(null);
 
   useEffect(() => {
@@ -3180,7 +3083,7 @@ function PaperImageNodeView({ node, updateAttributes, selected }) {
       style={{ "--image-width": width }}
     >
       <div className="paper-image-frame" contentEditable={false}>
-        <img src={node.attrs.src} alt={node.attrs.alt || ""} title={node.attrs.title || ""} draggable={false} />
+        <img src={source || undefined} alt={alt} title={title} draggable={false} decoding="async" />
         <div className="image-size-tools" aria-label="调整图片大小">
           {IMAGE_WIDTH_OPTIONS.map((option) => (
             <button
@@ -3202,9 +3105,10 @@ function PaperImageNodeView({ node, updateAttributes, selected }) {
           ref={captionRef}
           className="paper-image-caption"
           value={caption}
+          maxLength={IMAGE_CAPTION_MAX_CHARS}
           rows={1}
           onChange={(event) => {
-            updateAttributes({ caption: event.target.value });
+            updateAttributes({ caption: normalizeImageCaption(event.target.value) });
             resizeCaptionField(event.currentTarget);
           }}
           aria-label="图片标题"
@@ -3218,15 +3122,28 @@ function PaperImageNodeView({ node, updateAttributes, selected }) {
 
 const PaperImage = Image.extend({
   addAttributes() {
+    const parentAttributes = this.parent?.() || {};
     return {
-      ...this.parent?.(),
+      ...parentAttributes,
+      src: {
+        ...parentAttributes.src,
+        parseHTML: (element) => normalizeImageSource(parsedImageElement(element)?.getAttribute("src")) || null,
+      },
+      alt: {
+        ...parentAttributes.alt,
+        parseHTML: (element) => normalizeImageText(parsedImageElement(element)?.getAttribute("alt")),
+      },
+      title: {
+        ...parentAttributes.title,
+        parseHTML: (element) => normalizeImageText(parsedImageElement(element)?.getAttribute("title")),
+      },
       width: {
         default: "78%",
-        parseHTML: (element) => element.getAttribute("data-width") || element.style.width || "78%",
+        parseHTML: (element) => normalizeEmbedWidth(element.getAttribute("data-width") || element.style.width),
       },
       caption: {
         default: "",
-        parseHTML: (element) => element.getAttribute("data-caption") || element.querySelector("figcaption")?.textContent?.trim() || "",
+        parseHTML: (element) => normalizeImageCaption(element.getAttribute("data-caption") || element.querySelector("figcaption")?.textContent?.trim()),
       },
     };
   },
@@ -3237,45 +3154,56 @@ const PaperImage = Image.extend({
         tag: "figure[data-type='paper-image']",
         getAttrs: (element) => {
           const image = element.querySelector("img");
-          if (!image?.getAttribute("src")) {
+          const source = normalizeImageSource(image?.getAttribute("src"));
+          if (!source) {
             return false;
           }
           return {
-            src: image.getAttribute("src"),
-            alt: image.getAttribute("alt") || "",
-            title: image.getAttribute("title") || "",
-            width: element.getAttribute("data-width") || element.style.getPropertyValue("--image-width") || "78%",
-            caption: element.querySelector("figcaption")?.textContent?.trim() || "",
+            src: source,
+            alt: normalizeImageText(image.getAttribute("alt")),
+            title: normalizeImageText(image.getAttribute("title")),
+            width: normalizeEmbedWidth(element.getAttribute("data-width") || element.style.getPropertyValue("--image-width")),
+            caption: normalizeImageCaption(element.getAttribute("data-caption") || element.querySelector("figcaption")?.textContent?.trim()),
           };
         },
       },
       {
         tag: "img[src]",
-        getAttrs: (element) => ({
-          src: element.getAttribute("src"),
-          alt: element.getAttribute("alt") || "",
-          title: element.getAttribute("title") || "",
-          width: element.getAttribute("data-width") || element.style.width || "78%",
-          caption: "",
-        }),
+        getAttrs: (element) => {
+          const source = normalizeImageSource(element.getAttribute("src"));
+          return source ? {
+            src: source,
+            alt: normalizeImageText(element.getAttribute("alt")),
+            title: normalizeImageText(element.getAttribute("title")),
+            width: normalizeEmbedWidth(element.getAttribute("data-width") || element.style.width),
+            caption: "",
+          } : false;
+        },
       },
     ];
   },
 
   renderHTML({ HTMLAttributes }) {
     const { width = "78%", caption = "", ...imageAttrs } = HTMLAttributes;
+    const safeWidth = normalizeEmbedWidth(width);
+    const safeCaption = normalizeImageCaption(caption);
+    const source = normalizeImageSource(imageAttrs.src);
+    imageAttrs.alt = normalizeImageText(imageAttrs.alt);
+    imageAttrs.title = normalizeImageText(imageAttrs.title);
     delete imageAttrs.style;
+    if (source) imageAttrs.src = source;
+    else delete imageAttrs.src;
     return [
       "figure",
       {
         "data-type": "paper-image",
-        "data-width": width,
-        "data-caption": caption,
+        "data-width": safeWidth,
+        "data-caption": safeCaption,
         class: "paper-image-figure",
-        style: `--image-width: ${width};`,
+        style: `--image-width: ${safeWidth};`,
       },
-      ["img", mergeAttributes(imageAttrs)],
-      ["figcaption", { "data-placeholder": "添加图片标题" }, caption],
+      ["img", mergeAttributes({ decoding: "async" }, imageAttrs)],
+      ["figcaption", { "data-placeholder": "添加图片标题" }, safeCaption],
     ];
   },
 
@@ -3286,8 +3214,9 @@ const PaperImage = Image.extend({
 
 function PaperMediaNodeView({ node, updateAttributes, selected }) {
   const kind = node.attrs.kind === "video" ? "video" : "audio";
-  const width = node.attrs.width || "78%";
-  const fileName = node.attrs.fileName || (kind === "video" ? "未命名视频" : "未命名音频");
+  const width = normalizeEmbedWidth(node.attrs.width);
+  const source = normalizeMediaSource(node.attrs.src, kind);
+  const fileName = normalizeMediaFileName(node.attrs.fileName, kind === "video" ? "未命名视频" : "未命名音频");
   const MediaIcon = kind === "video" ? Video : Music2;
   const mediaLabel = kind === "video" ? "视频" : "音频";
 
@@ -3302,9 +3231,9 @@ function PaperMediaNodeView({ node, updateAttributes, selected }) {
     >
       <div className="paper-media-frame" contentEditable={false}>
         {kind === "video" ? (
-          <video className="paper-media-player" src={node.attrs.src} controls preload="metadata" aria-label={`播放视频：${fileName}`} onMouseDown={(event) => event.stopPropagation()} />
+          <video className="paper-media-player" src={source || undefined} controls preload="metadata" aria-label={`播放视频：${fileName}`} onMouseDown={(event) => event.stopPropagation()} />
         ) : (
-          <audio className="paper-media-player" src={node.attrs.src} controls preload="metadata" aria-label={`播放音频：${fileName}`} onMouseDown={(event) => event.stopPropagation()} />
+          <audio className="paper-media-player" src={source || undefined} controls preload="metadata" aria-label={`播放音频：${fileName}`} onMouseDown={(event) => event.stopPropagation()} />
         )}
         {kind === "video" ? (
           <div className="media-size-tools" aria-label="调整视频大小">
@@ -3365,12 +3294,14 @@ const PaperMedia = Node.create({
           return false;
         }
         const kind = player.tagName.toLowerCase() === "video" ? "video" : "audio";
+        const source = normalizeMediaSource(player.getAttribute("src"), kind);
+        if (!source) return false;
         return {
           kind,
-          src: player.getAttribute("src") || "",
-          fileName: element.getAttribute("data-file-name") || "",
-          mime: element.getAttribute("data-mime") || "",
-          width: element.getAttribute("data-width") || "78%",
+          src: source,
+          fileName: normalizeMediaFileName(element.getAttribute("data-file-name")),
+          mime: normalizeMediaMime(element.getAttribute("data-mime"), kind),
+          width: normalizeEmbedWidth(element.getAttribute("data-width")),
         };
       },
     }];
@@ -3378,21 +3309,23 @@ const PaperMedia = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     const kind = HTMLAttributes.kind === "video" ? "video" : "audio";
-    const fileName = HTMLAttributes.fileName || (kind === "video" ? "未命名视频" : "未命名音频");
+    const fileName = normalizeMediaFileName(HTMLAttributes.fileName, kind === "video" ? "未命名视频" : "未命名音频");
     const mediaLabel = kind === "video" ? "视频" : "音频";
-    const width = HTMLAttributes.width || "78%";
+    const width = normalizeEmbedWidth(HTMLAttributes.width);
+    const source = normalizeMediaSource(HTMLAttributes.src, kind);
+    const mime = normalizeMediaMime(HTMLAttributes.mime, kind);
     return [
       "figure",
       {
         "data-type": "paper-media",
         "data-kind": kind,
         "data-file-name": fileName,
-        "data-mime": HTMLAttributes.mime || "",
+        "data-mime": mime,
         "data-width": width,
         class: `paper-media-figure ${kind}`,
         style: `--media-width: ${kind === "video" ? width : "100%"};`,
       },
-      [kind, { src: HTMLAttributes.src || "", controls: "controls", preload: "metadata", class: "paper-media-player", "aria-label": `播放${mediaLabel}：${fileName}` }],
+      [kind, { ...(source ? { src: source } : {}), controls: "controls", preload: "metadata", class: "paper-media-player", "aria-label": `播放${mediaLabel}：${fileName}` }],
       ["figcaption", { class: "paper-media-caption" }, `${mediaLabel} · ${fileName}`],
       ["div", { class: "paper-media-export-card" }, ["strong", `${mediaLabel}：${fileName}`], ["span", "仅在电子文档中可播放"]],
     ];
@@ -3475,24 +3408,14 @@ const PaperFinalizedBreak = Node.create({
 });
 
 function PaperTocNodeView({ editor, selected, getPos }) {
-  const [version, setVersion] = useState(0);
-  useEffect(() => {
-    if (!editor) {
-      return undefined;
-    }
-    const bump = () => setVersion((value) => value + 1);
-    editor.on("update", bump);
-    editor.on("transaction", bump);
-    return () => {
-      editor.off("update", bump);
-      editor.off("transaction", bump);
-    };
-  }, [editor]);
-
-  const headings = useMemo(() => {
-    const numberingDefaults = editor ? HEADING_NUMBERING_PLUGIN_KEY.getState(editor.state)?.defaults : null;
-    return collectHeadingItems(editor?.state.doc, numberingDefaults).filter((item) => item.level <= 3);
-  }, [editor, version]);
+  const headings = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => {
+      if (!activeEditor) return [];
+      const numberingDefaults = HEADING_NUMBERING_PLUGIN_KEY.getState(activeEditor.state)?.defaults;
+      return numberHeadingItems(getPaperDerivedState(activeEditor).headingItems, numberingDefaults);
+    },
+  }) || [];
 
   const jumpToHeading = useCallback(
     (pos) => {
@@ -3588,14 +3511,7 @@ const PaperTableOfContents = Node.create({
           if (!nodeType) {
             return null;
           }
-          const positions = [];
-          newState.doc.descendants((node, pos) => {
-            if (node.type === nodeType) {
-              positions.push({ pos, node });
-              return false;
-            }
-            return true;
-          });
+          const positions = PAPER_DERIVED_STATE_PLUGIN_KEY.getState(newState)?.tableOfContentsPositions || [];
           if (!positions.length || (positions.length === 1 && positions[0].pos === 0)) {
             return null;
           }
@@ -3603,8 +3519,8 @@ const PaperTableOfContents = Node.create({
           positions
             .slice()
             .reverse()
-            .forEach(({ pos, node }) => {
-              tr.delete(pos, pos + node.nodeSize);
+            .forEach(({ pos, nodeSize }) => {
+              tr.delete(pos, pos + nodeSize);
             });
           tr.insert(0, nodeType.create());
           return tr;
@@ -3669,28 +3585,15 @@ function normalizeHeadingNumberingDefaults(value) {
   return { 1: source[1] !== false, 2: source[2] !== false, 3: source[3] !== false };
 }
 
-function collectHeadingItems(doc, numberingDefaults = DEFAULT_TEMPLATE_PRESENTATION.headingNumbering) {
-  if (!doc) {
-    return [];
-  }
+function numberHeadingItems(headingItems = [], numberingDefaults = DEFAULT_TEMPLATE_PRESENTATION.headingNumbering) {
   const normalizedDefaults = normalizeHeadingNumberingDefaults(numberingDefaults);
   const counters = [0, 0, 0];
   const items = [];
-  doc.descendants((node, pos) => {
-    if (node.type.name !== "heading") {
-      return;
-    }
-    const level = Math.max(1, Math.min(3, Number(node.attrs.level) || 1));
-    if (level < 1 || level > 3) {
-      return;
-    }
-    const text = node.textContent?.trim();
-    if (!text || text === "目录") {
-      return;
-    }
-    const numberingMode = ["inherit", "on", "off"].includes(node.attrs.numberingMode)
-      ? node.attrs.numberingMode
-      : "inherit";
+  headingItems.forEach((heading) => {
+    const level = Math.max(1, Math.min(3, Number(heading.level) || 1));
+    const text = heading.text?.trim();
+    if (!text || text === "目录") return;
+    const numberingMode = ["inherit", "on", "off"].includes(heading.numberingMode) ? heading.numberingMode : "inherit";
     const numbered = numberingMode === "on" || (numberingMode === "inherit" && normalizedDefaults[level]);
     let number = "";
     if (numbered) {
@@ -3702,10 +3605,10 @@ function collectHeadingItems(doc, numberingDefaults = DEFAULT_TEMPLATE_PRESENTAT
       number = parts.join(".");
     }
     items.push({
-      id: `heading-${pos}-${level}`,
+      id: heading.id,
       level,
       text,
-      pos,
+      pos: heading.pos,
       numbered,
       numberingMode,
       number,
@@ -3714,8 +3617,8 @@ function collectHeadingItems(doc, numberingDefaults = DEFAULT_TEMPLATE_PRESENTAT
   return items;
 }
 
-function buildHeadingNumberDecorationSet(doc, numberingDefaults = DEFAULT_TEMPLATE_PRESENTATION.headingNumbering) {
-  const decorations = collectHeadingItems(doc, numberingDefaults).flatMap((item) => {
+function buildHeadingNumberDecorationSet(doc, headingItems, numberingDefaults = DEFAULT_TEMPLATE_PRESENTATION.headingNumbering) {
+  const decorations = numberHeadingItems(headingItems, numberingDefaults).flatMap((item) => {
     const node = doc.nodeAt(item.pos);
     if (!node) {
       return [];
@@ -3782,6 +3685,25 @@ const AiChatSelectionDecorations = Extension.create({
   },
 });
 
+const PaperDerivedState = Extension.create({
+  name: "paperDerivedState",
+  priority: 110,
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: PAPER_DERIVED_STATE_PLUGIN_KEY,
+        state: {
+          init: (_, state) => computePaperDerivedState(state.doc),
+          apply(transaction, previousState) {
+            return transaction.docChanged ? computePaperDerivedState(transaction.doc) : previousState;
+          },
+        },
+      }),
+    ];
+  },
+});
+
 const DocumentCommentDecorations = Extension.create({
   name: "documentCommentDecorations",
 
@@ -3790,18 +3712,37 @@ const DocumentCommentDecorations = Extension.create({
       new Plugin({
         key: DOCUMENT_COMMENT_PLUGIN_KEY,
         state: {
-          init: () => DecorationSet.empty,
-          apply(transaction, previousDecorationSet) {
-            const nextComments = transaction.getMeta(DOCUMENT_COMMENT_PLUGIN_KEY);
-            if (Array.isArray(nextComments)) {
-              return buildDocumentCommentDecorationSet(transaction.doc, nextComments);
+          init: () => ({ comments: [], hidden: false, decorations: DecorationSet.empty }),
+          apply(transaction, previousState) {
+            const meta = transaction.getMeta(DOCUMENT_COMMENT_PLUGIN_KEY);
+            if (!transaction.docChanged && !meta) return previousState;
+            let comments = previousState.comments;
+            let hidden = previousState.hidden;
+            if (meta?.type === "set-comments") {
+              comments = normalizeDocumentComments(meta.comments);
+            } else if (transaction.docChanged) {
+              comments = mapDocumentCommentsThroughTransaction(
+                previousState.comments,
+                transaction,
+                transaction.doc.content.size,
+              );
             }
-            return previousDecorationSet.map(transaction.mapping, transaction.doc);
+            if (meta?.type === "set-visibility") hidden = Boolean(meta.hidden);
+            const decorations = hidden
+              ? DecorationSet.empty
+              : (!meta && transaction.docChanged
+                ? previousState.decorations.map(transaction.mapping, transaction.doc)
+                : buildDocumentCommentDecorationSet(transaction.doc, comments));
+            return {
+              comments,
+              hidden,
+              decorations,
+            };
           },
         },
         props: {
           decorations(state) {
-            return this.getState(state);
+            return this.getState(state)?.decorations || DecorationSet.empty;
           },
         },
       }),
@@ -3848,15 +3789,19 @@ const HeadingMetadata = Extension.create({
         state: {
           init: (_, state) => {
             const defaults = normalizeHeadingNumberingDefaults();
-            return { defaults, decorations: buildHeadingNumberDecorationSet(state.doc, defaults) };
+            const headings = PAPER_DERIVED_STATE_PLUGIN_KEY.getState(state)?.headingItems
+              || computePaperDerivedState(state.doc).headingItems;
+            return { defaults, decorations: buildHeadingNumberDecorationSet(state.doc, headings, defaults) };
           },
-          apply(transaction, previousState) {
+          apply(transaction, previousState, _oldState, newState) {
             const metaDefaults = transaction.getMeta(HEADING_NUMBERING_PLUGIN_KEY);
             const defaults = metaDefaults
               ? normalizeHeadingNumberingDefaults(metaDefaults)
               : previousState.defaults;
             if (transaction.docChanged || metaDefaults) {
-              return { defaults, decorations: buildHeadingNumberDecorationSet(transaction.doc, defaults) };
+              const headings = PAPER_DERIVED_STATE_PLUGIN_KEY.getState(newState)?.headingItems
+                || computePaperDerivedState(transaction.doc).headingItems;
+              return { defaults, decorations: buildHeadingNumberDecorationSet(transaction.doc, headings, defaults) };
             }
             return {
               defaults,
@@ -3885,7 +3830,28 @@ function syncDocumentCommentDecorations(editor, comments = []) {
   if (!editor?.view) {
     return;
   }
-  editor.view.dispatch(editor.state.tr.setMeta(DOCUMENT_COMMENT_PLUGIN_KEY, comments));
+  editor.view.dispatch(editor.state.tr.setMeta(DOCUMENT_COMMENT_PLUGIN_KEY, {
+    type: "set-comments",
+    comments,
+  }));
+}
+
+function setDocumentCommentVisibility(editor, hidden) {
+  if (!editor?.view) return;
+  editor.view.dispatch(editor.state.tr.setMeta(DOCUMENT_COMMENT_PLUGIN_KEY, {
+    type: "set-visibility",
+    hidden: Boolean(hidden),
+  }));
+}
+
+function getDocumentComments(editor, fallback = []) {
+  if (!editor?.state) return normalizeDocumentComments(fallback);
+  return DOCUMENT_COMMENT_PLUGIN_KEY.getState(editor.state)?.comments || normalizeDocumentComments(fallback);
+}
+
+function getPaperDerivedState(editor) {
+  if (!editor?.state) return EMPTY_PAPER_DERIVED_STATE;
+  return PAPER_DERIVED_STATE_PLUGIN_KEY.getState(editor.state) || EMPTY_PAPER_DERIVED_STATE;
 }
 
 function syncHeadingNumberingDefaults(editor, headingNumbering) {
@@ -4032,7 +3998,6 @@ function TreeContextMenu({ menu, onClose, onCreateFolder, onCreateDocument, onRe
 
 function TopNav({
   editor,
-  document,
   savedSelectionRef,
   onNew,
   onOpen,
@@ -4048,7 +4013,6 @@ function TopNav({
   aiBusy,
   aiConfigured,
   editorLocked,
-  tableOfContentsInserted,
   onOpenAiSettings,
   onEnterAiOptimize,
   onEnterAiChat,
@@ -4056,23 +4020,41 @@ function TopNav({
   leftSidebarCollapsed,
   onToggleLeftSidebar,
 }) {
+  const toolbarState = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => {
+      if (!activeEditor) {
+        return { canUndo: false, canRedo: false, activeHeadingLevel: 0, bulletListActive: false, orderedListActive: false, activeAlignment: "", tableOfContentsInserted: false };
+      }
+      return {
+        canUndo: activeEditor.can().undo(),
+        canRedo: activeEditor.can().redo(),
+        activeHeadingLevel: [1, 2, 3].find((level) => activeEditor.isActive("heading", { level })) || 0,
+        bulletListActive: activeEditor.isActive("bulletList"),
+        orderedListActive: activeEditor.isActive("orderedList"),
+        activeAlignment: ["left", "center", "right"].find((value) => activeEditor.isActive({ textAlign: value })) || "",
+        tableOfContentsInserted: getPaperDerivedState(activeEditor).hasTableOfContents,
+      };
+    },
+  }) || {};
   const canEdit = Boolean(editor) && !editorLocked && !aiMode;
   const documentActionsDisabled = Boolean(aiMode);
   const [openMenu, setOpenMenu] = useState("");
   const exitAiLabel = aiModeKind === "chat" ? "退出 AI问答" : "退出 AI优化";
   const leftSidebarToggleLabel = leftSidebarCollapsed ? "展开左侧栏" : "收起左侧栏";
   const LeftSidebarToggleIcon = leftSidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
-  const canUndo = canEdit && Boolean(editor?.can().undo());
-  const canRedo = canEdit && Boolean(editor?.can().redo());
-  const activeHeadingLevel = [1, 2, 3].find((level) => editor?.isActive("heading", { level })) || 0;
-  const bulletListActive = Boolean(editor?.isActive("bulletList"));
-  const orderedListActive = Boolean(editor?.isActive("orderedList"));
+  const canUndo = canEdit && toolbarState.canUndo;
+  const canRedo = canEdit && toolbarState.canRedo;
+  const activeHeadingLevel = toolbarState.activeHeadingLevel || 0;
+  const bulletListActive = Boolean(toolbarState.bulletListActive);
+  const orderedListActive = Boolean(toolbarState.orderedListActive);
+  const tableOfContentsInserted = Boolean(toolbarState.tableOfContentsInserted);
   const ListStyleIcon = orderedListActive ? ListOrdered : List;
   const activeAlignment = [
     { value: "left", label: "左对齐", icon: AlignLeft },
     { value: "center", label: "居中", icon: AlignCenter },
     { value: "right", label: "右对齐", icon: AlignRight },
-  ].find((option) => editor?.isActive({ textAlign: option.value }));
+  ].find((option) => toolbarState.activeAlignment === option.value);
   const AlignmentIcon = activeAlignment?.icon || AlignLeft;
 
   const closeMenus = useCallback(() => {
@@ -4862,6 +4844,14 @@ function FolderEntryRows({
       </button>
     );
   });
+}
+
+function LiveOutlineSidebar({ editor, ...props }) {
+  const outlineItems = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => getPaperDerivedState(activeEditor).outlineItems,
+  }) || [];
+  return <LeftSidebar {...props} outlineItems={outlineItems} />;
 }
 
 function LeftSidebar({
@@ -6908,6 +6898,7 @@ function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLA
               className="paper-title-input"
               value={document.title}
               onChange={(event) => onTitleChange?.(event.target.value)}
+              maxLength={DOCUMENT_TITLE_MAX_CHARS}
               aria-label="文章标题"
               placeholder="未命名信笺"
               spellCheck={false}
@@ -6943,6 +6934,7 @@ function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLA
 
 function SelectionBubbleToolbar({ editor, disabled, savedSelectionRef, aiCaptureEnabled = false, onCaptureAiSelection, onCreateComment }) {
   const [toolbarPosition, setToolbarPosition] = useState(null);
+  const toolbarFrameRef = useRef(0);
   const activeColor = editor?.getAttributes("textStyle")?.color || "";
   const activePaletteColor = normalizeColorValue(activeColor);
   const activeBackgroundColor = editor?.getAttributes("highlight")?.color || "";
@@ -6962,12 +6954,12 @@ function SelectionBubbleToolbar({ editor, disabled, savedSelectionRef, aiCapture
       setToolbarPosition(null);
       return;
     }
-    if (selectionTouchesNodeType(editor, "paperTableOfContents")) {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
       setToolbarPosition(null);
       return;
     }
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    if (selectionTouchesNodeType(editor, "paperTableOfContents")) {
       setToolbarPosition(null);
       return;
     }
@@ -7001,12 +6993,19 @@ function SelectionBubbleToolbar({ editor, disabled, savedSelectionRef, aiCapture
     });
   }, [disabled, editor, savedSelectionRef]);
 
+  const scheduleToolbarPosition = useCallback(() => {
+    if (toolbarFrameRef.current) return;
+    toolbarFrameRef.current = window.requestAnimationFrame(() => {
+      toolbarFrameRef.current = 0;
+      updateToolbarPosition();
+    });
+  }, [updateToolbarPosition]);
+
   useEffect(() => {
     if (!editor || disabled) {
       setToolbarPosition(null);
       return undefined;
     }
-    const updateSoon = () => window.requestAnimationFrame(updateToolbarPosition);
     const hideWhenPointingAtToc = (event) => {
       if (event.target instanceof Element && event.target.closest("[data-type='paper-toc'], .node-paperTableOfContents")) {
         savedSelectionRef.current = null;
@@ -7014,25 +7013,29 @@ function SelectionBubbleToolbar({ editor, disabled, savedSelectionRef, aiCapture
       }
     };
     document.addEventListener("pointerdown", hideWhenPointingAtToc, true);
-    document.addEventListener("selectionchange", updateSoon);
-    document.addEventListener("scroll", updateSoon, true);
-    document.addEventListener("keyup", updateSoon, true);
-    editor.view.dom.addEventListener("mouseup", updateSoon);
-    editor.view.dom.addEventListener("keyup", updateSoon);
-    editor.on("selectionUpdate", updateSoon);
-    editor.on("transaction", updateSoon);
-    updateSoon();
+    document.addEventListener("selectionchange", scheduleToolbarPosition);
+    document.addEventListener("scroll", scheduleToolbarPosition, true);
+    document.addEventListener("keyup", scheduleToolbarPosition, true);
+    editor.view.dom.addEventListener("mouseup", scheduleToolbarPosition);
+    editor.view.dom.addEventListener("keyup", scheduleToolbarPosition);
+    editor.on("selectionUpdate", scheduleToolbarPosition);
+    editor.on("transaction", scheduleToolbarPosition);
+    scheduleToolbarPosition();
     return () => {
-      document.removeEventListener("selectionchange", updateSoon);
+      if (toolbarFrameRef.current) {
+        window.cancelAnimationFrame(toolbarFrameRef.current);
+        toolbarFrameRef.current = 0;
+      }
+      document.removeEventListener("selectionchange", scheduleToolbarPosition);
       document.removeEventListener("pointerdown", hideWhenPointingAtToc, true);
-      document.removeEventListener("scroll", updateSoon, true);
-      document.removeEventListener("keyup", updateSoon, true);
-      editor.view.dom.removeEventListener("mouseup", updateSoon);
-      editor.view.dom.removeEventListener("keyup", updateSoon);
-      editor.off("selectionUpdate", updateSoon);
-      editor.off("transaction", updateSoon);
+      document.removeEventListener("scroll", scheduleToolbarPosition, true);
+      document.removeEventListener("keyup", scheduleToolbarPosition, true);
+      editor.view.dom.removeEventListener("mouseup", scheduleToolbarPosition);
+      editor.view.dom.removeEventListener("keyup", scheduleToolbarPosition);
+      editor.off("selectionUpdate", scheduleToolbarPosition);
+      editor.off("transaction", scheduleToolbarPosition);
     };
-  }, [disabled, editor, updateToolbarPosition]);
+  }, [disabled, editor, savedSelectionRef, scheduleToolbarPosition]);
 
   const runSelectionCommand = useCallback(
     (command) => {
@@ -7040,9 +7043,9 @@ function SelectionBubbleToolbar({ editor, disabled, savedSelectionRef, aiCapture
         return;
       }
       runEditorCommand(editor, savedSelectionRef, command);
-      window.requestAnimationFrame(updateToolbarPosition);
+      scheduleToolbarPosition();
     },
-    [disabled, editor, savedSelectionRef, updateToolbarPosition],
+    [disabled, editor, savedSelectionRef, scheduleToolbarPosition],
   );
 
   const handleTextColorChange = useCallback(
@@ -7082,16 +7085,16 @@ function SelectionBubbleToolbar({ editor, disabled, savedSelectionRef, aiCapture
       return;
     }
     onCaptureAiSelection?.(getSelectedPlainText(editor, savedSelectionRef));
-    window.requestAnimationFrame(updateToolbarPosition);
-  }, [aiCaptureEnabled, disabled, editor, onCaptureAiSelection, savedSelectionRef, updateToolbarPosition]);
+    scheduleToolbarPosition();
+  }, [aiCaptureEnabled, disabled, editor, onCaptureAiSelection, savedSelectionRef, scheduleToolbarPosition]);
 
   const handleCreateComment = useCallback(() => {
     if (!editor || disabled || !onCreateComment) {
       return;
     }
     onCreateComment?.(getSelectedPlainText(editor, savedSelectionRef), toolbarPosition);
-    window.requestAnimationFrame(updateToolbarPosition);
-  }, [disabled, editor, onCreateComment, savedSelectionRef, toolbarPosition, updateToolbarPosition]);
+    scheduleToolbarPosition();
+  }, [disabled, editor, onCreateComment, savedSelectionRef, scheduleToolbarPosition, toolbarPosition]);
 
   if (!editor || disabled) {
     return null;
@@ -7173,17 +7176,24 @@ function SelectionBubbleToolbar({ editor, disabled, savedSelectionRef, aiCapture
 }
 
 function CommentAnchors({ editor, comments = [], activeCommentId = "", hidden = false, onOpenComment }) {
-  const normalizedComments = useMemo(() => normalizeDocumentComments(comments), [comments]);
+  const normalizedComments = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => getDocumentComments(activeEditor, comments),
+  }) || normalizeDocumentComments(comments);
   const [positions, setPositions] = useState([]);
+  const positionFrameRef = useRef(0);
+  const clearPositions = useCallback(() => {
+    setPositions((current) => (current.length ? [] : current));
+  }, []);
 
   const updatePositions = useCallback(() => {
     if (!editor?.view || hidden || !normalizedComments.length) {
-      setPositions([]);
+      clearPositions();
       return;
     }
     const sheet = editor.view.dom.closest(".paper-sheet");
     if (!sheet) {
-      setPositions([]);
+      clearPositions();
       return;
     }
     const sheetRect = sheet.getBoundingClientRect();
@@ -7210,24 +7220,34 @@ function CommentAnchors({ editor, comments = [], activeCommentId = "", hidden = 
       }
     });
     setPositions(nextPositions);
-  }, [editor, hidden, normalizedComments]);
+  }, [clearPositions, editor, hidden, normalizedComments]);
 
   useEffect(() => {
-    if (!editor?.view || hidden) {
-      setPositions([]);
+    if (!editor?.view || hidden || !normalizedComments.length) {
+      clearPositions();
       return undefined;
     }
-    const updateSoon = () => window.requestAnimationFrame(updatePositions);
+    const updateSoon = () => {
+      if (positionFrameRef.current) return;
+      positionFrameRef.current = window.requestAnimationFrame(() => {
+        positionFrameRef.current = 0;
+        updatePositions();
+      });
+    };
     document.addEventListener("scroll", updateSoon, true);
     window.addEventListener("resize", updateSoon);
     editor.on("transaction", updateSoon);
     updateSoon();
     return () => {
+      if (positionFrameRef.current) {
+        window.cancelAnimationFrame(positionFrameRef.current);
+        positionFrameRef.current = 0;
+      }
       document.removeEventListener("scroll", updateSoon, true);
       window.removeEventListener("resize", updateSoon);
       editor.off("transaction", updateSoon);
     };
-  }, [editor, hidden, updatePositions]);
+  }, [clearPositions, editor, hidden, normalizedComments.length, updatePositions]);
 
   if (hidden || !positions.length) {
     return null;
@@ -7281,8 +7301,8 @@ function getEditorRangeRects(editor, from, to, containerRect) {
     const rows = [];
     rects.forEach((rect) => {
       const center = (rect.top + rect.bottom) / 2;
-      const row = rows.find((item) => Math.abs(item.center - center) < 4);
-      if (row) {
+      const row = rows.at(-1);
+      if (row && Math.abs(row.center - center) < 4) {
         row.left = Math.min(row.left, rect.left);
         row.right = Math.max(row.right, rect.right);
         row.top = Math.min(row.top, rect.top);
@@ -7304,17 +7324,24 @@ function getEditorRangeRects(editor, from, to, containerRect) {
 }
 
 function CommentHighlights({ editor, comments = [], activeCommentId = "", hidden = false }) {
-  const normalizedComments = useMemo(() => normalizeDocumentComments(comments), [comments]);
+  const normalizedComments = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => getDocumentComments(activeEditor, comments),
+  }) || normalizeDocumentComments(comments);
   const [highlights, setHighlights] = useState([]);
+  const highlightFrameRef = useRef(0);
+  const clearHighlights = useCallback(() => {
+    setHighlights((current) => (current.length ? [] : current));
+  }, []);
 
   const updateHighlights = useCallback(() => {
     if (!editor?.view || hidden || !activeCommentId || !normalizedComments.length) {
-      setHighlights([]);
+      clearHighlights();
       return;
     }
     const sheet = editor.view.dom.closest(".paper-sheet");
     if (!sheet) {
-      setHighlights([]);
+      clearHighlights();
       return;
     }
     const sheetRect = sheet.getBoundingClientRect();
@@ -7333,24 +7360,34 @@ function CommentHighlights({ editor, comments = [], activeCommentId = "", hidden
       }));
     });
     setHighlights(nextHighlights);
-  }, [activeCommentId, editor, hidden, normalizedComments]);
+  }, [activeCommentId, clearHighlights, editor, hidden, normalizedComments]);
 
   useEffect(() => {
-    if (!editor?.view || hidden) {
-      setHighlights([]);
+    if (!editor?.view || hidden || !activeCommentId || !normalizedComments.length) {
+      clearHighlights();
       return undefined;
     }
-    const updateSoon = () => window.requestAnimationFrame(updateHighlights);
+    const updateSoon = () => {
+      if (highlightFrameRef.current) return;
+      highlightFrameRef.current = window.requestAnimationFrame(() => {
+        highlightFrameRef.current = 0;
+        updateHighlights();
+      });
+    };
     document.addEventListener("scroll", updateSoon, true);
     window.addEventListener("resize", updateSoon);
     editor.on("transaction", updateSoon);
     updateSoon();
     return () => {
+      if (highlightFrameRef.current) {
+        window.cancelAnimationFrame(highlightFrameRef.current);
+        highlightFrameRef.current = 0;
+      }
       document.removeEventListener("scroll", updateSoon, true);
       window.removeEventListener("resize", updateSoon);
       editor.off("transaction", updateSoon);
     };
-  }, [editor, hidden, updateHighlights]);
+  }, [activeCommentId, clearHighlights, editor, hidden, normalizedComments.length, updateHighlights]);
 
   if (hidden || !highlights.length) {
     return null;
@@ -7475,6 +7512,7 @@ function CommentPanel({ panel, comment, onTextChange, onPositionChange, onSave, 
 
 function TableContextToolbar({ editor, disabled }) {
   const [toolbarPosition, setToolbarPosition] = useState(null);
+  const toolbarFrameRef = useRef(0);
 
   const updateToolbarPosition = useCallback(() => {
     if (!editor || disabled || !editor.isActive("table")) {
@@ -7491,42 +7529,56 @@ function TableContextToolbar({ editor, disabled }) {
       setToolbarPosition(null);
       return;
     }
-    setToolbarPosition({
+    const nextPosition = {
       left: Math.min(window.innerWidth - 16, rect.right - 8),
       top: Math.max(86, rect.top - 8),
-    });
+    };
+    setToolbarPosition((current) => (
+      current?.left === nextPosition.left && current?.top === nextPosition.top ? current : nextPosition
+    ));
   }, [disabled, editor]);
+
+  const scheduleToolbarPosition = useCallback(() => {
+    if (toolbarFrameRef.current) return;
+    toolbarFrameRef.current = window.requestAnimationFrame(() => {
+      toolbarFrameRef.current = 0;
+      updateToolbarPosition();
+    });
+  }, [updateToolbarPosition]);
 
   useEffect(() => {
     if (!editor || disabled) {
       setToolbarPosition(null);
       return undefined;
     }
-    const updateSoon = () => window.requestAnimationFrame(updateToolbarPosition);
-    document.addEventListener("scroll", updateSoon, true);
-    document.addEventListener("keyup", updateSoon, true);
-    editor.view.dom.addEventListener("mouseup", updateSoon);
-    editor.view.dom.addEventListener("keyup", updateSoon);
-    editor.on("selectionUpdate", updateSoon);
-    editor.on("transaction", updateSoon);
-    updateSoon();
+    document.addEventListener("scroll", scheduleToolbarPosition, true);
+    document.addEventListener("keyup", scheduleToolbarPosition, true);
+    editor.view.dom.addEventListener("mouseup", scheduleToolbarPosition);
+    editor.view.dom.addEventListener("keyup", scheduleToolbarPosition);
+    editor.on("selectionUpdate", scheduleToolbarPosition);
+    editor.on("transaction", scheduleToolbarPosition);
+    scheduleToolbarPosition();
     return () => {
-      document.removeEventListener("scroll", updateSoon, true);
-      document.removeEventListener("keyup", updateSoon, true);
-      editor.view.dom.removeEventListener("mouseup", updateSoon);
-      editor.view.dom.removeEventListener("keyup", updateSoon);
-      editor.off("selectionUpdate", updateSoon);
-      editor.off("transaction", updateSoon);
+      if (toolbarFrameRef.current) {
+        window.cancelAnimationFrame(toolbarFrameRef.current);
+        toolbarFrameRef.current = 0;
+      }
+      document.removeEventListener("scroll", scheduleToolbarPosition, true);
+      document.removeEventListener("keyup", scheduleToolbarPosition, true);
+      editor.view.dom.removeEventListener("mouseup", scheduleToolbarPosition);
+      editor.view.dom.removeEventListener("keyup", scheduleToolbarPosition);
+      editor.off("selectionUpdate", scheduleToolbarPosition);
+      editor.off("transaction", scheduleToolbarPosition);
     };
-  }, [disabled, editor, updateToolbarPosition]);
+  }, [disabled, editor, scheduleToolbarPosition]);
 
   const runCommand = useCallback((command) => {
     if (!editor || disabled) {
       return;
     }
     runTableCommand(editor, command);
-    window.requestAnimationFrame(updateToolbarPosition);
-  }, [disabled, editor, updateToolbarPosition]);
+    scheduleToolbarPosition();
+  }, [disabled, editor, scheduleToolbarPosition]);
 
   if (!editor || disabled) {
     return null;
@@ -7574,7 +7626,9 @@ function TableContextToolbar({ editor, disabled }) {
 
 function getPaperPresentation(document, letterTemplates) {
   const selectedLetterTemplate = getLetterTemplate(document, letterTemplates);
-  const selectedPaperId = document.customBackground ? document.templateId : selectedLetterTemplate.paperId;
+  const customBackground = normalizeCustomBackgroundSource(document.customBackground);
+  const customBackgroundCss = toSafeCssImageUrl(customBackground);
+  const selectedPaperId = customBackground ? document.templateId : selectedLetterTemplate.paperId;
   const selectedTemplate = TEMPLATES.find((template) => template.id === selectedPaperId) || TEMPLATES[0];
   const typography = selectedLetterTemplate.typography;
   const presentation = normalizeTemplatePresentation(selectedLetterTemplate.presentation);
@@ -7603,9 +7657,9 @@ function getPaperPresentation(document, letterTemplates) {
       "--heading-color-1": presentation.headingColors[1],
       "--heading-color-2": presentation.headingColors[2],
       "--heading-color-3": presentation.headingColors[3],
-      "--paper-repeat-bg": document.customBackground ? `url("${document.customBackground}")` : `url("${selectedTemplate.slices.repeat}")`,
-      "--paper-top-bg": document.customBackground ? "none" : `url("${selectedTemplate.slices.top}")`,
-      "--paper-bottom-bg": document.customBackground ? "none" : `url("${selectedTemplate.slices.bottom}")`,
+      "--paper-repeat-bg": customBackgroundCss || `url("${selectedTemplate.slices.repeat}")`,
+      "--paper-top-bg": customBackground ? "none" : `url("${selectedTemplate.slices.top}")`,
+      "--paper-bottom-bg": customBackground ? "none" : `url("${selectedTemplate.slices.bottom}")`,
       "--paper-base": selectedTemplate.swatch,
     },
   };
@@ -8529,13 +8583,15 @@ function AiResultBlock({ block, onCopy }) {
     );
   }
   if (block.type === "image") {
+    const source = normalizeImageSource(block.asset?.src);
+    const width = normalizeEmbedWidth(block.asset?.width);
     return (
-      <figure className="ai-result-block ai-result-image" style={{ "--image-width": block.asset?.width || "78%" }}>
+      <figure className="ai-result-block ai-result-image" style={{ "--image-width": width }}>
         <button type="button" className="ai-copy-block" onClick={handleCopy} title="复制这一块" aria-label="复制这一块">
           <Copy size={14} />
         </button>
-        {block.asset?.src ? (
-          <img src={block.asset.src} alt={block.asset.alt || block.caption} />
+        {source ? (
+          <img src={source} alt={block.asset?.alt || block.caption} />
         ) : (
           <div className="ai-missing-image">原图不在当前信笺快照中</div>
         )}
@@ -8801,86 +8857,11 @@ function AiProviderRunSelector({ providers, value, disabled = false, onChange })
   );
 }
 
-function joinWorkspacePath(workspacePath, relativePath) {
-  const root = String(workspacePath || "").replace(/[\\/]+$/, "");
-  if (!root || !relativePath) return root;
-  const separator = root.includes("\\") ? "\\" : "/";
-  return `${root}${separator}${String(relativePath).split("/").filter(Boolean).join(separator)}`;
-}
-
-function CodexScopeTree({ rootPath, nodes, expandedPaths, selectedPath, onToggle, onSelect }) {
-  const renderChildren = (parentPath, depth) => {
-    const node = nodes[parentPath];
-    if (!expandedPaths.has(parentPath)) return null;
-    if (node?.loading) return <p className="codex-scope-tree-status" style={{ "--scope-depth": depth + 1 }}>正在读取目录...</p>;
-    if (node?.error) return <p className="codex-scope-tree-status error" style={{ "--scope-depth": depth + 1 }}>{node.error}</p>;
-    if (!node?.folders?.length) return <p className="codex-scope-tree-status" style={{ "--scope-depth": depth + 1 }}>没有子目录</p>;
-    return node.folders.map((folder) => {
-      const isExpanded = expandedPaths.has(folder.path);
-      const isSelected = selectedPath === folder.path;
-      return (
-        <div key={folder.path} className="codex-scope-tree-branch">
-          <div className={isSelected ? "codex-scope-tree-row selected" : "codex-scope-tree-row"} style={{ "--scope-depth": depth + 1 }}>
-            <button type="button" className="codex-scope-tree-toggle" aria-label={isExpanded ? `收起 ${folder.name}` : `展开 ${folder.name}`} aria-expanded={isExpanded} onClick={() => onToggle(folder.path)}>
-              <ChevronRight size={14} />
-            </button>
-            <button type="button" className="codex-scope-tree-folder" onClick={() => onSelect(folder.path)} title={folder.path}>
-              <FolderOpen size={15} />
-              <span>{folder.name}</span>
-              {isSelected ? <Check size={14} /> : null}
-            </button>
-          </div>
-          {renderChildren(folder.path, depth + 1)}
-        </div>
-      );
-    });
-  };
-
-  const rootSelected = selectedPath === rootPath;
-  const rootExpanded = expandedPaths.has(rootPath);
-  return (
-    <div className="codex-scope-tree" role="tree" aria-label="工作区目录">
-      <div className={rootSelected ? "codex-scope-tree-row root selected" : "codex-scope-tree-row root"} style={{ "--scope-depth": 0 }}>
-        <button type="button" className="codex-scope-tree-toggle" aria-label={rootExpanded ? "收起工作区" : "展开工作区"} aria-expanded={rootExpanded} onClick={() => onToggle(rootPath)}>
-          <ChevronRight size={14} />
-        </button>
-        <button type="button" className="codex-scope-tree-folder" onClick={() => onSelect(rootPath)} title={rootPath}>
-          <FolderOpen size={15} />
-          <span>{displayNameFromPath(rootPath) || "当前工作区"}</span>
-          {rootSelected ? <Check size={14} /> : null}
-        </button>
-      </div>
-      {renderChildren(rootPath, 0)}
-    </div>
-  );
-}
-
-function CodexScopeSelector({ scope, imageMode, imageCount = 0, workspacePath, documentPath, disabled = false, onChange, onImageModeChange }) {
-  const normalizedScope = normalizeCodexScope(scope);
+function CodexScopeSelector({ imageMode, imageCount = 0, disabled = false, onImageModeChange }) {
   const normalizedImageMode = normalizeCodexImageMode(imageMode);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [treeOpen, setTreeOpen] = useState(false);
-  const [treeNodes, setTreeNodes] = useState({});
-  const [expandedPaths, setExpandedPaths] = useState(() => new Set());
-  const [pendingPath, setPendingPath] = useState("");
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
-  const documentDirectory = parentPathFromPath(documentPath);
-  const documentDirectoryAvailable = Boolean(documentDirectory && relativeCodexScopePath(workspacePath, documentDirectory) !== null);
-  const workspaceAvailable = Boolean(workspacePath);
-
-  const loadFolder = useCallback(async (folderPath) => {
-    if (!folderPath) return null;
-    setTreeNodes((previous) => ({ ...previous, [folderPath]: { ...(previous[folderPath] || {}), loading: true, error: "" } }));
-    const result = await listFolderWithTimeout(folderPath);
-    if (result?.canceled) {
-      setTreeNodes((previous) => ({ ...previous, [folderPath]: { folders: [], loading: false, error: "目录读取失败" } }));
-      return null;
-    }
-    const folders = result.folders || [];
-    setTreeNodes((previous) => ({ ...previous, [folderPath]: { folders, loading: false, error: "" } }));
-    return folders;
-  }, []);
 
   useEffect(() => {
     if (!menuOpen) return undefined;
@@ -8901,120 +8882,19 @@ function CodexScopeSelector({ scope, imageMode, imageCount = 0, workspacePath, d
     };
   }, [menuOpen]);
 
-  useEffect(() => {
-    if (!treeOpen || !workspacePath) return undefined;
-    let canceled = false;
-    const prepareTree = async () => {
-      const expanded = new Set([workspacePath]);
-      let currentPath = workspacePath;
-      await loadFolder(currentPath);
-      if (canceled) return;
-      if (normalizedScope.mode === "subdirectory") {
-        for (const segment of normalizedScope.relativePath.split("/").filter(Boolean)) {
-          expanded.add(currentPath);
-          currentPath = joinWorkspacePath(currentPath, segment);
-          await loadFolder(currentPath);
-          if (canceled) return;
-        }
-      }
-      setExpandedPaths(expanded);
-      setPendingPath(normalizedScope.mode === "subdirectory" ? currentPath : workspacePath);
-    };
-    prepareTree();
-    return () => { canceled = true; };
-  }, [loadFolder, normalizedScope.mode, normalizedScope.relativePath, treeOpen, workspacePath]);
-
-  useEffect(() => {
-    if (!treeOpen) return undefined;
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
-        setTreeOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    window.document.addEventListener("keydown", handleKeyDown, true);
-    return () => window.document.removeEventListener("keydown", handleKeyDown, true);
-  }, [treeOpen]);
-
-  const chooseScope = (nextScope) => {
-    onChange?.(normalizeCodexScope(nextScope));
-    setMenuOpen(false);
-    triggerRef.current?.focus();
-  };
-
-  const toggleFolder = async (folderPath) => {
-    if (expandedPaths.has(folderPath)) {
-      setExpandedPaths((previous) => {
-        const next = new Set(previous);
-        next.delete(folderPath);
-        return next;
-      });
-      return;
-    }
-    if (!treeNodes[folderPath]) await loadFolder(folderPath);
-    setExpandedPaths((previous) => new Set(previous).add(folderPath));
-  };
-
-  const options = [
-    { mode: "document-only", label: "仅当前信笺", description: "不读取本地目录", disabled: false },
-    { mode: "document-directory", label: "信笺所在目录", description: documentDirectoryAvailable ? displayNameFromPath(documentDirectory) : "请先保存到当前工作区", disabled: !documentDirectoryAvailable },
-    { mode: "workspace", label: "整个工作区", description: workspaceAvailable ? displayNameFromPath(workspacePath) : "当前没有工作区", disabled: !workspaceAvailable },
-    { mode: "subdirectory", label: "选择工作区子目录", description: normalizedScope.mode === "subdirectory" ? (normalizedScope.relativePath || "原目录已失效，请重新选择") : "缩小 Codex 读取范围", disabled: !workspaceAvailable },
-  ];
-
-  const treeModal = treeOpen ? createPortal(
-    <div className="codex-scope-modal-backdrop" role="presentation" onMouseDown={() => { setTreeOpen(false); triggerRef.current?.focus(); }}>
-      <section className="codex-scope-modal" role="dialog" aria-modal="true" aria-labelledby="codex-scope-modal-title" aria-describedby="codex-scope-modal-description" onMouseDown={(event) => event.stopPropagation()}>
-        <header>
-          <span className="codex-scope-modal-heading-icon" aria-hidden="true"><FolderOpen size={20} /></span>
-          <div className="codex-scope-modal-heading-copy">
-            <h2 id="codex-scope-modal-title">选择工作区子目录</h2>
-            <p id="codex-scope-modal-description">Codex 只能读取当前工作区以内的目录</p>
-          </div>
-          <button type="button" className="codex-scope-modal-close" onClick={() => { setTreeOpen(false); triggerRef.current?.focus(); }} aria-label="关闭目录选择" title="关闭"><X size={18} /></button>
-        </header>
-        <div className="codex-scope-modal-tree">
-          <CodexScopeTree rootPath={workspacePath} nodes={treeNodes} expandedPaths={expandedPaths} selectedPath={pendingPath} onToggle={toggleFolder} onSelect={setPendingPath} />
-        </div>
-        <footer>
-          <p><span>当前选择</span><strong title={pendingPath}>{relativeCodexScopePath(workspacePath, pendingPath) || "整个工作区"}</strong></p>
-          <div>
-            <button type="button" onClick={() => { setTreeOpen(false); triggerRef.current?.focus(); }}>取消</button>
-            <button type="button" className="primary" disabled={!pendingPath} onClick={() => {
-              const relativePath = relativeCodexScopePath(workspacePath, pendingPath);
-              if (relativePath === null) return;
-              chooseScope(relativePath ? { mode: "subdirectory", relativePath } : { mode: "workspace" });
-              setTreeOpen(false);
-            }}>使用此目录</button>
-          </div>
-        </footer>
-      </section>
-    </div>,
-    window.document.body,
-  ) : null;
-
   return (
     <div ref={rootRef} className={menuOpen ? "codex-scope-switch open" : "codex-scope-switch"}>
-      <button ref={triggerRef} type="button" className="codex-scope-switch-button" disabled={disabled} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} title={`Codex 目录范围：${codexScopeLabel(normalizedScope)}`}>
-        <FolderOpen size={14} />
-        <span>目录范围：{codexScopeLabel(normalizedScope)}</span>
+      <button ref={triggerRef} type="button" className="codex-scope-switch-button" disabled={disabled} aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} title="Codex 已隔离为仅可读取当前信笺">
+        <FileText size={14} />
+        <span>仅当前信笺（隔离）</span>
         <ChevronDown size={13} />
       </button>
       {menuOpen ? (
-        <div className="codex-scope-menu" role="menu" aria-label="Codex 目录范围">
-          {options.map((option) => (
-            <button key={option.mode} type="button" role="menuitemradio" aria-checked={normalizedScope.mode === option.mode} disabled={option.disabled} onClick={() => {
-              if (option.mode === "subdirectory") {
-                setMenuOpen(false);
-                setTreeOpen(true);
-              } else {
-                chooseScope({ mode: option.mode });
-              }
-            }}>
-              <span><strong>{option.label}</strong><em>{option.description}</em></span>
-              {normalizedScope.mode === option.mode ? <Check size={14} /> : null}
-            </button>
-          ))}
+        <div className="codex-scope-menu" role="menu" aria-label="Codex 信笺设置">
+          <button type="button" className="codex-scope-fixed" role="menuitem" aria-disabled="true" disabled>
+            <span><strong>仅当前信笺（隔离）</strong><em>无法读取信笺目录、工作区或其他本地文件</em></span>
+            <Check size={14} />
+          </button>
           <div className="codex-scope-menu-divider" role="separator" />
           <button
             type="button"
@@ -9034,7 +8914,6 @@ function CodexScopeSelector({ scope, imageMode, imageCount = 0, workspacePath, d
           </button>
         </div>
       ) : null}
-      {treeModal}
     </div>
   );
 }
@@ -9044,7 +8923,6 @@ function AiOptimizeToolbar({
   hasResult,
   editor,
   savedSelectionRef,
-  finalizedBreakInserted,
   availableProviders = [],
   selectedProvider,
   onProviderChange,
@@ -9052,6 +8930,10 @@ function AiOptimizeToolbar({
   onStop,
   onClear,
 }) {
+  const finalizedBreakInserted = Boolean(useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => getPaperDerivedState(activeEditor).hasFinalizedBreak,
+  }));
   const isStreaming = status === "streaming";
   const hasUsableProvider = availableProviders.length > 0;
   const selectedRunModel = availableProviders.find((provider) => provider.id === selectedProvider) || availableProviders[0];
@@ -9105,23 +8987,23 @@ function AiOptimizeToolbar({
 }
 
 function AiChatToolbar({
+  editor,
   availableProviders = [],
   selectedProvider,
   status,
   messages = [],
   hasState = false,
-  codexScope,
   codexImageMode,
-  imageCount = 0,
-  workspacePath,
-  documentPath,
   onProviderChange,
-  onCodexScopeChange,
   onCodexImageModeChange,
   onStop,
   onClear,
   onExport,
 }) {
+  const imageCount = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => getPaperDerivedState(activeEditor).imageCount,
+  }) || 0;
   const isStreaming = status === "streaming";
   const selectedRunModel = availableProviders.find((provider) => provider.id === selectedProvider) || availableProviders[0];
   const runModelLabel = selectedRunModel
@@ -9135,13 +9017,9 @@ function AiChatToolbar({
         <AiProviderRunSelector providers={availableProviders} value={selectedProvider} disabled={isStreaming} onChange={onProviderChange} />
         {selectedRunModel?.transport === "codex-cli" ? (
           <CodexScopeSelector
-            scope={codexScope}
             imageMode={codexImageMode}
             imageCount={imageCount}
-            workspacePath={workspacePath}
-            documentPath={documentPath}
             disabled={isStreaming}
-            onChange={onCodexScopeChange}
             onImageModeChange={onCodexImageModeChange}
           />
         ) : null}
@@ -9886,25 +9764,39 @@ function LinkDialog({ dialog, onClose, onSubmit, onRemove }) {
   );
 }
 
-function StatusBar({ document, stats, dirty, version, cacheSummary, updateState, onRunUpdate, onClearCache }) {
+function LiveStatusMetric({ editor, field, label }) {
+  const value = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => getPaperDerivedState(activeEditor).stats[field],
+  });
+  const fallback = EMPTY_PAPER_DERIVED_STATE.stats[field] || 0;
+  return (
+    <span className={`status-metric ${field}`}>
+      <strong>{(Number.isFinite(value) ? value : fallback).toLocaleString()}</strong>
+      <em>{label}</em>
+    </span>
+  );
+}
+
+function StatusBar({ editor, updatedAt, dirty, version, cacheSummary, updateState, onRunUpdate, onClearCache }) {
   const cacheBytes = cacheSummary?.bytes || 0;
   const cacheCount = cacheSummary?.count || 0;
   const updateMeta = getUpdateStatusMeta(updateState);
   return (
     <footer className="statusbar">
       <div className="statusbar-counts">
-        <span className="status-metric words"><strong>{stats.words.toLocaleString()}</strong><em>字</em></span>
+        <LiveStatusMetric editor={editor} field="words" label="字" />
         <i />
-        <span className="status-metric paragraphs"><strong>{stats.paragraphs.toLocaleString()}</strong><em>段</em></span>
+        <LiveStatusMetric editor={editor} field="paragraphs" label="段" />
         <i />
-        <span className="status-metric pages"><strong>{stats.pages.toLocaleString()}</strong><em>页</em></span>
+        <LiveStatusMetric editor={editor} field="pages" label="页" />
         <i />
-        <span className="status-metric images"><strong>{stats.images.toLocaleString()}</strong><em>图</em></span>
+        <LiveStatusMetric editor={editor} field="images" label="图" />
         <i />
-        <span className="status-metric quotes"><strong>{stats.quotes.toLocaleString()}</strong><em>引用</em></span>
+        <LiveStatusMetric editor={editor} field="quotes" label="引用" />
       </div>
       <div className={dirty ? "statusbar-save dirty" : "statusbar-save saved"}>
-        <span>自动保存于 {formatClock(document.updatedAt)}{dirty ? " · 未保存" : ""}</span>
+        <span>自动保存于 {formatClock(updatedAt)}{dirty ? " · 未保存" : ""}</span>
         <i />
         <div className="statusbar-cache" title={`已缓存 ${cacheCount} 篇信笺的编辑器结构，用于加速已打开信笺切换`}>
           <span>缓存 {formatCacheBytes(cacheBytes)}</span>
@@ -9961,7 +9853,7 @@ function estimateSerializedBytes(value) {
 
 function summarizeDocumentCache(tabs) {
   return tabs.reduce((summary, tab) => {
-    const bytes = estimateSerializedBytes(tab.editorJson);
+    const bytes = Math.max(0, Number(tab.editorJsonBytes) || 0);
     if (!bytes) {
       return summary;
     }
@@ -10008,25 +9900,53 @@ function getUpdateStatusMeta(updateState = {}) {
 function summarizeSessionTabs(tabs = []) {
   const seen = new Set();
   return tabs
-    .map((tab) => ({ path: typeof tab?.path === "string" ? tab.path : "" }))
+    .map((tab) => {
+      const logicalPath = typeof tab?.path === "string" ? tab.path : "";
+      const recoveryPath = typeof tab?.recoveryPath === "string" ? tab.recoveryPath : "";
+      return {
+        path: logicalPath || recoveryPath,
+        temporary: Boolean(tab?.temporary || (!logicalPath && recoveryPath)),
+      };
+    })
     .filter((tab) => {
-      if (!tab.path || seen.has(tab.path)) {
+      const pathKey = String(tab.path || "").replace(/\//g, "\\").toLocaleLowerCase("en-US");
+      if (!pathKey || seen.has(pathKey)) {
         return false;
       }
-      seen.add(tab.path);
+      seen.add(pathKey);
       return true;
     });
 }
 
-function createDocumentTab(document, path = "", dirty = false) {
+function createDocumentTab(document, path = "", dirty = false, options = {}) {
   return {
     id: createTabId(),
     path,
-    title: document?.title || "未命名信笺",
+    title: normalizeDocumentTitle(document?.title),
     document,
     editorJson: null,
+    editorJsonBytes: 0,
     scrollState: { top: 0, left: 0 },
+    recoveryPath: options.recoveryPath || "",
+    recoveryId: options.recoveryId || "",
+    recoveredTemporary: Boolean(options.recoveredTemporary),
     dirty,
+  };
+}
+
+function recoveryTabId(tab) {
+  return String(tab?.recoveryId || tab?.id || "");
+}
+
+function paperCanvasViewModel(document = {}) {
+  return {
+    title: normalizeDocumentTitle(document.title),
+    author: document.author || "",
+    displayDate: document.displayDate || "",
+    createdAt: document.createdAt || "",
+    customBackground: normalizeCustomBackgroundSource(document.customBackground),
+    templateId: document.templateId || "warm",
+    letterTemplateId: document.letterTemplateId || "",
   };
 }
 
@@ -10046,44 +9966,6 @@ function restoreCanvasScrollState(canvas, scrollState) {
   }
   canvas.scrollTop = Math.max(0, Number(scrollState?.top) || 0);
   canvas.scrollLeft = Math.max(0, Number(scrollState?.left) || 0);
-}
-
-function buildOutlineItems(editor) {
-  if (!editor) {
-    return [];
-  }
-  const items = [];
-  editor.state.doc.descendants((node, pos) => {
-    if (node.type.name === "paperTableOfContents") {
-      items.push({
-        id: `toc-${pos}`,
-        type: "toc",
-        level: 1,
-        text: "目录",
-        pos,
-      });
-      return false;
-    }
-    if (node.type.name !== "heading") {
-      return;
-    }
-    const level = Number(node.attrs.level) || 1;
-    if (level < 1 || level > 3) {
-      return;
-    }
-    const text = node.textContent?.trim();
-    if (!text) {
-      return;
-    }
-    items.push({
-      id: `${pos}-${level}-${text}`,
-      type: "heading",
-      level,
-      text,
-      pos,
-    });
-  });
-  return items;
 }
 
 function cleanupImageExportStage() {
@@ -10179,36 +10061,28 @@ function prepareImageExportRects() {
   stage.style.width = `${Math.ceil(sheetRect.width)}px`;
   window.document.body.append(stage);
 
-  segments.forEach((segment) => {
-    const clone = sheet.cloneNode(true);
-    syncClonedFormValues(sheet, clone);
-    clone.style.width = `${sheetRect.width}px`;
-    clone.style.minWidth = `${sheetRect.width}px`;
-    clone.style.margin = "0";
+  const clone = sheet.cloneNode(true);
+  syncClonedFormValues(sheet, clone);
+  clone.style.width = `${sheetRect.width}px`;
+  clone.style.minWidth = `${sheetRect.width}px`;
+  clone.style.margin = "0";
+  clone.querySelectorAll("img").forEach((image) => image.setAttribute("decoding", "async"));
+  stage.append(clone);
 
-    const offset = window.document.createElement("div");
-    offset.className = "image-export-segment-offset";
-    offset.style.width = `${sheetRect.width}px`;
-    offset.style.transform = `translateY(-${segment.top}px)`;
-    offset.append(clone);
-
-    const wrapper = window.document.createElement("div");
-    wrapper.className = "image-export-segment";
-    wrapper.style.width = `${Math.ceil(sheetRect.width)}px`;
-    wrapper.style.height = `${Math.ceil(segment.bottom - segment.top)}px`;
-    wrapper.append(offset);
-    stage.append(wrapper);
-  });
-
-  return Array.from(stage.querySelectorAll(".image-export-segment")).map((segment) => {
-    const rect = segment.getBoundingClientRect();
-    return {
-      x: Math.floor(rect.left + window.scrollX),
-      y: Math.floor(rect.top + window.scrollY),
-      width: Math.ceil(rect.width),
-      height: Math.ceil(rect.height),
-    };
-  });
+  const cloneRect = clone.getBoundingClientRect();
+  const maximumCaptureHeight = 8000;
+  return segments.flatMap((segment) => {
+    const pieces = [];
+    for (let top = segment.top; top < segment.bottom; top += maximumCaptureHeight) {
+      pieces.push({ top, bottom: Math.min(segment.bottom, top + maximumCaptureHeight) });
+    }
+    return pieces;
+  }).map((segment) => ({
+    x: Math.floor(cloneRect.left + window.scrollX),
+    y: Math.floor(cloneRect.top + window.scrollY + segment.top),
+    width: Math.ceil(cloneRect.width),
+    height: Math.ceil(segment.bottom - segment.top),
+  }));
 }
 
 export default function App() {
@@ -10273,7 +10147,6 @@ export default function App() {
   const aiChatMessages = activeChatState.messages;
   const aiChatInput = activeChatState.input;
   const aiChatSelections = activeChatState.selectedTexts;
-  const aiChatCodexScope = activeChatState.codexScope;
   const aiChatCodexImageMode = activeChatState.codexImageMode;
   const applyingRef = useRef(false);
   const readyRef = useRef(false);
@@ -10285,11 +10158,17 @@ export default function App() {
   const activeTabIdRef = useRef(activeTabId);
   const activeDocumentKeyRef = useRef(documentRuntimeKey(currentPath, activeTabId));
   const mainCanvasRef = useRef(null);
+  const rightCanvasRef = useRef(null);
   const currentPathRef = useRef(currentPath);
   const dirtyRef = useRef(dirty);
+  const dirtyTabIdsRef = useRef(new Set(openTabs.filter((tab) => tab.dirty).map((tab) => tab.id)));
+  const liveUpdatedAtByTabRef = useRef(new Map());
+  const liveRevisionByTabRef = useRef(new Map());
+  const liveEditorSourceByTabRef = useRef(new Map());
   const documentStateRef = useRef(documentState);
   const updateAutoCheckedRef = useRef(false);
   const getSaveDocumentRef = useRef(null);
+  const getRightSplitSaveDocumentRef = useRef(null);
   const refreshFolderRef = useRef(null);
   const applyDocumentRunRef = useRef(0);
   const rightSplitApplyingRef = useRef(false);
@@ -10307,17 +10186,59 @@ export default function App() {
   const confirmDialogResolverRef = useRef(null);
   const promptDialogResolverRef = useRef(null);
   const aiChatMessagesRef = useRef([]);
-  const rightSplitTab = useMemo(() => openTabs.find((tab) => tab.id === rightSplitTabId) || null, [openTabs, rightSplitTabId]);
-  const rightSplitDocument = useMemo(() => {
-    if (!rightSplitTab) {
-      return null;
-    }
-    return rightSplitTab.id === activeTabId ? documentState : rightSplitTab.document;
-  }, [activeTabId, documentState, rightSplitTab]);
+  const saveQueueByTabRef = useRef(new Map());
+  const autosaveRunningRef = useRef(false);
+  const autosaveErrorAtRef = useRef(0);
+  const tabClosePendingIdsRef = useRef(new Set());
+  const sessionClosePendingRef = useRef(false);
 
-  const editor = useEditor({
-    extensions: createPaperEditorExtensions(),
-    content: documentState.html,
+  const recordTabMutation = useCallback((tabId, updatedAt = new Date().toISOString()) => {
+    if (!tabId) return false;
+    liveUpdatedAtByTabRef.current.set(tabId, updatedAt);
+    liveRevisionByTabRef.current.set(tabId, (liveRevisionByTabRef.current.get(tabId) || 0) + 1);
+    const becameDirty = !dirtyTabIdsRef.current.has(tabId);
+    dirtyTabIdsRef.current.add(tabId);
+    if (tabId === activeTabIdRef.current) {
+      dirtyRef.current = true;
+      if (becameDirty) setDirty(true);
+    }
+    if (becameDirty) {
+      const nextTabs = openTabsRef.current.map((tab) => (
+        tab.id === tabId ? { ...tab, dirty: true } : tab
+      ));
+      openTabsRef.current = nextTabs;
+      setOpenTabs(nextTabs);
+    }
+    return becameDirty;
+  }, []);
+
+  const queueTabSave = useCallback(async (tabId, operation) => {
+    const previous = saveQueueByTabRef.current.get(tabId) || Promise.resolve();
+    const queued = previous.catch(() => {}).then(operation);
+    // Keep the tracked promise alive through the caller's state-update
+    // continuation. A close/discard action waiting on this queue must observe
+    // the committed dirty/recovery state, not merely the completed IPC write.
+    const tracked = queued.then(() => undefined, () => undefined)
+      .then(() => new Promise((resolve) => window.setTimeout(resolve, 0)));
+    saveQueueByTabRef.current.set(tabId, tracked);
+    tracked.finally(() => {
+      if (saveQueueByTabRef.current.get(tabId) === tracked) {
+        saveQueueByTabRef.current.delete(tabId);
+      }
+    });
+    return queued;
+  }, []);
+
+  const waitForTabSave = useCallback(async (tabId) => {
+    await (saveQueueByTabRef.current.get(tabId) || Promise.resolve());
+  }, []);
+
+  const mainEditorExtensions = useMemo(() => createPaperEditorExtensions(), []);
+  const rightEditorExtensions = useMemo(() => createPaperEditorExtensions(), []);
+  const mainEditorOptions = useMemo(() => ({
+    shouldRerenderOnTransaction: false,
+    extensions: mainEditorExtensions,
+    content: documentStateRef.current.html,
     editorProps: {
       attributes: {
         class: "paper-editor",
@@ -10331,25 +10252,17 @@ export default function App() {
       const { from, to } = activeEditor.state.selection;
       editorSelectionRef.current = { from, to };
     },
-    onUpdate: ({ editor: activeEditor, transaction }) => {
-      if (applyingRef.current) {
-        return;
-      }
-      const html = activeEditor.getHTML();
-      const maxPosition = activeEditor.state.doc.content.size;
-      setDocumentState((previous) => ({
-        ...previous,
-        html,
-        comments: mapDocumentCommentsThroughTransaction(previous.comments, transaction, maxPosition),
-        updatedAt: new Date().toISOString(),
-      }));
-      setDirty(true);
+    onUpdate: () => {
+      if (applyingRef.current) return;
+      const tabId = activeTabIdRef.current;
+      liveEditorSourceByTabRef.current.set(tabId, "main");
+      recordTabMutation(tabId);
     },
-  });
-
-  const rightSplitEditor = useEditor({
-    extensions: createPaperEditorExtensions(),
-    content: rightSplitDocument?.html || "<p></p>",
+  }), [mainEditorExtensions, recordTabMutation]);
+  const rightEditorOptions = useMemo(() => ({
+    shouldRerenderOnTransaction: false,
+    extensions: rightEditorExtensions,
+    content: "<p></p>",
     editorProps: {
       attributes: {
         class: "paper-editor",
@@ -10360,57 +10273,51 @@ export default function App() {
       const { from, to } = activeEditor.state.selection;
       rightSplitSelectionRef.current = { from, to };
     },
-    onFocus: () => {
-      setActivePane("right");
-    },
-    onUpdate: ({ editor: activeEditor, transaction }) => {
-      if (rightSplitApplyingRef.current) {
-        return;
-      }
+    onFocus: () => setActivePane("right"),
+    onUpdate: () => {
+      if (rightSplitApplyingRef.current) return;
       const splitId = rightSplitTabIdRef.current;
-      if (!splitId) {
-        return;
-      }
-      const html = activeEditor.getHTML();
-      const updatedAt = new Date().toISOString();
-      const maxPosition = activeEditor.state.doc.content.size;
-      setOpenTabs((tabs) => tabs.map((tab) => (
-        tab.id === splitId
-          ? {
-              ...tab,
-              document: {
-                ...tab.document,
-                html,
-                comments: mapDocumentCommentsThroughTransaction(tab.document?.comments, transaction, maxPosition),
-                updatedAt,
-              },
-              dirty: true,
-            }
-          : tab
-      )));
-      if (splitId === activeTabIdRef.current) {
-        setDocumentState((previous) => ({
-          ...previous,
-          html,
-          comments: mapDocumentCommentsThroughTransaction(previous.comments, transaction, maxPosition),
-          updatedAt,
-        }));
-        setDirty(true);
-      }
+      if (!splitId) return;
+      liveEditorSourceByTabRef.current.set(splitId, "right");
+      recordTabMutation(splitId);
     },
-  });
+  }), [recordTabMutation, rightEditorExtensions]);
+  const rightSplitTab = useMemo(() => openTabs.find((tab) => tab.id === rightSplitTabId) || null, [openTabs, rightSplitTabId]);
+  const rightSplitDocument = useMemo(() => {
+    if (!rightSplitTab || rightSplitTab.id === activeTabId) {
+      return null;
+    }
+    return rightSplitTab.document;
+  }, [activeTabId, rightSplitTab]);
 
-  const stats = useMemo(() => wordStats(statsTextFromHtml(documentState.html), documentState.html), [documentState.html]);
+  const editor = useEditor(mainEditorOptions);
+
+  const rightSplitEditor = useEditor(rightEditorOptions);
+
   const splitPaneActive = !aiMode && activePane === "right" && Boolean(rightSplitTabId && rightSplitDocument && rightSplitEditor);
   const activeWorkEditor = splitPaneActive ? rightSplitEditor : editor;
   const activeWorkDocument = splitPaneActive ? rightSplitDocument : documentState;
   const activeWorkSelectionRef = splitPaneActive ? rightSplitSelectionRef : editorSelectionRef;
-  const activeWorkStats = useMemo(() => wordStats(statsTextFromHtml(activeWorkDocument?.html || ""), activeWorkDocument?.html || ""), [activeWorkDocument?.html]);
-  const outlineItems = useMemo(() => buildOutlineItems(activeWorkEditor), [activeWorkDocument?.html, activeWorkEditor]);
-  const finalizedBreakInserted = useMemo(() => editorHasNodeType(activeWorkEditor, "paperFinalizedBreak"), [activeWorkDocument?.html, activeWorkEditor]);
-  const tableOfContentsInserted = useMemo(() => editorHasNodeType(activeWorkEditor, "paperTableOfContents"), [activeWorkDocument?.html, activeWorkEditor]);
+  const tabViewModels = useMemo(() => openTabs.map(({ id, path, title, dirty: tabDirty }) => ({ id, path, title, dirty: tabDirty })), [openTabs]);
+  const mainCanvasDocument = useMemo(() => paperCanvasViewModel(documentState), [
+    documentState.author,
+    documentState.createdAt,
+    documentState.customBackground,
+    documentState.displayDate,
+    documentState.letterTemplateId,
+    documentState.templateId,
+    documentState.title,
+  ]);
+  const rightCanvasDocument = useMemo(() => paperCanvasViewModel(rightSplitDocument || {}), [
+    rightSplitDocument?.author,
+    rightSplitDocument?.createdAt,
+    rightSplitDocument?.customBackground,
+    rightSplitDocument?.displayDate,
+    rightSplitDocument?.letterTemplateId,
+    rightSplitDocument?.templateId,
+    rightSplitDocument?.title,
+  ]);
   const documentCacheSummary = useMemo(() => summarizeDocumentCache(openTabs), [openTabs]);
-  const aiChatImageCount = useMemo(() => countEditorImages(editor), [documentState.html, editor]);
   const availableAiProviders = useMemo(() => getTestedAiProviders(aiConfig), [aiConfig]);
   const aiHasUsableProvider = availableAiProviders.length > 0;
   const effectiveAiProvider = useMemo(() => {
@@ -10495,16 +10402,24 @@ export default function App() {
       updatedAt,
     });
     if (documentKey === activeDocumentKeyRef.current) {
-      setDocumentState((previous) => applyPatch(previous));
-      setDirty(true);
+      const tabId = activeTabIdRef.current;
+      recordTabMutation(tabId, updatedAt);
+      const nextDocument = applyPatch(documentStateRef.current);
+      documentStateRef.current = nextDocument;
+      setDocumentState(nextDocument);
       return;
     }
-    setOpenTabs((tabs) => tabs.map((tab) => (
-      documentRuntimeKey(tab.path, tab.id) === documentKey
+    const targetTab = openTabsRef.current.find((tab) => documentRuntimeKey(tab.path, tab.id) === documentKey);
+    if (!targetTab) return;
+    recordTabMutation(targetTab.id, updatedAt);
+    const nextTabs = openTabsRef.current.map((tab) => (
+      tab.id === targetTab.id
         ? { ...tab, document: applyPatch(tab.document), dirty: true }
         : tab
-    )));
-  }, []);
+    ));
+    openTabsRef.current = nextTabs;
+    setOpenTabs(nextTabs);
+  }, [recordTabMutation]);
 
   const updateActiveDocumentAiState = useCallback((updater) => {
     updateDocumentAiStateForKey(activeDocumentKeyRef.current, updater);
@@ -10556,12 +10471,18 @@ export default function App() {
   }, [aiChatMode, aiChatSelections, editor]);
 
   useEffect(() => {
-    syncDocumentCommentDecorations(editor, (aiMode || printMode || imageExportMode) ? [] : documentState.comments);
-  }, [aiMode, documentState.comments, editor, imageExportMode, printMode]);
+    syncDocumentCommentDecorations(editor, documentState.comments);
+  }, [documentState.comments, editor]);
 
   useEffect(() => {
-    syncDocumentCommentDecorations(rightSplitEditor, (aiMode || printMode || imageExportMode) ? [] : rightSplitDocument?.comments);
-  }, [aiMode, imageExportMode, printMode, rightSplitDocument?.comments, rightSplitEditor]);
+    syncDocumentCommentDecorations(rightSplitEditor, rightSplitDocument?.comments);
+  }, [rightSplitDocument?.comments, rightSplitEditor]);
+
+  useEffect(() => {
+    const hidden = aiMode || printMode || imageExportMode;
+    setDocumentCommentVisibility(editor, hidden);
+    setDocumentCommentVisibility(rightSplitEditor, hidden);
+  }, [aiMode, editor, imageExportMode, printMode, rightSplitEditor]);
 
   useEffect(() => {
     if (aiMode || printMode || imageExportMode) {
@@ -10600,7 +10521,9 @@ export default function App() {
 
   useEffect(() => {
     openTabsRef.current = openTabs;
-  }, [openTabs]);
+    dirtyTabIdsRef.current = new Set(openTabs.filter((tab) => tab.dirty).map((tab) => tab.id));
+    if (dirty && activeTabId) dirtyTabIdsRef.current.add(activeTabId);
+  }, [activeTabId, dirty, openTabs]);
 
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
@@ -10617,11 +10540,12 @@ export default function App() {
       }
       return;
     }
-    if (!openTabs.some((tab) => tab.id === rightSplitTabId)) {
+    if (rightSplitTabId === activeTabId || !openTabs.some((tab) => tab.id === rightSplitTabId)) {
+      rightSplitTabIdRef.current = "";
       setRightSplitTabId("");
       setActivePane("main");
     }
-  }, [activePane, openTabs, rightSplitTabId]);
+  }, [activePane, activeTabId, openTabs, rightSplitTabId]);
 
   useEffect(() => {
     if (!rightSplitEditor || !rightSplitTabId) {
@@ -10640,9 +10564,9 @@ export default function App() {
         return;
       }
       try {
-        rightSplitEditor.commands.setContent(splitTab?.editorJson || splitDocument.html || "<p></p>");
+        replaceEditorContentWithoutHistory(rightSplitEditor, splitTab?.editorJson || splitDocument.html || "<p></p>");
       } catch {
-        rightSplitEditor.commands.setContent(splitDocument.html || "<p></p>");
+        replaceEditorContentWithoutHistory(rightSplitEditor, splitDocument.html || "<p></p>");
       }
       syncDocumentCommentDecorations(rightSplitEditor, normalizeDocumentComments(splitDocument.comments));
       window.setTimeout(() => {
@@ -10686,18 +10610,20 @@ export default function App() {
     if (!activeTabId) {
       return;
     }
-    setOpenTabs((tabs) => tabs.map((tab) => (
-      tab.id === activeTabId
-        ? {
-            ...tab,
-            path: currentPath,
-            title: documentState.title || "未命名信笺",
-            document: documentState,
-            dirty,
-          }
-        : tab
-    )));
-  }, [activeTabId, currentPath, dirty, documentState]);
+    setOpenTabs((tabs) => {
+      let changed = false;
+      const nextTabs = tabs.map((tab) => {
+        if (tab.id !== activeTabId) return tab;
+        const title = documentState.title || "未命名信笺";
+        if (tab.path === currentPath && tab.title === title && tab.dirty === dirty) return tab;
+        changed = true;
+        return { ...tab, path: currentPath, title, dirty };
+      });
+      if (!changed) return tabs;
+      openTabsRef.current = nextTabs;
+      return nextTabs;
+    });
+  }, [activeTabId, currentPath, dirty, documentState.title]);
 
   const showStatus = useCallback((message, tone = "success") => {
     setStatus({ message, tone });
@@ -10707,8 +10633,9 @@ export default function App() {
 
   const updateCommentsForPane = useCallback((pane, updater) => {
     const updatedAt = new Date().toISOString();
+    const sourceEditor = pane === "right" ? rightSplitEditor : editor;
     const applyCommentUpdate = (document) => {
-      const previousComments = normalizeDocumentComments(document?.comments);
+      const previousComments = getDocumentComments(sourceEditor, document?.comments);
       const nextComments = normalizeDocumentComments(
         typeof updater === "function" ? updater(previousComments) : updater,
       );
@@ -10724,25 +10651,28 @@ export default function App() {
       if (!splitId) {
         return;
       }
-      setOpenTabs((tabs) => tabs.map((tab) => (
-        tab.id === splitId
-          ? {
-              ...tab,
-              document: applyCommentUpdate(tab.document),
-              dirty: true,
-            }
-          : tab
-      )));
+      recordTabMutation(splitId, updatedAt);
+      const nextTabs = openTabsRef.current.map((tab) => (
+        tab.id === splitId ? { ...tab, document: applyCommentUpdate(tab.document), dirty: true } : tab
+      ));
+      openTabsRef.current = nextTabs;
+      setOpenTabs(nextTabs);
       if (splitId === activeTabIdRef.current) {
-        setDocumentState((previous) => applyCommentUpdate(previous));
-        setDirty(true);
+        setDocumentState((previous) => {
+          const nextDocument = applyCommentUpdate(previous);
+          documentStateRef.current = nextDocument;
+          return nextDocument;
+        });
       }
       return;
     }
 
-    setDocumentState((previous) => applyCommentUpdate(previous));
-    setDirty(true);
-  }, []);
+    const tabId = activeTabIdRef.current;
+    recordTabMutation(tabId, updatedAt);
+    const nextDocument = applyCommentUpdate(documentStateRef.current);
+    documentStateRef.current = nextDocument;
+    setDocumentState(nextDocument);
+  }, [editor, recordTabMutation, rightSplitEditor]);
 
   const commentPanelComment = useMemo(() => {
     if (!commentPanel?.commentId) {
@@ -10763,9 +10693,9 @@ export default function App() {
       showStatus("请先选中要评注的文字", "warning");
       return;
     }
-    const sourceDocument = pane === "right" ? rightSplitDocument : documentState;
     const sourceEditor = pane === "right" ? rightSplitEditor : editor;
-    if (!commentAnchorTrackAvailable(sourceEditor, sourceDocument?.comments, selection)) {
+    const sourceDocument = pane === "right" ? rightSplitDocument : documentState;
+    if (!commentAnchorTrackAvailable(sourceEditor, getDocumentComments(sourceEditor, sourceDocument?.comments), selection)) {
       showStatus("这里的评注已经太密，暂时不能继续添加", "warning");
       return;
     }
@@ -10861,43 +10791,81 @@ export default function App() {
   }, [commentPanel, showConfirmDialog, showStatus, updateCommentsForPane]);
 
   const handleClearDocumentCache = useCallback(() => {
-    setOpenTabs((tabs) => tabs.map((tab) => (
-      tab.editorJson ? { ...tab, editorJson: null } : tab
-    )));
+    setOpenTabs((tabs) => {
+      const nextTabs = tabs.map((tab) => (
+        tab.editorJson ? { ...tab, editorJson: null, editorJsonBytes: 0 } : tab
+      ));
+      openTabsRef.current = nextTabs;
+      return nextTabs;
+    });
     showStatus("已清理信笺切换缓存", "success");
   }, [showStatus]);
 
-  const buildOpenTabsSnapshot = useCallback(() => {
+  const snapshotLiveTabs = useCallback(({ includeEditorJson = false } = {}) => {
     const activeId = activeTabIdRef.current;
-    const activePath = currentPathRef.current;
-    const activeDirty = dirtyRef.current;
-    const activeDocument = getSaveDocumentRef.current?.() || documentStateRef.current;
-    const activeScrollState = readCanvasScrollState(mainCanvasRef.current);
-    return openTabsRef.current.map((tab) => (
-      tab.id === activeId
-        ? {
-            ...tab,
-            path: activePath,
-            title: activeDocument?.title || "未命名信笺",
-            document: activeDocument,
-            dirty: activeDirty,
-            editorJson: editor?.getJSON?.() || tab.editorJson,
-            scrollState: activeScrollState,
-          }
-        : tab
-    ));
-  }, [editor]);
+    const splitId = rightSplitTabIdRef.current;
+    const activeUsesRightEditor = splitId === activeId && liveEditorSourceByTabRef.current.get(activeId) === "right";
+    const activeDocument = activeUsesRightEditor
+      ? (getRightSplitSaveDocumentRef.current?.() || documentStateRef.current)
+      : (getSaveDocumentRef.current?.() || documentStateRef.current);
+    const liveTabs = new Map();
+    liveTabs.set(activeId, {
+      document: activeDocument,
+      path: currentPathRef.current,
+      dirty: dirtyRef.current,
+      editorJson: includeEditorJson
+        ? ((activeUsesRightEditor ? rightSplitEditor : editor)?.getJSON?.() || null)
+        : undefined,
+      scrollState: readCanvasScrollState(activeUsesRightEditor ? rightCanvasRef.current : mainCanvasRef.current),
+    });
+    if (splitId && splitId !== activeId) {
+      const splitDocument = getRightSplitSaveDocumentRef.current?.();
+      if (splitDocument) {
+        liveTabs.set(splitId, {
+          document: splitDocument,
+          dirty: dirtyTabIdsRef.current.has(splitId),
+          editorJson: includeEditorJson ? (rightSplitEditor?.getJSON?.() || null) : undefined,
+          scrollState: readCanvasScrollState(rightCanvasRef.current),
+        });
+      }
+    }
+    const documentSnapshots = openTabsRef.current.map((tab) => {
+      const live = liveTabs.get(tab.id);
+      if (!live) return tab;
+      const nextEditorJson = includeEditorJson ? (live.editorJson || tab.editorJson) : tab.editorJson;
+      return {
+        ...tab,
+        ...live,
+        path: live.path ?? tab.path,
+        title: live.document?.title || "未命名信笺",
+        editorJson: nextEditorJson,
+        editorJsonBytes: includeEditorJson ? estimateSerializedBytes(nextEditorJson) : tab.editorJsonBytes,
+      };
+    });
+    return snapshotTabsWithRevisions(documentSnapshots, liveRevisionByTabRef.current);
+  }, [editor, rightSplitEditor]);
+
+  const activeSessionPath = currentPath
+    || openTabs.find((tab) => tab.id === activeTabId)?.recoveryPath
+    || "";
+  const sessionPathSignature = useMemo(
+    () => sessionTabSignature(activeSessionPath, openTabs),
+    [activeSessionPath, openTabs],
+  );
 
   useEffect(() => {
     if (!sessionRestoredRef.current) {
       return;
     }
-    const snapshot = buildOpenTabsSnapshot();
     persistSession({
-      activePath: currentPathRef.current || "",
-      tabs: summarizeSessionTabs(snapshot),
+      activePath: currentPathRef.current
+        || openTabsRef.current.find((tab) => tab.id === activeTabIdRef.current)?.recoveryPath
+        || "",
+      tabs: summarizeSessionTabs(openTabsRef.current.map((tab) => (
+        tab.id === activeTabIdRef.current ? { ...tab, path: currentPathRef.current } : tab
+      ))),
     });
-  }, [activeTabId, buildOpenTabsSnapshot, currentPath, documentState, dirty, openTabs, persistSession]);
+  }, [persistSession, sessionPathSignature]);
 
   useEffect(() => {
     let mounted = true;
@@ -10964,47 +10932,60 @@ export default function App() {
       });
     };
     updateElapsed();
-    const timer = window.setInterval(updateElapsed, 100);
+    const timer = window.setInterval(updateElapsed, 500);
     return () => window.clearInterval(timer);
   }, [aiMode, aiStatus, updateChatStateForKey, updateOptimizeStateForKey]);
 
   useEffect(() => {
-    const unsubscribeChunk = bridge.onAiChunk?.((payload) => {
-      const context = aiRequestContextsRef.current.get(payload?.requestId);
-      if (!context) {
-        return;
-      }
+    const materializeOutput = (context) => {
+      if (!context?.pendingChunks?.length) return context?.outputBuffer || "";
+      context.outputBuffer = `${context.outputBuffer || ""}${context.pendingChunks.join("")}`;
+      context.pendingChunks.length = 0;
+      return context.outputBuffer;
+    };
+    const clearPendingFlush = (context) => {
+      if (!context?.flushId) return;
+      window.clearTimeout(context.flushId);
+      context.flushId = 0;
+    };
+    const flushContext = (context) => {
+      context.flushId = 0;
+      materializeOutput(context);
       if (context.kind === "chat") {
         updateChatStateForKey(context.documentKey, (chat) => ({
           ...chat,
           messages: chat.messages.map((message) => (
             message.id === context.assistantId
-              ? { ...message, content: `${message.content || ""}${payload.delta || ""}`, status: "streaming" }
+              ? { ...message, content: context.outputBuffer || "", status: "streaming" }
               : message
           )),
         }));
         return;
       }
-      context.outputBuffer = `${context.outputBuffer || ""}${payload.delta || ""}`;
-      if (!context.flushId) {
-        context.flushId = window.requestAnimationFrame(() => {
-          context.flushId = 0;
-          updateOptimizeStateForKey(context.documentKey, (optimize) => ({
-            ...optimize,
-            output: context.outputBuffer || "",
-          }));
-        });
+      updateOptimizeStateForKey(context.documentKey, (optimize) => ({
+        ...optimize,
+        output: context.outputBuffer || "",
+      }));
+    };
+    const scheduleContextFlush = (context) => {
+      if (context.flushId) return;
+      context.flushId = window.setTimeout(() => flushContext(context), 50);
+    };
+    const unsubscribeChunk = bridge.onAiChunk?.((payload) => {
+      const context = aiRequestContextsRef.current.get(payload?.requestId);
+      if (!context) {
+        return;
       }
+      if (payload.delta) context.pendingChunks.push(payload.delta);
+      scheduleContextFlush(context);
     });
     const unsubscribeDone = bridge.onAiDone?.((payload) => {
       const context = aiRequestContextsRef.current.get(payload?.requestId);
       if (!context) {
         return;
       }
-      if (context.flushId) {
-        window.cancelAnimationFrame(context.flushId);
-        context.flushId = 0;
-      }
+      clearPendingFlush(context);
+      materializeOutput(context);
       if (context.kind === "chat") {
         const usage = payload.usage || {};
         const totalTokens = getAiUsageTotalTokens(usage);
@@ -11020,11 +11001,12 @@ export default function App() {
             message.id === context.assistantId
               ? {
                   ...message,
+                  content: context.outputBuffer || message.content || "",
                   status: "done",
                   elapsedSeconds,
                   usage: totalTokens > 0
                     ? totalTokens
-                    : (context.promptTokenEstimate || 0) + estimateTokenCount(message.content || ""),
+                    : (context.promptTokenEstimate || 0) + estimateTokenCount(context.outputBuffer || message.content || ""),
                   usageEstimated: totalTokens <= 0,
                   cachedTokens,
                 }
@@ -11075,10 +11057,8 @@ export default function App() {
       if (!context) {
         return;
       }
-      if (context.flushId) {
-        window.cancelAnimationFrame(context.flushId);
-        context.flushId = 0;
-      }
+      clearPendingFlush(context);
+      materializeOutput(context);
       const message = payload.message || "AI 生成失败";
       const elapsedSeconds = context.startedAt
         ? Math.max(0, (Date.now() - context.startedAt) / 1000)
@@ -11090,7 +11070,7 @@ export default function App() {
           error: payload.aborted ? "" : message,
           messages: chat.messages.map((item) => (
             item.id === context.assistantId
-              ? { ...item, content: item.content || message, elapsedSeconds, status: payload.aborted ? "stopped" : "error" }
+              ? { ...item, content: context.outputBuffer || item.content || message, elapsedSeconds, status: payload.aborted ? "stopped" : "error" }
               : item
           )),
         }));
@@ -11124,10 +11104,7 @@ export default function App() {
       unsubscribeDone?.();
       unsubscribeError?.();
       aiRequestContextsRef.current.forEach((context) => {
-        if (context.flushId) {
-          window.cancelAnimationFrame(context.flushId);
-          context.flushId = 0;
-        }
+        clearPendingFlush(context);
       });
     };
   }, [showStatus, updateChatStateForKey, updateOptimizeStateForKey]);
@@ -11261,6 +11238,14 @@ export default function App() {
       const runId = applyDocumentRunRef.current + 1;
       applyDocumentRunRef.current = runId;
       applyingRef.current = true;
+      documentStateRef.current = normalized;
+      currentPathRef.current = nextPath;
+      dirtyRef.current = nextDirty;
+      const activeId = activeTabIdRef.current;
+      liveEditorSourceByTabRef.current.set(activeId, "main");
+      liveUpdatedAtByTabRef.current.set(activeId, normalized.updatedAt);
+      if (nextDirty) dirtyTabIdsRef.current.add(activeId);
+      else dirtyTabIdsRef.current.delete(activeId);
       setDocumentState(normalized);
       setCurrentPath(nextPath);
       setDirty(nextDirty);
@@ -11271,16 +11256,17 @@ export default function App() {
         const setContentStartedAt = window.performance?.now?.() || Date.now();
         let contentSource = options.editorJson ? "json-cache" : "html";
         try {
-          editor?.commands.setContent(options.editorJson || normalized.html || "<p></p>");
+          replaceEditorContentWithoutHistory(editor, options.editorJson || normalized.html || "<p></p>");
         } catch (error) {
           contentSource = "html-fallback";
-          editor?.commands.setContent(normalized.html || "<p></p>");
+          replaceEditorContentWithoutHistory(editor, normalized.html || "<p></p>");
           bridge.debugLog?.("renderer:document:set-content-fallback", {
             path: nextPath,
             message: error?.message || String(error),
           });
         }
-        syncDocumentCommentDecorations(editor, (aiMode || printMode || imageExportMode) ? [] : normalized.comments);
+        syncDocumentCommentDecorations(editor, normalized.comments);
+        setDocumentCommentVisibility(editor, aiMode || printMode || imageExportMode);
         const setContentMs = (window.performance?.now?.() || Date.now()) - setContentStartedAt;
         bridge.debugLog?.("renderer:document:applied", {
           path: nextPath,
@@ -11305,27 +11291,35 @@ export default function App() {
   );
 
   const getSaveDocument = useCallback(() => {
-    const html = editor?.getHTML() || documentState.html || "<p></p>";
-    const title = documentState.title?.trim() || inferTitle(editor?.getText() || "");
+    const sourceDocument = documentStateRef.current;
+    const html = editor?.getHTML() || sourceDocument.html || "<p></p>";
+    const title = sourceDocument.title?.trim() || inferTitle(editor?.getText() || "");
     return normalizeDocument({
-      ...documentState,
+      ...sourceDocument,
       title,
       html,
-      updatedAt: new Date().toISOString(),
+      comments: getDocumentComments(editor, sourceDocument.comments),
+      updatedAt: liveUpdatedAtByTabRef.current.get(activeTabIdRef.current) || sourceDocument.updatedAt,
     }, letterTemplates);
-  }, [documentState, editor, letterTemplates]);
+  }, [editor, letterTemplates]);
 
   const getRightSplitSaveDocument = useCallback(() => {
-    if (!rightSplitDocument) {
+    const splitId = rightSplitTabIdRef.current;
+    const splitTab = openTabsRef.current.find((tab) => tab.id === splitId);
+    const sourceDocument = splitId === activeTabIdRef.current
+      ? documentStateRef.current
+      : (splitTab?.document || rightSplitDocument);
+    if (!sourceDocument) {
       return null;
     }
-    const html = rightSplitEditor?.getHTML() || rightSplitDocument.html || "<p></p>";
-    const title = rightSplitDocument.title?.trim() || inferTitle(rightSplitEditor?.getText() || "");
+    const html = rightSplitEditor?.getHTML() || sourceDocument.html || "<p></p>";
+    const title = sourceDocument.title?.trim() || inferTitle(rightSplitEditor?.getText() || "");
     return normalizeDocument({
-      ...rightSplitDocument,
+      ...sourceDocument,
       title,
       html,
-      updatedAt: new Date().toISOString(),
+      comments: getDocumentComments(rightSplitEditor, sourceDocument.comments),
+      updatedAt: liveUpdatedAtByTabRef.current.get(splitId) || sourceDocument.updatedAt,
     }, letterTemplates);
   }, [letterTemplates, rightSplitDocument, rightSplitEditor]);
 
@@ -11333,32 +11327,36 @@ export default function App() {
     getSaveDocumentRef.current = getSaveDocument;
   }, [getSaveDocument]);
 
+  useEffect(() => {
+    getRightSplitSaveDocumentRef.current = getRightSplitSaveDocument;
+  }, [getRightSplitSaveDocument]);
+
   const handleTitleChange = useCallback((title) => {
-    setDocumentState((previous) => ({
-      ...previous,
-      title,
-      updatedAt: new Date().toISOString(),
-    }));
-    setDirty(true);
-  }, []);
+    const tabId = activeTabIdRef.current;
+    const updatedAt = new Date().toISOString();
+    recordTabMutation(tabId, updatedAt);
+    const nextDocument = { ...documentStateRef.current, title: String(title || "").slice(0, DOCUMENT_TITLE_MAX_CHARS), updatedAt };
+    documentStateRef.current = nextDocument;
+    setDocumentState(nextDocument);
+  }, [recordTabMutation]);
 
   const handleAuthorChange = useCallback((author) => {
-    setDocumentState((previous) => ({
-      ...previous,
-      author: author.slice(0, 40),
-      updatedAt: new Date().toISOString(),
-    }));
-    setDirty(true);
-  }, []);
+    const tabId = activeTabIdRef.current;
+    const updatedAt = new Date().toISOString();
+    recordTabMutation(tabId, updatedAt);
+    const nextDocument = { ...documentStateRef.current, author: author.slice(0, 40), updatedAt };
+    documentStateRef.current = nextDocument;
+    setDocumentState(nextDocument);
+  }, [recordTabMutation]);
 
   const handleDateChange = useCallback((displayDate) => {
-    setDocumentState((previous) => ({
-      ...previous,
-      displayDate: displayDate.slice(0, 40),
-      updatedAt: new Date().toISOString(),
-    }));
-    setDirty(true);
-  }, []);
+    const tabId = activeTabIdRef.current;
+    const updatedAt = new Date().toISOString();
+    recordTabMutation(tabId, updatedAt);
+    const nextDocument = { ...documentStateRef.current, displayDate: displayDate.slice(0, 40), updatedAt };
+    documentStateRef.current = nextDocument;
+    setDocumentState(nextDocument);
+  }, [recordTabMutation]);
 
   const updateRightSplitDocument = useCallback((patch) => {
     const splitId = rightSplitTabIdRef.current;
@@ -11366,32 +11364,25 @@ export default function App() {
       return;
     }
     const updatedAt = new Date().toISOString();
-    setOpenTabs((tabs) => tabs.map((tab) => (
+    recordTabMutation(splitId, updatedAt);
+    const nextTabs = openTabsRef.current.map((tab) => (
       tab.id === splitId
-        ? {
-            ...tab,
-            title: patch.title ?? tab.title,
-            document: {
-              ...tab.document,
-              ...patch,
-              updatedAt,
-            },
-            dirty: true,
-          }
+        ? { ...tab, title: patch.title ?? tab.title, document: { ...tab.document, ...patch, updatedAt }, dirty: true }
         : tab
-    )));
+    ));
+    openTabsRef.current = nextTabs;
+    setOpenTabs(nextTabs);
     if (splitId === activeTabIdRef.current) {
-      setDocumentState((previous) => ({
-        ...previous,
-        ...patch,
-        updatedAt,
-      }));
-      setDirty(true);
+      setDocumentState((previous) => {
+        const nextDocument = { ...previous, ...patch, updatedAt };
+        documentStateRef.current = nextDocument;
+        return nextDocument;
+      });
     }
-  }, []);
+  }, [recordTabMutation]);
 
   const handleRightSplitTitleChange = useCallback((title) => {
-    updateRightSplitDocument({ title });
+    updateRightSplitDocument({ title: String(title || "").slice(0, DOCUMENT_TITLE_MAX_CHARS) });
   }, [updateRightSplitDocument]);
 
   const handleRightSplitAuthorChange = useCallback((author) => {
@@ -11403,66 +11394,64 @@ export default function App() {
   }, [updateRightSplitDocument]);
 
   const handleToggleRightSplit = useCallback((tabId) => {
-    setRightSplitTabId((previous) => {
-      if (previous === tabId) {
-        setActivePane("main");
-        showStatus("已取消右分屏", "success");
-        return "";
-      }
-      setActivePane("right");
-      showStatus(previous ? "已替换右分屏" : "已向右分屏", "success");
-      return tabId;
-    });
-  }, [showStatus]);
+    const previous = rightSplitTabIdRef.current;
+    if (tabId === activeTabIdRef.current && previous !== tabId) {
+      showStatus("当前正在编辑的信笺无需重复分屏", "warning");
+      return;
+    }
+    if (previous) {
+      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      openTabsRef.current = snapshot;
+      setOpenTabs(snapshot);
+    }
+    const nextSplitId = previous === tabId ? "" : tabId;
+    rightSplitTabIdRef.current = nextSplitId;
+    setRightSplitTabId(nextSplitId);
+    setActivePane(nextSplitId ? "right" : "main");
+    showStatus(nextSplitId ? (previous ? "已替换右分屏" : "已向右分屏") : "已取消右分屏", "success");
+  }, [showStatus, snapshotLiveTabs]);
 
   const addOrActivateDocumentTab = useCallback(
     (nextDocument, nextPath = "", nextDirty = false) => {
       const normalized = normalizeDocument(nextDocument, letterTemplates);
-      const existingTab = nextPath ? openTabs.find((tab) => tab.path === nextPath) : null;
-      const currentDocument = getSaveDocument();
-      const currentEditorJson = editor?.getJSON?.() || null;
-      const currentScrollState = readCanvasScrollState(mainCanvasRef.current);
+      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      const existingTab = nextPath ? snapshot.find((tab) => sameDocumentPath(tab.path, nextPath)) : null;
       if (existingTab) {
         if (existingTab.id !== activeTabId) {
-          setOpenTabs((tabs) => tabs.map((tab) => (
-            tab.id === activeTabId
-              ? { ...tab, document: currentDocument, editorJson: currentEditorJson, title: currentDocument.title, path: currentPath, dirty, scrollState: currentScrollState }
-              : tab
-          )));
+          openTabsRef.current = snapshot;
+          setOpenTabs(snapshot);
+          if (rightSplitTabIdRef.current === existingTab.id) {
+            rightSplitTabIdRef.current = "";
+            setRightSplitTabId("");
+          }
+          activeTabIdRef.current = existingTab.id;
           setActiveTabId(existingTab.id);
           setActivePane("main");
           applyDocument(existingTab.document, existingTab.path, existingTab.dirty, { editorJson: existingTab.editorJson, scrollState: existingTab.scrollState });
         }
         return existingTab.id;
       }
+      const onlyTab = snapshot.length === 1 ? snapshot[0] : null;
+      const canReplaceBlank = nextPath
+        && onlyTab
+        && !onlyTab.path
+        && !onlyTab.dirty
+        && !currentPath
+        && !dirty;
+      if (tabCapacityFull && !canReplaceBlank) {
+        return "";
+      }
       const tab = createDocumentTab(normalized, nextPath, nextDirty);
-      setOpenTabs((tabs) => {
-        const onlyTab = tabs.length === 1 ? tabs[0] : null;
-        const canReplaceBlank = nextPath
-          && onlyTab
-          && !onlyTab.path
-          && !onlyTab.dirty
-          && !currentPath
-          && !dirty;
-        if (canReplaceBlank) {
-          return [tab];
-        }
-        const retainedTabs = tabCapacityFull && tabs.length ? tabs.slice(1) : tabs;
-        return [
-          ...retainedTabs.map((existing) => (
-            existing.id === activeTabId
-              ? { ...existing, document: currentDocument, editorJson: currentEditorJson, title: currentDocument.title, path: currentPath, dirty, scrollState: currentScrollState }
-              : existing
-          )),
-          tab,
-        ];
-      });
+      const nextTabs = canReplaceBlank ? [tab] : [...snapshot, tab];
+      openTabsRef.current = nextTabs;
+      setOpenTabs(nextTabs);
+      activeTabIdRef.current = tab.id;
       setActiveTabId(tab.id);
       setActivePane("main");
       applyDocument(normalized, nextPath, nextDirty, { scrollState: tab.scrollState });
       return tab.id;
     },
-    [activeTabId, applyDocument, currentPath, dirty, editor, getSaveDocument, letterTemplates, openTabs, tabCapacityFull],
+    [activeTabId, applyDocument, currentPath, dirty, letterTemplates, snapshotLiveTabs, tabCapacityFull],
   );
 
   useEffect(() => {
@@ -11475,23 +11464,22 @@ export default function App() {
     const isActiveRestore = () => !canceled && restoreRunRef.current === runId;
     const restoreSession = async () => {
       const { folderPath: savedFolderPath, activePath } = sessionRef.current;
-      const sessionTabPaths = summarizeSessionTabs(sessionRef.current.tabs || []).map((tab) => tab.path);
-      const restorePaths = [...sessionTabPaths];
-      if (activePath && !restorePaths.includes(activePath)) {
-        restorePaths.push(activePath);
+      const restoreEntries = [...summarizeSessionTabs(sessionRef.current.tabs || [])];
+      if (activePath && !restoreEntries.some((entry) => sameDocumentPath(entry.path, activePath))) {
+        restoreEntries.push({ path: activePath, temporary: false });
       }
       let folderPath = savedFolderPath;
-      let desktopPath = "";
+      let defaultFolderPath = "";
       bridge.debugLog?.("renderer:restore:start", {
         savedFolderPath,
         activePath,
-        tabs: restorePaths.length,
+        tabs: restoreEntries.length,
       });
       if (!folderPath) {
         try {
           const paths = await bridge.getPaths?.();
-          desktopPath = paths?.desktop || "";
-          folderPath = desktopPath;
+          defaultFolderPath = paths?.documents || "";
+          folderPath = defaultFolderPath;
         } catch {
           folderPath = "";
         }
@@ -11499,7 +11487,7 @@ export default function App() {
       if (folderPath) {
         bridge.debugLog?.("renderer:restore:folder-selected", {
           folderPath,
-          source: savedFolderPath ? "session" : "desktop-default",
+          source: savedFolderPath ? "session" : "documents-default",
         });
         if (isActiveRestore()) {
           setFolderState((previous) => ({
@@ -11535,8 +11523,8 @@ export default function App() {
           });
           if (isActiveRestore()) {
             try {
-              const paths = desktopPath ? { desktop: desktopPath } : await bridge.getPaths?.();
-              const fallbackPath = paths?.desktop || "";
+              const paths = defaultFolderPath ? { documents: defaultFolderPath } : await bridge.getPaths?.();
+              const fallbackPath = paths?.documents || "";
               const fallback = fallbackPath ? await listFolderWithTimeout(fallbackPath) : null;
               if (fallbackPath && !fallback?.canceled) {
                 setFolderState({
@@ -11574,9 +11562,10 @@ export default function App() {
           }
         }
       }
-      if (restorePaths.length) {
+      if (restoreEntries.length) {
         const restoredTabs = [];
-        for (const restorePath of restorePaths) {
+        for (const restoreEntry of restoreEntries) {
+          const restorePath = restoreEntry.path;
           try {
             const result = await bridge.openDocumentPath(restorePath);
             if (!isActiveRestore()) {
@@ -11584,19 +11573,26 @@ export default function App() {
             }
             if (!result?.canceled && result?.document) {
               const normalized = normalizeDocument(result.document, letterTemplates);
-              restoredTabs.push(createDocumentTab(normalized, result.path, false));
+              restoredTabs.push(restoreEntry.temporary
+                ? createDocumentTab(normalized, "", true, {
+                    recoveryPath: result.path,
+                    recoveryId: result.recoveryId,
+                    recoveredTemporary: true,
+                  })
+                : createDocumentTab(normalized, result.path, false));
             }
           } catch {
             // Missing or unreadable session files are skipped.
           }
         }
         if (isActiveRestore() && restoredTabs.length) {
-          const activeTab = restoredTabs.find((tab) => tab.path === activePath) || restoredTabs[0];
+          const activeTab = restoredTabs.find((tab) => sameDocumentPath(tab.path || tab.recoveryPath, activePath)) || restoredTabs[0];
           setOpenTabs(restoredTabs);
+          activeTabIdRef.current = activeTab.id;
           setActiveTabId(activeTab.id);
-          applyDocument(activeTab.document, activeTab.path, false);
+          applyDocument(activeTab.document, activeTab.path, activeTab.dirty);
           persistSession({
-            activePath: activeTab.path,
+            activePath: activeTab.path || activeTab.recoveryPath,
             tabs: summarizeSessionTabs(restoredTabs),
           });
         } else if (isActiveRestore()) {
@@ -11621,23 +11617,23 @@ export default function App() {
         setActivePane("main");
         return;
       }
-      const target = openTabs.find((tab) => tab.id === tabId);
+      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      const target = snapshot.find((tab) => tab.id === tabId);
       if (!target) {
         return;
       }
-      const currentDocument = getSaveDocument();
-      const currentEditorJson = editor?.getJSON?.() || null;
-      const currentScrollState = readCanvasScrollState(mainCanvasRef.current);
-      setOpenTabs((tabs) => tabs.map((tab) => (
-        tab.id === activeTabId
-          ? { ...tab, document: currentDocument, editorJson: currentEditorJson, title: currentDocument.title, path: currentPath, dirty, scrollState: currentScrollState }
-          : tab
-      )));
+      openTabsRef.current = snapshot;
+      setOpenTabs(snapshot);
+      if (rightSplitTabIdRef.current === target.id) {
+        rightSplitTabIdRef.current = "";
+        setRightSplitTabId("");
+      }
+      activeTabIdRef.current = target.id;
       setActiveTabId(target.id);
       setActivePane("main");
       applyDocument(target.document, target.path, target.dirty, { editorJson: target.editorJson, scrollState: target.scrollState });
     },
-    [activeTabId, applyDocument, currentPath, dirty, editor, getSaveDocument, openTabs],
+    [activeTabId, applyDocument, snapshotLiveTabs],
   );
 
   const handleOpenTabTemplates = useCallback((tabId) => {
@@ -11651,14 +11647,20 @@ export default function App() {
 
   const handleCloseTab = useCallback(
     async (tabId) => {
-      const closingIndex = openTabs.findIndex((tab) => tab.id === tabId);
-      const closingTab = openTabs[closingIndex];
+      if (tabClosePendingIdsRef.current.has(tabId)) return;
+      tabClosePendingIdsRef.current.add(tabId);
+      try {
+      await waitForTabSave(tabId);
+      let snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      let closingIndex = snapshot.findIndex((tab) => tab.id === tabId);
+      let closingTab = snapshot[closingIndex];
       if (!closingTab) {
         return;
       }
       const isActive = tabId === activeTabId;
-      const isDirty = isActive ? dirty : closingTab.dirty;
+      const isDirty = closingTab.dirty;
       if (isDirty) {
+        const promptedRevision = liveRevisionByTabRef.current.get(tabId) || 0;
         const decision = await showConfirmDialog({
           tone: "warning",
           icon: FileText,
@@ -11675,28 +11677,63 @@ export default function App() {
         if (decision !== "close") {
           return;
         }
+        if ((liveRevisionByTabRef.current.get(tabId) || 0) !== promptedRevision) {
+          showStatus("关闭确认期间信笺又有修改，请再次确认", "warning");
+          return;
+        }
+        snapshot = snapshotLiveTabs({ includeEditorJson: true });
+        closingIndex = snapshot.findIndex((tab) => tab.id === tabId);
+        closingTab = snapshot[closingIndex];
+        if (!closingTab) return;
       }
-      const remaining = openTabs.filter((tab) => tab.id !== tabId);
+      if (closingTab.recoveryPath) {
+        await bridge.deleteTempDocument?.(recoveryTabId(closingTab)).catch?.(() => {});
+      }
+      const remaining = snapshot.filter((tab) => tab.id !== tabId);
       if (!remaining.length) {
         const blank = createBlankDocument(letterTemplates, newDocumentTemplateId);
         const nextTab = createDocumentTab(blank);
+        rightSplitTabIdRef.current = "";
+        setRightSplitTabId("");
+        setActivePane("main");
+        openTabsRef.current = [nextTab];
         setOpenTabs([nextTab]);
+        activeTabIdRef.current = nextTab.id;
         setActiveTabId(nextTab.id);
         applyDocument(blank, "", false, { scrollState: nextTab.scrollState });
         return;
       }
+      if (rightSplitTabIdRef.current === tabId) {
+        rightSplitTabIdRef.current = "";
+        setRightSplitTabId("");
+        setActivePane("main");
+      }
+      openTabsRef.current = remaining;
       setOpenTabs(remaining);
       if (isActive) {
         const nextTab = remaining[Math.max(0, closingIndex - 1)] || remaining[0];
+        if (rightSplitTabIdRef.current === nextTab.id) {
+          rightSplitTabIdRef.current = "";
+          setRightSplitTabId("");
+        }
+        setActivePane("main");
+        activeTabIdRef.current = nextTab.id;
         setActiveTabId(nextTab.id);
         applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson, scrollState: nextTab.scrollState });
       }
+      } finally {
+        tabClosePendingIdsRef.current.delete(tabId);
+      }
     },
-    [activeTabId, applyDocument, dirty, letterTemplates, newDocumentTemplateId, openTabs, showConfirmDialog],
+    [activeTabId, applyDocument, letterTemplates, newDocumentTemplateId, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave],
   );
 
   const handleNew = useCallback(() => {
-    addOrActivateDocumentTab(createBlankDocument(letterTemplates, newDocumentTemplateId), "", false);
+    const tabId = addOrActivateDocumentTab(createBlankDocument(letterTemplates, newDocumentTemplateId), "", false);
+    if (!tabId) {
+      showStatus("标签栏已满，请先关闭一个信笺", "warning");
+      return;
+    }
     showStatus("已新建空白信笺", "success");
   }, [addOrActivateDocumentTab, letterTemplates, newDocumentTemplateId, showStatus]);
 
@@ -11705,7 +11742,11 @@ export default function App() {
     if (result?.canceled) {
       return;
     }
-    addOrActivateDocumentTab(result.document, result.path, false);
+    const tabId = addOrActivateDocumentTab(result.document, result.path, false);
+    if (!tabId) {
+      showStatus("标签栏已满，请先关闭一个信笺再打开文档", "warning");
+      return;
+    }
     showStatus("文档已打开", "success");
   }, [addOrActivateDocumentTab, showStatus]);
 
@@ -11800,7 +11841,7 @@ export default function App() {
 
   const handleOpenFolderFile = useCallback(
     async (path) => {
-      const existingTab = openTabs.find((tab) => tab.path === path);
+      const existingTab = openTabs.find((tab) => sameDocumentPath(tab.path, path));
       if (existingTab) {
         if (existingTab.id !== activeTabId) {
           handleSelectTab(existingTab.id);
@@ -11820,7 +11861,11 @@ export default function App() {
         showStatus("这个文件不是笺间文档", "warning");
         return;
       }
-      addOrActivateDocumentTab(result.document, result.path, false);
+      const tabId = addOrActivateDocumentTab(result.document, result.path, false);
+      if (!tabId) {
+        showStatus("标签栏已满，请先关闭一个信笺再打开文档", "warning");
+        return;
+      }
       showStatus("文档已打开", "success");
     },
     [activeTabId, addOrActivateDocumentTab, handleSelectTab, openTabs, showStatus],
@@ -11872,7 +11917,11 @@ export default function App() {
       return;
     }
     await refreshTreeAfterEntryChange(folderPath);
-    addOrActivateDocumentTab(result.document || { ...blank, title: title.trim() }, result.path, false);
+    const tabId = addOrActivateDocumentTab(result.document || { ...blank, title: title.trim() }, result.path, false);
+    if (!tabId) {
+      showStatus("信笺已创建；标签栏已满，请关闭一个标签后从文件夹打开", "warning");
+      return;
+    }
     showStatus("信笺已新建", "success");
   }, [addOrActivateDocumentTab, folderState.path, letterTemplates, newDocumentTemplateId, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
 
@@ -11897,26 +11946,56 @@ export default function App() {
       return;
     }
 
+    const renameUpdatedAt = new Date().toISOString();
     if (entry.type === "file") {
-      setOpenTabs((tabs) => tabs.map((tab) => (
-        tab.path === entry.path
-          ? { ...tab, path: result.path, title: nextName.trim() }
-          : tab
-      )));
-      if (currentPath === entry.path) {
-        setCurrentPath(result.path);
-        setDocumentState((previous) => ({
-          ...previous,
+      openTabsRef.current
+        .filter((tab) => sameDocumentPath(tab.path, entry.path))
+        .forEach((tab) => recordTabMutation(tab.id, renameUpdatedAt));
+    }
+    const nextTabs = openTabsRef.current.map((tab) => {
+      if (!pathIsSameOrInside(tab.path, entry.path)) return tab;
+      return {
+        ...tab,
+        path: replacePathPrefix(tab.path, entry.path, result.path),
+        ...(entry.type === "file" ? {
           title: nextName.trim(),
-          updatedAt: new Date().toISOString(),
-        }));
-        persistSession({ activePath: result.path });
+          document: { ...tab.document, title: nextName.trim(), updatedAt: renameUpdatedAt },
+          dirty: true,
+        } : {}),
+      };
+    });
+    openTabsRef.current = nextTabs;
+    setOpenTabs(nextTabs);
+    if (pathIsSameOrInside(currentPathRef.current, entry.path)) {
+      const nextCurrentPath = replacePathPrefix(currentPathRef.current, entry.path, result.path);
+      currentPathRef.current = nextCurrentPath;
+      setCurrentPath(nextCurrentPath);
+      if (entry.type === "file") {
+        const nextDocument = {
+          ...documentStateRef.current,
+          title: nextName.trim(),
+          updatedAt: renameUpdatedAt,
+        };
+        documentStateRef.current = nextDocument;
+        setDocumentState(nextDocument);
       }
+      persistSession({ activePath: nextCurrentPath });
+    }
+    if (entry.type === "folder") {
+      setFolderState((previous) => pathIsSameOrInside(previous.path, entry.path)
+        ? { ...previous, path: replacePathPrefix(previous.path, entry.path, result.path) }
+        : previous);
+      setExpandedFolders((previous) => Object.fromEntries(Object.entries(previous).map(([folderPath, value]) => [
+        pathIsSameOrInside(folderPath, entry.path)
+          ? replacePathPrefix(folderPath, entry.path, result.path)
+          : folderPath,
+        value,
+      ])));
     }
 
     await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
     showStatus("已重命名", "success");
-  }, [currentPath, folderState.path, persistSession, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
+  }, [folderState.path, persistSession, recordTabMutation, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
 
   const handleBackupTreeDocument = useCallback(async (entry) => {
     if (!entry?.path || entry.type !== "file") {
@@ -11935,62 +12014,81 @@ export default function App() {
     if (!entry?.path) {
       return;
     }
-    const label = entry.type === "file" ? (entry.displayName || entry.name) : entry.name;
-    const scope = entry.type === "folder" ? "这个文件夹及其内部内容" : "这个信笺";
-    const decision = await showConfirmDialog({
-      tone: "warning",
-      icon: Trash2,
-      eyebrow: entry.type === "folder" ? "删除文件夹" : "删除信笺",
-      title: entry.type === "folder" ? "删除这个文件夹？" : "删除这个信笺？",
-      message: `确定删除${scope}“${label}”吗？`,
-      detail: "删除后会进入回收站。",
-      cancelValue: "cancel",
-      actions: [
-        { value: "delete", label: "删除", variant: "danger", icon: Trash2 },
-        { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
-      ],
-    });
-    if (decision !== "delete") {
-      return;
-    }
-    const result = await bridge.deleteEntry?.(entry.path);
-    if (!result?.ok) {
-      showStatus(result?.message || "删除失败", "warning");
-      return;
-    }
+    const initiallyAffected = openTabsRef.current.filter((tab) => pathIsSameOrInside(tab.path, entry.path));
+    const affectedIds = initiallyAffected.map((tab) => tab.id);
+    affectedIds.forEach((tabId) => tabClosePendingIdsRef.current.add(tabId));
+    try {
+      await Promise.all(affectedIds.map((tabId) => waitForTabSave(tabId)));
+      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      const affectedTabs = snapshot.filter((tab) => pathIsSameOrInside(tab.path, entry.path));
+      const dirtyAffectedTabs = affectedTabs.filter((tab) => tab.dirty);
+      const promptedRevisions = new Map(
+        dirtyAffectedTabs.map((tab) => [tab.id, liveRevisionByTabRef.current.get(tab.id) || 0]),
+      );
+      const label = entry.type === "file" ? (entry.displayName || entry.name) : entry.name;
+      const scope = entry.type === "folder" ? "这个文件夹及其内部内容" : "这个信笺";
+      const decision = await showConfirmDialog({
+        tone: "warning",
+        icon: Trash2,
+        eyebrow: entry.type === "folder" ? "删除文件夹" : "删除信笺",
+        title: dirtyAffectedTabs.length
+          ? `删除并丢弃 ${dirtyAffectedTabs.length} 篇未保存修改？`
+          : (entry.type === "folder" ? "删除这个文件夹？" : "删除这个信笺？"),
+        message: `确定删除${scope}“${label}”吗？`,
+        detail: dirtyAffectedTabs.length
+          ? "继续会丢失这些标签中的内存修改；回收站只能恢复最后一次已保存的版本。"
+          : "删除后会进入回收站。",
+        cancelValue: "cancel",
+        actions: [
+          {
+            value: "delete",
+            label: dirtyAffectedTabs.length ? "丢弃修改并删除" : "删除",
+            variant: "danger",
+            icon: Trash2,
+          },
+          { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
+        ],
+      });
+      if (decision !== "delete") return;
+      if ([...promptedRevisions].some(([tabId, revision]) => (liveRevisionByTabRef.current.get(tabId) || 0) !== revision)) {
+        showStatus("删除确认期间信笺又有修改，请再次确认", "warning");
+        return;
+      }
+      const result = await bridge.deleteEntry?.(entry.path);
+      if (!result?.ok) {
+        showStatus(result?.message || "删除失败", "warning");
+        return;
+      }
 
-    if (entry.type === "file") {
-      const remainingTabs = openTabs.filter((tab) => tab.path !== entry.path);
-      if (currentPath === entry.path) {
-        if (remainingTabs.length) {
+      const removedTabs = snapshot.filter((tab) => pathIsSameOrInside(tab.path, entry.path));
+      if (removedTabs.length) {
+        let remainingTabs = snapshot.filter((tab) => !pathIsSameOrInside(tab.path, entry.path));
+        if (rightSplitTabIdRef.current && removedTabs.some((tab) => tab.id === rightSplitTabIdRef.current)) {
+          rightSplitTabIdRef.current = "";
+          setRightSplitTabId("");
+          setActivePane("main");
+        }
+        if (!remainingTabs.length) {
+          const blank = createBlankDocument(letterTemplates, newDocumentTemplateId);
+          remainingTabs = [createDocumentTab(blank)];
+        }
+        openTabsRef.current = remainingTabs;
+        setOpenTabs(remainingTabs);
+        if (removedTabs.some((tab) => tab.id === activeTabIdRef.current)) {
           const nextTab = remainingTabs[0];
-          setOpenTabs(remainingTabs);
+          activeTabIdRef.current = nextTab.id;
           setActiveTabId(nextTab.id);
           applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson, scrollState: nextTab.scrollState });
-          persistSession({ activePath: nextTab.path || "" });
-        } else {
-          const blank = createBlankDocument(letterTemplates, newDocumentTemplateId);
-          const tab = createDocumentTab(blank);
-          setOpenTabs([tab]);
-          setActiveTabId(tab.id);
-          applyDocument(blank, "", false, { scrollState: tab.scrollState });
-          persistSession({ activePath: "" });
-        }
-      } else {
-        setOpenTabs(remainingTabs);
-        if (openTabs.some((tab) => tab.path === entry.path && tab.id === activeTabId)) {
-          const nextTab = remainingTabs[0];
-          if (nextTab) {
-            setActiveTabId(nextTab.id);
-            applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson, scrollState: nextTab.scrollState });
-          }
+          persistSession({ activePath: nextTab.path || nextTab.recoveryPath || "" });
         }
       }
-    }
 
-    await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
-    showStatus("已删除", "success");
-  }, [activeTabId, applyDocument, currentPath, folderState.path, letterTemplates, newDocumentTemplateId, openTabs, persistSession, refreshTreeAfterEntryChange, showConfirmDialog, showStatus]);
+      await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
+      showStatus("已删除", "success");
+    } finally {
+      affectedIds.forEach((tabId) => tabClosePendingIdsRef.current.delete(tabId));
+    }
+  }, [applyDocument, folderState.path, letterTemplates, newDocumentTemplateId, persistSession, refreshTreeAfterEntryChange, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave]);
 
   const handleMoveTreeEntry = useCallback(async (entry, targetFolderPath) => {
     if (!entry?.path || !targetFolderPath) {
@@ -12002,33 +12100,35 @@ export default function App() {
       return;
     }
 
-    if (entry.type === "file") {
-      setOpenTabs((tabs) => tabs.map((tab) => (
-        tab.path === result.oldPath
-          ? { ...tab, path: result.path }
-          : tab
-      )));
-      if (currentPath === result.oldPath) {
-        setCurrentPath(result.path);
-        persistSession({ activePath: result.path });
-      }
-    } else {
-      setOpenTabs((tabs) => tabs.map((tab) => (
-        pathIsSameOrInside(tab.path, result.oldPath)
-          ? { ...tab, path: replacePathPrefix(tab.path, result.oldPath, result.path) }
-          : tab
-      )));
-      if (pathIsSameOrInside(currentPath, result.oldPath)) {
-        const nextPath = replacePathPrefix(currentPath, result.oldPath, result.path);
-        setCurrentPath(nextPath);
-        persistSession({ activePath: nextPath });
-      }
+    const nextTabs = openTabsRef.current.map((tab) => (
+      pathIsSameOrInside(tab.path, result.oldPath)
+        ? { ...tab, path: replacePathPrefix(tab.path, result.oldPath, result.path) }
+        : tab
+    ));
+    openTabsRef.current = nextTabs;
+    setOpenTabs(nextTabs);
+    if (pathIsSameOrInside(currentPathRef.current, result.oldPath)) {
+      const nextPath = replacePathPrefix(currentPathRef.current, result.oldPath, result.path);
+      currentPathRef.current = nextPath;
+      setCurrentPath(nextPath);
+      persistSession({ activePath: nextPath });
+    }
+    if (entry.type === "folder") {
+      setFolderState((previous) => pathIsSameOrInside(previous.path, result.oldPath)
+        ? { ...previous, path: replacePathPrefix(previous.path, result.oldPath, result.path) }
+        : previous);
+      setExpandedFolders((previous) => Object.fromEntries(Object.entries(previous).map(([folderPath, value]) => [
+        pathIsSameOrInside(folderPath, result.oldPath)
+          ? replacePathPrefix(folderPath, result.oldPath, result.path)
+          : folderPath,
+        value,
+      ])));
     }
 
     await refreshTreeAfterEntryChange(result.sourceParent || folderState.path);
     await refreshTreeAfterEntryChange(result.targetFolderPath || targetFolderPath);
     showStatus("已移动", "success");
-  }, [currentPath, folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus]);
+  }, [folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus]);
 
   const handleToggleFolder = useCallback(async (path) => {
     if (!path) {
@@ -12082,60 +12182,84 @@ export default function App() {
 
   const handleSave = useCallback(
     async (saveAs) => {
-      if (splitPaneActive && rightSplitTab) {
-        const nextDocument = getRightSplitSaveDocument();
-        if (!nextDocument) {
-          return;
-        }
-        const previousDocumentKey = documentRuntimeKey(rightSplitTab.path, rightSplitTab.id);
-        const result = await bridge.saveDocument(nextDocument, rightSplitTab.path, saveAs);
-        if (result?.canceled) {
-          return;
-        }
-        migrateAiRequestDocumentKey(previousDocumentKey, documentRuntimeKey(result.path, rightSplitTab.id));
-        setOpenTabs((tabs) => tabs.map((tab) => (
-          tab.id === rightSplitTab.id
+      try {
+        const targetTab = splitPaneActive && rightSplitTab
+          ? rightSplitTab
+          : openTabsRef.current.find((tab) => tab.id === activeTabIdRef.current);
+        if (!targetTab) return;
+        if (sessionClosePendingRef.current || tabClosePendingIdsRef.current.has(targetTab.id)) return;
+        const recoveryIdToDelete = targetTab.recoveryPath ? recoveryTabId(targetTab) : "";
+        const nextDocument = targetTab.id === rightSplitTab?.id && splitPaneActive
+          ? getRightSplitSaveDocument()
+          : getSaveDocument();
+        if (!nextDocument) return;
+        const revision = liveRevisionByTabRef.current.get(targetTab.id) || 0;
+        const previousDocumentKey = documentRuntimeKey(targetTab.path, targetTab.id);
+        const reservedPaths = openTabsRef.current
+          .filter((tab) => tab.id !== targetTab.id && tab.path)
+          .map((tab) => tab.path);
+        const result = await queueTabSave(targetTab.id, () => (
+          bridge.saveDocument(nextDocument, targetTab.path, saveAs, reservedPaths)
+        ));
+        if (result?.canceled) return;
+        if (!result?.path) throw new Error("保存完成后没有返回文件路径");
+        const unchanged = (liveRevisionByTabRef.current.get(targetTab.id) || 0) === revision;
+        const savedDocument = normalizeDocument(result.document || nextDocument, letterTemplates);
+        migrateAiRequestDocumentKey(previousDocumentKey, documentRuntimeKey(result.path, targetTab.id));
+        if (unchanged) dirtyTabIdsRef.current.delete(targetTab.id);
+        const nextTabs = openTabsRef.current.map((tab) => (
+          tab.id === targetTab.id
             ? {
                 ...tab,
                 path: result.path,
-                title: nextDocument.title,
-                document: nextDocument,
-                editorJson: rightSplitEditor?.getJSON?.() || tab.editorJson,
-                dirty: false,
+                recoveryPath: "",
+                recoveryId: "",
+                recoveredTemporary: false,
+                title: savedDocument.title,
+                document: unchanged ? savedDocument : tab.document,
+                dirty: !unchanged,
               }
             : tab
-        )));
-        if (rightSplitTab.id === activeTabIdRef.current) {
-          setDocumentState(nextDocument);
+        ));
+        openTabsRef.current = nextTabs;
+        setOpenTabs(nextTabs);
+        if (targetTab.id === activeTabIdRef.current) {
+          currentPathRef.current = result.path;
           setCurrentPath(result.path);
-          setDirty(false);
-          persistSession({ activePath: result.path });
+          dirtyRef.current = !unchanged;
+          setDirty(!unchanged);
+          if (unchanged) {
+            documentStateRef.current = savedDocument;
+            setDocumentState(savedDocument);
+          }
+          persistSession({ activePath: result.path, tabs: summarizeSessionTabs(nextTabs) });
         }
         refreshFolder();
-        showStatus("右分屏信笺已保存", "success");
-        return;
+        const recoveryCleaned = await deleteRecoveryBestEffort(bridge.deleteTempDocument, recoveryIdToDelete);
+        if (!recoveryCleaned) {
+          showStatus("文档已保存，但旧恢复文件清理失败", "warning");
+        } else {
+          showStatus(targetTab.id === rightSplitTab?.id && splitPaneActive ? "右分屏信笺已保存" : "文档已保存", "success");
+        }
+      } catch (error) {
+        showStatus(error?.message || "文档保存失败", "warning");
       }
-      const nextDocument = getSaveDocument();
-      const previousDocumentKey = activeDocumentKeyRef.current;
-      const result = await bridge.saveDocument(nextDocument, currentPath, saveAs);
-      if (result?.canceled) {
-        return;
-      }
-      migrateAiRequestDocumentKey(previousDocumentKey, documentRuntimeKey(result.path, activeTabIdRef.current));
-      setDocumentState(nextDocument);
-      setCurrentPath(result.path);
-      setDirty(false);
-      persistSession({ activePath: result.path });
-      refreshFolder();
-      showStatus("文档已保存", "success");
     },
-    [currentPath, getRightSplitSaveDocument, getSaveDocument, migrateAiRequestDocumentKey, persistSession, refreshFolder, rightSplitEditor, rightSplitTab, showStatus, splitPaneActive],
+    [getRightSplitSaveDocument, getSaveDocument, letterTemplates, migrateAiRequestDocumentKey, persistSession, queueTabSave, refreshFolder, rightSplitTab, showStatus, splitPaneActive],
   );
 
   useEffect(() => {
     const unsubscribe = bridge.onCloseRequest?.(async (payload = {}) => {
-      const snapshot = buildOpenTabsSnapshot();
+      if (sessionClosePendingRef.current) return;
+      sessionClosePendingRef.current = true;
+      let closeCommitted = false;
+      try {
+      await Promise.all([...saveQueueByTabRef.current.values()]);
+      const snapshot = snapshotLiveTabs();
       const dirtyTabs = snapshot.filter((tab) => tab.dirty);
+      const promptedRevisions = new Map(
+        dirtyTabs.map((tab) => [tab.id, tab.snapshotRevision]),
+      );
       let finalTabs = snapshot;
 
       if (dirtyTabs.length) {
@@ -12158,26 +12282,74 @@ export default function App() {
           return;
         }
 
+        if (decision === "discard") {
+          const latestSnapshot = snapshotLiveTabs();
+          const changedWhileConfirming = latestSnapshot.some((tab) => (
+            tab.dirty
+            && (
+              !promptedRevisions.has(tab.id)
+              || tab.snapshotRevision !== promptedRevisions.get(tab.id)
+            )
+          ));
+          if (changedWhileConfirming) {
+            showStatus("关闭确认期间文档又有修改，请再次确认", "warning");
+            await bridge.closeCanceled?.(payload);
+            return;
+          }
+          const latestDirtyTabs = latestSnapshot.filter((tab) => tab.dirty);
+          await Promise.allSettled(
+            latestDirtyTabs.filter((tab) => !tab.path && tab.recoveryPath)
+              .map((tab) => bridge.deleteTempDocument?.(recoveryTabId(tab))),
+          );
+          const discardedIds = new Set(latestDirtyTabs.filter((tab) => !tab.path).map((tab) => tab.id));
+          finalTabs = latestSnapshot.filter((tab) => !discardedIds.has(tab.id));
+        }
+
         if (decision === "save") {
+          finalTabs = snapshotLiveTabs();
           const savedTabs = [];
           try {
             for (const tab of finalTabs) {
+              if (!snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) {
+                showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
+                await bridge.closeCanceled?.(payload);
+                return;
+              }
               if (!tab.dirty) {
                 savedTabs.push(tab);
                 continue;
               }
-              const result = tab.path
-                ? await bridge.saveDocument(tab.document, tab.path, false)
-                : await bridge.saveTempDocument?.(tab.document, tab.id);
+              const result = await queueTabSave(tab.id, () => (tab.path
+                ? bridge.saveDocument(tab.document, tab.path, false)
+                : bridge.saveTempDocument?.(tab.document, recoveryTabId(tab))));
               if (result?.canceled || !result?.path) {
+                await bridge.closeCanceled?.(payload);
+                return;
+              }
+              if (!snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) {
+                showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
                 await bridge.closeCanceled?.(payload);
                 return;
               }
               savedTabs.push({
                 ...tab,
-                path: result.path,
-                dirty: false,
+                path: tab.path ? result.path : "",
+                recoveryPath: tab.path ? "" : result.path,
+                recoveryId: tab.path ? "" : (result.recoveryId || recoveryTabId(tab)),
+                recoveredTemporary: !tab.path,
+                document: result.document || tab.document,
+                dirty: !tab.path,
               });
+            }
+            const savedSnapshotById = new Map(savedTabs.map((tab) => [tab.id, tab]));
+            const changedAfterSaving = openTabsRef.current.some((tab) => {
+              const savedSnapshot = savedSnapshotById.get(tab.id);
+              return !savedSnapshot || !snapshotRevisionIsCurrent(savedSnapshot, liveRevisionByTabRef.current);
+            });
+            if (changedAfterSaving) {
+              showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
+              await bridge.closeCanceled?.(payload);
+              return;
             }
             finalTabs = savedTabs;
           } catch (error) {
@@ -12190,84 +12362,111 @@ export default function App() {
 
       const activeTab = finalTabs.find((tab) => tab.id === activeTabIdRef.current) || finalTabs[0];
       persistSession({
-        activePath: activeTab?.path || "",
+        activePath: activeTab?.path || activeTab?.recoveryPath || "",
         tabs: summarizeSessionTabs(finalTabs),
       });
       await bridge.closeReady?.(payload);
+      closeCommitted = true;
+      } finally {
+        if (!closeCommitted) sessionClosePendingRef.current = false;
+      }
     });
     return () => unsubscribe?.();
-  }, [buildOpenTabsSnapshot, persistSession, showConfirmDialog, showStatus]);
+  }, [persistSession, queueTabSave, showConfirmDialog, showStatus, snapshotLiveTabs]);
 
   useEffect(() => {
     const timer = window.setInterval(async () => {
-      const getCurrentSaveDocument = getSaveDocumentRef.current;
-      if (!getCurrentSaveDocument) {
-        return;
-      }
-      const activeId = activeTabIdRef.current;
-      const activePath = currentPathRef.current;
-      const activeDirty = dirtyRef.current;
-      const activeDocument = getCurrentSaveDocument();
-      const snapshot = openTabsRef.current.map((tab) => (
-        tab.id === activeId
-          ? {
-              ...tab,
-              path: activePath,
-              document: activeDocument,
-              dirty: activeDirty,
-            }
-          : tab
-      ));
-      const realDirtyTabs = snapshot.filter((tab) => tab.path && tab.dirty);
-      if (!realDirtyTabs.length) {
-        return;
-      }
-
-      const savedPaths = new Set();
-      for (const tab of realDirtyTabs) {
-        try {
-          const result = await bridge.saveDocument(tab.document, tab.path, false);
-          if (!result?.canceled) {
-            savedPaths.add(tab.path);
+      if (autosaveRunningRef.current || sessionClosePendingRef.current) return;
+      autosaveRunningRef.current = true;
+      try {
+        const snapshot = snapshotLiveTabs();
+        const dirtyTabs = selectAutosaveSnapshotTabs(
+          snapshot,
+          saveQueueByTabRef.current,
+          tabClosePendingIdsRef.current,
+        );
+        if (!dirtyTabs.length) return;
+        const updates = new Map();
+        for (const tab of dirtyTabs) {
+          if (saveQueueByTabRef.current.has(tab.id) || !snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) {
+            continue;
           }
-        } catch {
-          // A manual save will surface the exact error; the interval keeps trying.
-        }
-      }
-      if (!savedPaths.size) {
-        return;
-      }
-
-      setOpenTabs((tabs) => tabs.map((tab) => (
-        savedPaths.has(tab.path)
-          ? {
-              ...tab,
-              dirty: false,
-              document: tab.id === activeId ? activeDocument : tab.document,
+          try {
+            const result = await queueTabSave(tab.id, () => (tab.path
+              ? bridge.saveDocument(tab.document, tab.path, false)
+              : bridge.saveTempDocument?.(tab.document, recoveryTabId(tab))));
+            if (result?.canceled || !result?.path) throw new Error("自动保存没有生成可恢复文件");
+            updates.set(tab.id, {
+              document: result.document || tab.document,
+              path: result.path,
+              recoveryId: result.recoveryId || recoveryTabId(tab),
+              temporary: !tab.path,
+              sourcePath: tab.path || "",
+              snapshotRevision: tab.snapshotRevision,
+              unchanged: snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current),
+            });
+          } catch (error) {
+            const now = Date.now();
+            if (now - autosaveErrorAtRef.current > 5 * 60 * 1000) {
+              autosaveErrorAtRef.current = now;
+              showStatus(error?.message || "自动保存失败，将在稍后重试", "warning");
             }
-          : tab
-      )));
-
-      if (activePath && savedPaths.has(activePath)) {
-        const latestDocument = documentStateRef.current;
-        const activeDocumentUnchanged = latestDocument.html === activeDocument.html
-          && latestDocument.title === activeDocument.title
-          && latestDocument.author === activeDocument.author
-          && latestDocument.createdAt === activeDocument.createdAt
-          && latestDocument.displayDate === activeDocument.displayDate
-          && latestDocument.letterTemplateId === activeDocument.letterTemplateId
-          && latestDocument.templateId === activeDocument.templateId
-          && latestDocument.customBackground === activeDocument.customBackground;
-        if (activeDocumentUnchanged) {
-          setDocumentState(activeDocument);
-          setDirty(false);
+          }
         }
+        if (!updates.size) return;
+        const nextTabs = openTabsRef.current.map((tab) => {
+          const update = updates.get(tab.id);
+          if (!update) return tab;
+          const targetUnchanged = update.sourcePath
+            ? sameDocumentPath(tab.path, update.sourcePath)
+            : !tab.path;
+          if (!targetUnchanged) return tab;
+          if (update.temporary) {
+            return {
+              ...tab,
+              recoveryPath: update.path,
+              recoveryId: update.recoveryId,
+              recoveredTemporary: true,
+              dirty: true,
+            };
+          }
+          if (!update.unchanged || !snapshotRevisionIsCurrent({ id: tab.id, snapshotRevision: update.snapshotRevision }, liveRevisionByTabRef.current)) return tab;
+          dirtyTabIdsRef.current.delete(tab.id);
+          return { ...tab, document: update.document, dirty: false };
+        });
+        openTabsRef.current = nextTabs;
+        setOpenTabs(nextTabs);
+        const activeId = activeTabIdRef.current;
+        const activeUpdate = updates.get(activeId);
+        const activeTabAfterUpdate = nextTabs.find((tab) => tab.id === activeId);
+        const activeTargetUnchanged = activeUpdate?.sourcePath
+          ? sameDocumentPath(activeTabAfterUpdate?.path, activeUpdate.sourcePath)
+          : !activeTabAfterUpdate?.path;
+        const activeUpdateCurrent = activeUpdate?.unchanged
+          && activeTargetUnchanged
+          && snapshotRevisionIsCurrent({ id: activeId, snapshotRevision: activeUpdate.snapshotRevision }, liveRevisionByTabRef.current);
+        if (activeUpdateCurrent) {
+          documentStateRef.current = activeUpdate.document;
+          setDocumentState(activeUpdate.document);
+          if (!activeUpdate.temporary) {
+            dirtyRef.current = false;
+            setDirty(false);
+          }
+        }
+        persistSession({
+          activePath: nextTabs.find((tab) => tab.id === activeId)?.path
+            || nextTabs.find((tab) => tab.id === activeId)?.recoveryPath
+            || "",
+          tabs: summarizeSessionTabs(nextTabs),
+        });
+        refreshFolderRef.current?.();
+      } finally {
+        autosaveRunningRef.current = false;
       }
-      refreshFolderRef.current?.();
     }, 60000);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [persistSession, queueTabSave, showStatus, snapshotLiveTabs]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -12338,12 +12537,32 @@ export default function App() {
   }, [getSaveDocument, showStatus]);
 
   const handleInsertImage = useCallback(async () => {
-    const result = await bridge.pickImage();
-    if (result?.canceled || !result?.dataUrl) {
+    let result;
+    try {
+      result = await bridge.pickImage();
+    } catch (error) {
+      showStatus(error?.message || "图片暂存失败，未插入文档", "warning");
       return;
     }
-    activeWorkEditor?.chain().focus().setImage({ src: result.dataUrl, alt: result.name || "图片", caption: "", width: "78%" }).run();
-  }, [activeWorkEditor]);
+    if (result?.canceled) {
+      return;
+    }
+    if (result?.error === "unsupported-type") {
+      showStatus("不支持这种图片格式，请选择 PNG、JPEG、GIF、WebP、BMP、SVG 或 AVIF", "warning");
+      return;
+    }
+    const src = normalizeImageSource(result?.src || result?.dataUrl);
+    if (!src) {
+      showStatus("图片资源地址无效，未插入文档", "warning");
+      return;
+    }
+    activeWorkEditor?.chain().focus().setImage({
+      src,
+      alt: normalizeImageText(result.name || "图片"),
+      caption: "",
+      width: "78%",
+    }).run();
+  }, [activeWorkEditor, showStatus]);
 
   const handleInsertMedia = useCallback(async (kind) => {
     const picker = kind === "video" ? bridge.pickVideo : bridge.pickAudio;
@@ -12367,7 +12586,8 @@ export default function App() {
       showStatus(`不支持这个${label}格式`, "warning");
       return;
     }
-    if (result.error || !result.dataUrl) {
+    const mediaSource = normalizeMediaSource(result.src || result.dataUrl, kind);
+    if (result.error || !mediaSource) {
       showStatus(`${label}文件读取失败`, "warning");
       return;
     }
@@ -12375,9 +12595,9 @@ export default function App() {
       type: "paperMedia",
       attrs: {
         kind,
-        src: result.dataUrl,
-        fileName: result.fileName || result.name || `未命名${label}`,
-        mime: result.mime || "",
+        src: mediaSource,
+        fileName: normalizeMediaFileName(result.fileName || result.name, `未命名${label}`),
+        mime: normalizeMediaMime(result.mime, kind),
         width: "78%",
       },
     }).run();
@@ -12440,13 +12660,16 @@ export default function App() {
   }, [linkDialog, showStatus]);
 
   const updateDocumentSetting = useCallback((patch) => {
-    setDocumentState((previous) => ({
-      ...previous,
+    const updatedAt = new Date().toISOString();
+    recordTabMutation(activeTabIdRef.current, updatedAt);
+    const nextDocument = {
+      ...documentStateRef.current,
       ...patch,
-      updatedAt: new Date().toISOString(),
-    }));
-    setDirty(true);
-  }, []);
+      updatedAt,
+    };
+    documentStateRef.current = nextDocument;
+    setDocumentState(nextDocument);
+  }, [recordTabMutation]);
 
   const handleCreateUserTemplate = useCallback((template) => {
     const nextTemplate = normalizeUserTemplate(template, userTemplateGroups);
@@ -12886,6 +13109,7 @@ export default function App() {
       startedAt,
       promptTokenEstimate: aiPromptTokenEstimateRef.current,
       outputBuffer: "",
+      pendingChunks: [],
       flushId: 0,
     });
     const result = await bridge.generateAi?.({
@@ -13000,6 +13224,9 @@ export default function App() {
       assistantId: assistantMessage.id,
       startedAt,
       promptTokenEstimate,
+      outputBuffer: "",
+      pendingChunks: [],
+      flushId: 0,
     });
 
     const result = await bridge.generateAi?.({
@@ -13009,7 +13236,7 @@ export default function App() {
       messages,
       workspacePath: folderState.path,
       documentPath: currentPath,
-      codexScope: aiChatCodexScope,
+      codexScope: { ...CODEX_DOCUMENT_ONLY_SCOPE },
       ...(isCodexChat ? {
         codexImageMode: aiChatCodexImageMode,
         codexImages: attachOriginalImages ? aiChatContextRef.current.images : [],
@@ -13031,18 +13258,14 @@ export default function App() {
       aiRequestMetaRef.current = { kind: "" };
       showStatus(message, "warning");
     }
-  }, [aiChatCodexImageMode, aiChatCodexScope, aiChatInput, aiChatSelections, aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.modelId, effectiveAiConfig.provider, effectiveAiConfig.transport, editor, folderState.path, letterTemplates, showStatus, updateChatStateForKey]);
+  }, [aiChatCodexImageMode, aiChatInput, aiChatSelections, aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.modelId, effectiveAiConfig.provider, effectiveAiConfig.transport, editor, folderState.path, letterTemplates, showStatus, updateChatStateForKey]);
 
   const handleClearAiChat = useCallback(() => {
     if (aiStatus === "streaming") {
       return;
     }
-    updateChatState({ ...createEmptyAiChatState(), codexScope: aiChatCodexScope, codexImageMode: aiChatCodexImageMode });
-  }, [aiChatCodexImageMode, aiChatCodexScope, aiStatus, updateChatState]);
-
-  const handleCodexScopeChange = useCallback((codexScope) => {
-    updateChatState({ codexScope: normalizeCodexScope(codexScope) });
-  }, [updateChatState]);
+    updateChatState({ ...createEmptyAiChatState(), codexImageMode: aiChatCodexImageMode });
+  }, [aiChatCodexImageMode, aiStatus, updateChatState]);
 
   const handleCodexImageModeChange = useCallback((codexImageMode) => {
     updateChatState({ codexImageMode: normalizeCodexImageMode(codexImageMode) });
@@ -13087,13 +13310,16 @@ export default function App() {
     "app-shell",
     leftSidebarCollapsed ? "left-collapsed" : "",
   ].filter(Boolean).join(" ");
+  const activeEditorViewKey = aiMode
+    ? `ai-${activeTabId}`
+    : (splitPaneActive ? `right-${rightSplitTabId}` : `main-${activeTabId}`);
 
   return (
     <div className={shellClassName}>
       <TitleBar />
       <TopNav
+        key={`toolbar-${activeEditorViewKey}`}
         editor={aiMode ? editor : activeWorkEditor}
-        document={aiMode ? documentState : activeWorkDocument}
         savedSelectionRef={aiMode ? editorSelectionRef : activeWorkSelectionRef}
         onNew={handleNew}
         onOpen={handleOpen}
@@ -13109,7 +13335,6 @@ export default function App() {
         aiBusy={aiStatus === "streaming"}
         aiConfigured={aiHasUsableProvider}
         editorLocked={aiMode && aiStatus === "streaming"}
-        tableOfContentsInserted={tableOfContentsInserted}
         onOpenAiSettings={() => setAiSettingsOpen(true)}
         onEnterAiOptimize={handleEnterAiOptimize}
         onEnterAiChat={handleEnterAiChat}
@@ -13119,11 +13344,12 @@ export default function App() {
       />
       <div className={appShellClassName}>
         {!leftSidebarCollapsed ? (
-          <LeftSidebar
+          <LiveOutlineSidebar
+            key={`sidebar-${activeEditorViewKey}`}
+            editor={activeWorkEditor}
             currentPath={currentPath}
             folderState={folderState}
             mode={leftSidebarMode}
-            outlineItems={outlineItems}
             expandedFolders={expandedFolders}
             onOpenFolder={handleOpenFolder}
             onOpenFolderPath={handleOpenFolderPath}
@@ -13144,7 +13370,7 @@ export default function App() {
             {aiOptimizeMode || aiChatMode ? (
               <div className="ai-mode-top-strip">
                 <DocumentTabs
-                  tabs={openTabs}
+                  tabs={tabViewModels}
                   activeTabId={activeTabId}
                   rightSplitTabId={rightSplitTabId}
                   onSelectTab={handleSelectTab}
@@ -13160,7 +13386,6 @@ export default function App() {
                     hasResult={Boolean(aiOutput || aiError || aiTokenStats)}
                     editor={editor}
                     savedSelectionRef={editorSelectionRef}
-                    finalizedBreakInserted={finalizedBreakInserted}
                     availableProviders={availableAiProviders}
                     selectedProvider={effectiveAiProvider}
                     onProviderChange={setAiSelectedProvider}
@@ -13171,18 +13396,14 @@ export default function App() {
                 ) : null}
                 {aiChatMode ? (
                   <AiChatToolbar
+                    editor={editor}
                     availableProviders={availableAiProviders}
                     selectedProvider={effectiveAiProvider}
                     status={aiStatus}
                     messages={aiChatMessages}
                     hasState={Boolean(aiChatMessages.length || aiChatInput || aiChatSelections.length || aiError)}
-                    codexScope={aiChatCodexScope}
                     codexImageMode={aiChatCodexImageMode}
-                    imageCount={aiChatImageCount}
-                    workspacePath={folderState.path}
-                    documentPath={currentPath}
                     onProviderChange={setAiSelectedProvider}
-                    onCodexScopeChange={handleCodexScopeChange}
                     onCodexImageModeChange={handleCodexImageModeChange}
                     onStop={handleStopAi}
                     onClear={handleClearAiChat}
@@ -13192,7 +13413,7 @@ export default function App() {
               </div>
             ) : (
               <DocumentTabs
-                tabs={openTabs}
+                tabs={tabViewModels}
                 activeTabId={activeTabId}
                 rightSplitTabId={rightSplitTabId}
                 onSelectTab={handleSelectTab}
@@ -13212,7 +13433,7 @@ export default function App() {
             ].filter(Boolean).join(" ")}>
               <PaperCanvas
                 editor={editor}
-                document={documentState}
+                document={mainCanvasDocument}
                 letterTemplates={letterTemplates}
                 printMode={printMode}
                 imageExportMode={imageExportMode}
@@ -13238,12 +13459,12 @@ export default function App() {
               />
               {!aiMode && rightSplitDocument ? (
                 <div className="right-split-pane">
-                  <button type="button" className="right-split-close" onClick={() => { setRightSplitTabId(""); setActivePane("main"); }} aria-label="取消右分屏" title="取消右分屏">
+                  <button type="button" className="right-split-close" onClick={() => handleToggleRightSplit(rightSplitTabId)} aria-label="取消右分屏" title="取消右分屏">
                     <X size={15} />
                   </button>
                   <PaperCanvas
                     editor={rightSplitEditor}
-                    document={rightSplitDocument}
+                    document={rightCanvasDocument}
                     letterTemplates={letterTemplates}
                     printMode={printMode}
                     imageExportMode={imageExportMode}
@@ -13259,6 +13480,7 @@ export default function App() {
                     onCreateComment={(selection, position) => handleStartComment("right", selection, position)}
                     onOpenComment={(comment, position) => handleOpenComment("right", comment, position)}
                     onEditLink={handleEditLinkFromCanvas}
+                    canvasRef={rightCanvasRef}
                   />
                 </div>
               ) : null}
@@ -13318,8 +13540,9 @@ export default function App() {
         />
       ) : null}
       <StatusBar
-        document={activeWorkDocument || documentState}
-        stats={activeWorkStats}
+        key={`status-${activeEditorViewKey}`}
+        editor={activeWorkEditor}
+        updatedAt={(activeWorkDocument || documentState).updatedAt}
         dirty={splitPaneActive ? Boolean(rightSplitTab?.dirty) : dirty}
         version={updateState?.version}
         cacheSummary={documentCacheSummary}

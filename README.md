@@ -33,7 +33,7 @@
 3. 文件和内容应当可保存、可迁移、可恢复。
 4. 视觉氛围可以丰富，但操作反馈必须清楚、克制且可靠。
 
-当前版本：`0.9.1`
+当前版本：`0.9.2`
 
 ## 主要特性
 
@@ -57,16 +57,26 @@ docs/           功能说明与发布维护文档
 scripts/        Windows 启动脚本
 ```
 
-## 本地开发
+## 日常启动与本地开发
 
-首次运行前分别安装前端和 Electron 依赖：
+日常写作使用生产构建，避免 Vite/HMR 的开发期开销。双击 `scripts\PaperWriter.cmd`，或运行：
+
+```powershell
+.\scripts\Launch-PaperWriter.ps1
+```
+
+脚本会验证 npm 依赖与锁文件，并在前端构建缺失、资源不完整或早于源码、Vite 配置及包清单时自动重新构建；其余启动直接加载 `dist`。启动后还会短暂检查 Electron 是否保持运行，以便尽早报告启动失败。
+
+生产入口不会结束正在编辑的 Electron，也不会处理占用开发端口的其他进程。若笺间已经运行，再次启动只会唤起现有窗口；单实例锁负责阻止两个进程同时写同一份文档。
+
+通过启动脚本运行时无需预先手动安装依赖；脚本会根据两个 `package-lock.json` 检查并在需要时执行确定性的 `npm ci`。若选择手动开发，可先分别恢复前端和 Electron 依赖：
 
 ```powershell
 cd apps\writer\frontend
-npm install
+npm ci
 
 cd ..\electron
-npm install
+npm ci
 ```
 
 开发时建议打开两个终端：
@@ -78,13 +88,29 @@ npm run dev
 
 ```powershell
 cd apps\writer\electron
-npm run dev
+npm run dev:vite
 ```
 
-也可以使用项目脚本启动：
+需要热更新和开发日志时，使用显式开发入口：
 
 ```powershell
-.\scripts\Launch-PaperWriter.ps1
+.\scripts\Launch-PaperWriter.ps1 -Dev
+# 或双击 scripts\PaperWriter-Dev.cmd
+```
+
+开发入口会清理上一轮由本项目启动的 Vite/Electron 进程，但只有可执行文件和完整命令行都匹配当前仓库时才会结束进程。如果 `5174` 被其他程序占用，脚本会报出 PID 并停止启动，不会强制结束该程序。生产实例正在运行时，请先在应用内正常退出，再启动开发模式。
+
+不启动或停止任何进程、只检查生产依赖与构建完整性：
+
+```powershell
+.\scripts\Launch-PaperWriter.ps1 -CheckOnly
+```
+
+启动器静态检查，以及包含依赖/构建检查的 smoke test：
+
+```powershell
+.\scripts\Test-Launch-PaperWriter.ps1
+.\scripts\Test-Launch-PaperWriter.ps1 -Smoke
 ```
 
 ## 构建与发布
