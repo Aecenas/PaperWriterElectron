@@ -1,20 +1,24 @@
 {
   "name": "paperwriter-electron",
-  "version": "0.9.2",
+  "version": "0.9.8",
   "private": false,
+  "license": "MIT",
   "main": "main.cjs",
   "scripts": {
     "dev": "electron .",
     "dev:vite": "node dev-vite.cjs",
-    "check": "node --check main.cjs && node --check preload.cjs && node --check ai-provider-core.cjs && node --check ai-config-security.cjs && node --check asset-packager.cjs && node --check document-assets.cjs && node --check document-storage.cjs && node --check filesystem-access.cjs && node --check codex-cli-provider.cjs && node --check codex-scope.cjs && node --check codex-image-attachments.cjs",
+    "check": "node --check main.cjs && node --check preload.cjs && node --check ai-provider-core.cjs && node --check ai-config-security.cjs && node --check asset-packager.cjs && node --check document-assets.cjs && node --check document-storage.cjs && node --check document-revision.cjs && node --check document-interchange.cjs && node --check workspace-search.cjs && node --check workspace-research.cjs && node --check research-library.cjs && node --check research-web-view.cjs && node --check filesystem-access.cjs && node --check codex-cli-provider.cjs && node --check codex-scope.cjs && node --check codex-image-attachments.cjs",
     "test": "node --test *.test.cjs",
     "dist": "electron-builder --win nsis --x64",
     "pack": "electron-builder --win dir --x64",
     "publish": "electron-builder --win nsis --x64 --publish always"
   },
   "dependencies": {
+    "docx": "^9.7.1",
     "electron-updater": "^6.8.9",
-    "jszip": "^3.10.1"
+    "iconv-lite": "^0.7.3",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.0"
   },
   "devDependencies": {
     "electron": "^41.5.0",

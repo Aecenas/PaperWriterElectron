@@ -28,7 +28,15 @@ const AI_PROTOCOLS = {
 const MAX_CUSTOM_AI_PROVIDERS = 64;
 const MAX_AI_MODELS_PER_PROVIDER = 256;
 const MAX_AI_REASONING_EFFORTS = 32;
+const MAX_AI_REQUEST_PARAMS = 64;
+const MAX_AI_REQUEST_PARAM_KEY_CHARS = 128;
+const MAX_AI_REQUEST_PARAM_STRING_CHARS = 16 * 1024;
+const MAX_AI_REQUEST_PARAMS_JSON_CHARS = 32 * 1024;
+const MAX_AI_REQUEST_PARAM_DEPTH = 8;
 const RESERVED_PROVIDER_IDS = new Set(["__proto__", "prototype", "constructor", "tostring", "valueof"]);
+const STANDARD_AI_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+const DANGEROUS_AI_REQUEST_PARAM_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const RESERVED_AI_REQUEST_PARAM_KEYS = new Set(["model", "messages", "system", "stream", "stream_options"]);
 
 function hasOwn(object, key) {
   return Boolean(object && Object.prototype.hasOwnProperty.call(object, key));
@@ -42,8 +50,115 @@ function safeProviderId(value) {
   return provider;
 }
 
+function normalizeAiRequestParamValue(value, depth = 0) {
+  if (depth > MAX_AI_REQUEST_PARAM_DEPTH) return { ok: false };
+  if (value === null || typeof value === "boolean") return { ok: true, value };
+  if (typeof value === "string") {
+    return value.length <= MAX_AI_REQUEST_PARAM_STRING_CHARS ? { ok: true, value } : { ok: false };
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? { ok: true, value } : { ok: false };
+  }
+  if (Array.isArray(value)) {
+    const result = [];
+    for (const item of value) {
+      const normalized = normalizeAiRequestParamValue(item, depth + 1);
+      if (!normalized.ok) return { ok: false };
+      result.push(normalized.value);
+    }
+    return { ok: true, value: result };
+  }
+  if (!value || typeof value !== "object") return { ok: false };
+  const result = {};
+  for (const rawKey of Object.keys(value)) {
+    const key = String(rawKey);
+    if (!key || key.length > MAX_AI_REQUEST_PARAM_KEY_CHARS || DANGEROUS_AI_REQUEST_PARAM_KEYS.has(key.toLowerCase())) {
+      return { ok: false };
+    }
+    const normalized = normalizeAiRequestParamValue(value[rawKey], depth + 1);
+    if (!normalized.ok) return { ok: false };
+    result[key] = normalized.value;
+  }
+  return { ok: true, value: result };
+}
+
+function normalizeAiRequestParams(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result = {};
+  let count = 0;
+  for (const rawKey of Object.keys(value)) {
+    if (count >= MAX_AI_REQUEST_PARAMS) break;
+    const key = String(rawKey).trim();
+    const keyLower = key.toLowerCase();
+    if (!key || key.length > MAX_AI_REQUEST_PARAM_KEY_CHARS
+      || DANGEROUS_AI_REQUEST_PARAM_KEYS.has(keyLower)
+      || RESERVED_AI_REQUEST_PARAM_KEYS.has(keyLower)
+      || hasOwn(result, key)) continue;
+    const normalized = normalizeAiRequestParamValue(value[rawKey]);
+    if (!normalized.ok) continue;
+    result[key] = normalized.value;
+    count += 1;
+  }
+  try {
+    return JSON.stringify(result).length <= MAX_AI_REQUEST_PARAMS_JSON_CHARS ? result : {};
+  } catch {
+    return {};
+  }
+}
+
+function mergeAiRequestParams(modelParams, taskParams) {
+  return normalizeAiRequestParams({
+    ...normalizeAiRequestParams(modelParams),
+    ...normalizeAiRequestParams(taskParams),
+  });
+}
+
+function aiApplyResolverRequestParams(provider, protocol, requestParams) {
+  const normalized = normalizeAiRequestParams(requestParams);
+  const builtInJsonResolver = protocol === "openai" && hasOwn(BUILTIN_AI_PROVIDERS, provider);
+  const builtInMaximum = provider === "gemini"
+    ? 65_536
+    : (provider === "deepseek" ? 384_000 : null);
+  const requestedMaximum = Number(normalized.max_tokens);
+  const maxTokens = builtInJsonResolver
+    ? builtInMaximum
+    : (Number.isFinite(requestedMaximum) && requestedMaximum > 0
+      ? Math.min(1024, Math.floor(requestedMaximum))
+      : 1024);
+  return normalizeAiRequestParams({
+    ...normalized,
+    max_tokens: maxTokens,
+    ...(builtInJsonResolver
+      ? { response_format: { type: "json_object" } }
+      : {}),
+  });
+}
+
+function normalizeAiTaskModelAssignment(value) {
+  const source = sourceObject(value);
+  const providerId = safeProviderId(source.providerId);
+  const modelId = typeof source.modelId === "string" ? source.modelId.slice(0, 256).trim() : "";
+  return providerId && modelId
+    ? { providerId, modelId, requestParams: normalizeAiRequestParams(source.requestParams) }
+    : { providerId: "", modelId: "", requestParams: {} };
+}
+
 function sourceObject(value) {
   return value && typeof value === "object" ? value : {};
+}
+
+function safeAiReasoningEffort(value) {
+  const effort = typeof value === "string" ? value.slice(0, 64).trim() : "";
+  return !effort || /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(effort) ? effort : "";
+}
+
+function aiReasoningEffortIsSupported(config, value) {
+  const effort = safeAiReasoningEffort(value);
+  if (!effort) return true;
+  const supported = Array.isArray(config?.supportedReasoningEfforts)
+    ? config.supportedReasoningEfforts.map((option) => safeAiReasoningEffort(option?.reasoningEffort || option)).filter(Boolean)
+    : [];
+  return supported.length ? supported.includes(effort) : STANDARD_AI_REASONING_EFFORTS.has(effort);
 }
 
 function normalizeAiProtocol(value) {
@@ -77,15 +192,17 @@ function providerDefinition(provider, config = {}) {
 function normalizeAiModelConfig(provider, config = {}, index = 0, fallbackModel = "") {
   const source = sourceObject(config);
   const model = String(source.model || fallbackModel || "").slice(0, 256).trim();
+  const isCodex = provider === "codex-cli";
   return {
     id: String(source.id || createAiModelId(provider, model || String(index + 1))).slice(0, 256).trim(),
     name: String(source.name || source.modelName || (index === 0 ? "默认模型" : `模型 ${index + 1}`)).slice(0, 256).trim() || `模型 ${index + 1}`,
     model,
-    reasoningEffort: typeof source.reasoningEffort === "string" ? source.reasoningEffort.slice(0, 64) : "",
-    defaultReasoningEffort: typeof source.defaultReasoningEffort === "string" ? source.defaultReasoningEffort.slice(0, 64) : "",
-    supportedReasoningEfforts: Array.isArray(source.supportedReasoningEfforts)
+    requestParams: isCodex ? {} : normalizeAiRequestParams(source.requestParams),
+    reasoningEffort: isCodex ? safeAiReasoningEffort(source.reasoningEffort) : "",
+    defaultReasoningEffort: isCodex ? safeAiReasoningEffort(source.defaultReasoningEffort) : "",
+    supportedReasoningEfforts: isCodex && Array.isArray(source.supportedReasoningEfforts)
       ? source.supportedReasoningEfforts.slice(0, MAX_AI_REASONING_EFFORTS).map((option) => ({
-        reasoningEffort: String(option?.reasoningEffort || option || "").slice(0, 64).trim(),
+        reasoningEffort: safeAiReasoningEffort(String(option?.reasoningEffort || option || "")),
         description: String(option?.description || "").slice(0, 500).trim(),
       })).filter((option) => option.reasoningEffort)
       : [],
@@ -107,6 +224,10 @@ function normalizeAiProviderConfig(provider, config = {}) {
     testedOk: source.testedOk,
     testedAt: source.testedAt,
     testMessage: source.testMessage,
+    requestParams: source.requestParams,
+    reasoningEffort: source.reasoningEffort,
+    defaultReasoningEffort: source.defaultReasoningEffort,
+    supportedReasoningEfforts: source.supportedReasoningEfforts,
   };
   let modelsSource;
   if (Array.isArray(source.models)) {
@@ -176,7 +297,42 @@ function normalizeAiConfig(config = {}) {
   const activeModelId = activeProviderConfig.models.some((model) => model.id === requestedActiveModelId)
     ? requestedActiveModelId
     : activeProviderConfig.activeModelId;
-  return { activeProvider, activeModelId, providers };
+  const applyResolver = normalizeAiTaskModelAssignment(source.taskModels?.applyResolver);
+  return {
+    activeProvider,
+    activeModelId,
+    providers,
+    taskModels: { applyResolver },
+  };
+}
+
+function exactAiProviderConfig(config, preferredProvider = "", preferredModelId = "") {
+  const normalized = normalizeAiConfig(config);
+  const provider = safeProviderId(preferredProvider);
+  if (!provider || !hasOwn(normalized.providers, provider)) return null;
+  const providerConfig = normalized.providers[provider];
+  const modelId = typeof preferredModelId === "string" ? preferredModelId.slice(0, 256).trim() : "";
+  const model = providerConfig.models.find((item) => item.id === modelId);
+  if (!model) return null;
+  return {
+    provider,
+    providerLabel: providerConfig.providerLabel,
+    transport: providerConfig.transport || "http",
+    protocol: providerConfig.protocol,
+    builtin: providerConfig.builtin,
+    baseUrl: providerConfig.baseUrl,
+    apiKey: providerConfig.apiKey,
+    model: model.model,
+    modelId: model.id,
+    modelName: model.name,
+    requestParams: model.requestParams || {},
+    reasoningEffort: model.reasoningEffort || model.defaultReasoningEffort || "",
+    defaultReasoningEffort: model.defaultReasoningEffort || "",
+    supportedReasoningEfforts: model.supportedReasoningEfforts || [],
+    testedOk: Boolean(model.testedOk),
+    testedAt: model.testedAt || "",
+    testMessage: model.testMessage || "",
+  };
 }
 
 function activeAiProviderConfig(config, preferredProvider = "", preferredModelId = "") {
@@ -199,12 +355,21 @@ function activeAiProviderConfig(config, preferredProvider = "", preferredModelId
     model: model?.model || "",
     modelId: model?.id || "",
     modelName: model?.name || "",
+    requestParams: model?.requestParams || {},
     reasoningEffort: model?.reasoningEffort || model?.defaultReasoningEffort || "",
     supportedReasoningEfforts: model?.supportedReasoningEfforts || [],
     testedOk: Boolean(model?.testedOk),
     testedAt: model?.testedAt || "",
     testMessage: model?.testMessage || "",
   };
+}
+
+function taskAiProviderConfig(config, assignment = {}) {
+  const taskModel = normalizeAiTaskModelAssignment(assignment);
+  if (taskModel.providerId || taskModel.modelId) {
+    return exactAiProviderConfig(config, taskModel.providerId, taskModel.modelId);
+  }
+  return activeAiProviderConfig(config);
 }
 
 function publicAiConfig(config, runtimeByProvider = {}) {
@@ -231,6 +396,7 @@ function publicAiConfig(config, runtimeByProvider = {}) {
         id: model.id,
         name: model.name,
         model: model.model,
+        requestParams: model.requestParams || {},
         reasoningEffort: model.reasoningEffort || model.defaultReasoningEffort || "",
         defaultReasoningEffort: model.defaultReasoningEffort || "",
         supportedReasoningEfforts: model.supportedReasoningEfforts || [],
@@ -259,6 +425,7 @@ function publicAiConfig(config, runtimeByProvider = {}) {
   return {
     activeProvider: normalized.activeProvider,
     activeModelId: normalized.activeModelId,
+    taskModels: normalized.taskModels,
     providers: publicProviders,
     provider: active.provider,
     providerLabel: active.providerLabel,
@@ -273,6 +440,7 @@ function publicAiConfig(config, runtimeByProvider = {}) {
     testedOk: Boolean(publicActiveModel.testedOk),
     testedAt: publicActiveModel.testedAt || active.testedAt || "",
     testMessage: publicActiveModel.testMessage || active.testMessage || "",
+    requestParams: active.requestParams || {},
     reasoningEffort: active.reasoningEffort || "",
     supportedReasoningEfforts: active.supportedReasoningEfforts || [],
   };
@@ -299,6 +467,7 @@ function anthropicMessages(messages = []) {
 }
 
 function buildAiRequest(config, messages, { stream = false, test = false } = {}) {
+  const requestParams = normalizeAiRequestParams(config.requestParams);
   if (config.protocol === "anthropic") {
     const converted = anthropicMessages(messages);
     return {
@@ -309,8 +478,9 @@ function buildAiRequest(config, messages, { stream = false, test = false } = {})
         "anthropic-version": "2023-06-01",
       },
       body: {
+        ...requestParams,
         model: config.model,
-        max_tokens: test ? 8 : 8192,
+        max_tokens: test ? 8 : (hasOwn(requestParams, "max_tokens") ? requestParams.max_tokens : 8192),
         messages: converted.messages,
         ...(converted.system ? { system: converted.system } : {}),
         stream,
@@ -321,10 +491,10 @@ function buildAiRequest(config, messages, { stream = false, test = false } = {})
     url: aiEndpoint(config),
     headers: { "content-type": "application/json", authorization: `Bearer ${config.apiKey}` },
     body: {
+      ...requestParams,
       model: config.model,
       messages,
       ...(test ? { max_tokens: 8 } : {}),
-      ...(config.provider === "deepseek" ? { thinking: { type: "enabled" }, reasoning_effort: "max", temperature: 1 } : {}),
       stream,
       ...(stream && config.builtin ? { stream_options: { include_usage: true } } : {}),
     },
@@ -366,14 +536,22 @@ module.exports = {
   AI_PROTOCOLS,
   BUILTIN_AI_PROVIDERS,
   activeAiProviderConfig,
+  aiApplyResolverRequestParams,
+  aiReasoningEffortIsSupported,
   buildAiRequest,
   createAiModelId,
+  exactAiProviderConfig,
   extractAiStreamEvent,
   mergeAiUsage,
+  mergeAiRequestParams,
   normalizeAiConfig,
   normalizeAiModelConfig,
   normalizeAiProtocol,
   normalizeAiProviderConfig,
+  normalizeAiRequestParams,
+  normalizeAiTaskModelAssignment,
   providerDefinition,
   publicAiConfig,
+  safeAiReasoningEffort,
+  taskAiProviderConfig,
 };

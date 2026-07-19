@@ -12,6 +12,12 @@ function apiKeyFingerprint(value) {
 
 function createAiTestConfigIdentity(config = {}) {
   const source = config && typeof config === "object" ? config : {};
+  let requestParamsJson = "{}";
+  try {
+    requestParamsJson = JSON.stringify(source.requestParams && typeof source.requestParams === "object" ? source.requestParams : {});
+  } catch {
+    requestParamsJson = "{}";
+  }
   return {
     provider: typeof source.provider === "string" ? source.provider.slice(0, 128) : "",
     protocol: typeof source.protocol === "string" ? source.protocol.slice(0, 32) : "",
@@ -19,6 +25,7 @@ function createAiTestConfigIdentity(config = {}) {
     modelPresent: Boolean(source.modelPresent),
     modelName: typeof source.modelName === "string" ? source.modelName.slice(0, 256) : "",
     model: typeof source.model === "string" ? source.model.slice(0, 256) : "",
+    requestParamsJson: requestParamsJson.slice(0, 32 * 1024),
     baseUrl: typeof source.baseUrl === "string" ? source.baseUrl.slice(0, 2048) : "",
     apiKeyFingerprint: apiKeyFingerprint(source.apiKey),
   };
@@ -26,7 +33,7 @@ function createAiTestConfigIdentity(config = {}) {
 
 function aiTestConfigIdentityMatches(expected, current) {
   if (!expected || !current) return false;
-  for (const key of ["provider", "protocol", "modelId", "modelPresent", "modelName", "model", "baseUrl"]) {
+  for (const key of ["provider", "protocol", "modelId", "modelPresent", "modelName", "model", "requestParamsJson", "baseUrl"]) {
     if (expected[key] !== current[key]) return false;
   }
   const expectedFingerprint = expected.apiKeyFingerprint;

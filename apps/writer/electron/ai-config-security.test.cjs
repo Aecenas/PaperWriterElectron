@@ -143,6 +143,7 @@ test("AI test identities compare API keys by a non-reversible fingerprint", () =
     modelPresent: true,
     modelName: "Model 1",
     model: "remote-model-1",
+    requestParams: { temperature: 0.4, metadata: { purpose: "test" } },
     baseUrl: "https://api.example.com/v1",
     apiKey: "sk-super-secret",
   };
@@ -157,10 +158,12 @@ test("AI test identities compare API keys by a non-reversible fingerprint", () =
     { modelPresent: false },
     { modelName: "Renamed" },
     { model: "remote-model-2" },
+    { requestParams: { temperature: 0.8, metadata: { purpose: "test" } } },
     { baseUrl: "https://other.example/v1" },
   ]) {
     assert.equal(aiTestConfigIdentityMatches(expected, createAiTestConfigIdentity({ ...base, ...patch })), false);
   }
+  assert.equal(aiTestConfigIdentityMatches(expected, createAiTestConfigIdentity({ ...base, reasoningEffort: "high" })), true);
 });
 
 test("a stale AI connection test never commits old URL, key, or tested state", async () => {

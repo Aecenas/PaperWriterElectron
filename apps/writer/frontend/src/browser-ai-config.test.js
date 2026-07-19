@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 import {
   MAX_BROWSER_AI_MODELS,
   MAX_BROWSER_AI_PROVIDERS,
-  MAX_BROWSER_AI_REASONING_EFFORTS,
+  MAX_BROWSER_AI_REQUEST_PARAMS,
+  exactBrowserAiProviderConfig,
   normalizeBrowserAiConfig,
+  normalizeBrowserAiRequestParams,
   normalizeBrowserExternalUrl,
   publicBrowserAiConfig,
   safeBrowserProviderId,
@@ -38,6 +40,7 @@ test("normalizes localStorage-shaped AI maps into bounded null-prototype objects
       description: "描述".repeat(2000),
       testedAt: "t".repeat(100),
       testMessage: "消息".repeat(2000),
+      requestParams: Object.fromEntries(Array.from({ length: 80 }, (__, paramIndex) => [`param_${paramIndex}`, paramIndex])),
     })),
   };
   for (let index = 0; index < 100; index += 1) providers[`custom-${index}`] = { model: `model-${index}` };
@@ -57,8 +60,9 @@ test("normalizes localStorage-shaped AI maps into bounded null-prototype objects
   assert.ok(rich.apiKey.length <= 16384);
   assert.ok(rich.baseUrl.length <= 2048);
   assert.ok(rich.models.every((model) => model.id.length <= 256 && model.name.length <= 256 && model.model.length <= 256));
-  assert.ok(rich.models.every((model) => model.reasoningEffort.length <= 64 && model.defaultReasoningEffort.length <= 64));
-  assert.ok(rich.models.every((model) => model.supportedReasoningEfforts.length <= MAX_BROWSER_AI_REASONING_EFFORTS));
+  assert.ok(rich.models.every((model) => model.reasoningEffort === "" && model.defaultReasoningEffort === ""));
+  assert.ok(rich.models.every((model) => model.supportedReasoningEfforts.length === 0));
+  assert.ok(rich.models.every((model) => Object.keys(model.requestParams).length === MAX_BROWSER_AI_REQUEST_PARAMS));
   assert.ok(rich.models.every((model) => model.description.length <= 2000 && model.testMessage.length <= 2000));
 });
 
@@ -79,6 +83,66 @@ test("public browser config keeps a null-prototype provider map and omits secret
   assert.equal(result.providers["custom-safe"].apiKey, undefined);
   assert.equal(result.providers["custom-safe"].hasApiKey, true);
   assert.equal(result.providers["custom-safe"].apiKeyLast4, "alue");
+});
+
+test("browser AI config persists exact task-model assignments without fallback", () => {
+  const configured = normalizeBrowserAiConfig({
+    activeProvider: "gemini",
+    activeModelId: "gemini-main",
+    providers: {
+      gemini: {
+        models: [{ id: "gemini-main", name: "Main", model: "gemini-main", testedOk: true }],
+        activeModelId: "gemini-main",
+      },
+      deepseek: {
+        models: [{ id: "deepseek-resolver", name: "Resolver", model: "deepseek-resolver", testedOk: true }],
+        activeModelId: "deepseek-resolver",
+      },
+    },
+    taskModels: {
+      applyResolver: {
+        providerId: "deepseek",
+        modelId: "deepseek-resolver",
+        reasoningEffort: "high",
+        requestParams: { thinking: { type: "enabled" }, max_tokens: 2048 },
+      },
+    },
+  });
+  assert.deepEqual(configured.taskModels, {
+    applyResolver: {
+      providerId: "deepseek",
+      modelId: "deepseek-resolver",
+      requestParams: { thinking: { type: "enabled" }, max_tokens: 2048 },
+    },
+  });
+  assert.deepEqual(publicBrowserAiConfig(configured).taskModels, configured.taskModels);
+  assert.equal(exactBrowserAiProviderConfig(configured, configured.taskModels.applyResolver).model.model, "deepseek-resolver");
+
+  const stale = normalizeBrowserAiConfig({
+    activeProvider: "gemini",
+    providers: configured.providers,
+    taskModels: { applyResolver: { providerId: "removed-provider", modelId: "removed-model", requestParams: { temperature: 0.2 } } },
+  });
+  assert.deepEqual(stale.taskModels.applyResolver, { providerId: "removed-provider", modelId: "removed-model", requestParams: { temperature: 0.2 } });
+  assert.equal(exactBrowserAiProviderConfig(stale, stale.taskModels.applyResolver), null);
+
+  const unsafe = normalizeBrowserAiConfig({
+    activeProvider: "gemini",
+    providers: configured.providers,
+    taskModels: { applyResolver: { providerId: "__proto__", modelId: "invented" } },
+  });
+  assert.deepEqual(unsafe.taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
+  assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
+});
+
+test("browser request parameters keep JSON values and remove reserved or dangerous entries", () => {
+  const params = JSON.parse('{"temperature":0.4,"enabled":true,"metadata":{"tags":["a",null]},"model":"escape","__proto__":{"polluted":true}}');
+  assert.deepEqual(normalizeBrowserAiRequestParams(params), {
+    temperature: 0.4,
+    enabled: true,
+    metadata: { tags: ["a", null] },
+  });
+  assert.equal({}.polluted, undefined);
 });
 
 test("browser external URLs allow only bounded http, https and mailto links", () => {

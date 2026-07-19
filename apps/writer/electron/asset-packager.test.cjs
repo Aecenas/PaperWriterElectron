@@ -38,6 +38,25 @@ test("packages staged, document and legacy data sources while deduplicating iden
   assert.deepEqual(await zip.file(sources[3]).async("nodebuffer"), distinct);
 });
 
+test("packages the inline table-of-contents decoration as a document asset", async () => {
+  const decoration = Buffer.from("table-of-contents-decoration");
+  const dataUrl = `data:image/png;base64,${decoration.toString("base64")}`;
+  const zip = new JSZip();
+  const packager = createAssetPackager({
+    zip,
+    nextAssetPath,
+    readProtocolAsset: async () => { throw new Error("unused"); },
+  });
+
+  const html = await packager.packageHtml(
+    `<section data-type="paper-toc"><h2><img src="${dataUrl}" alt=""><span>目录</span></h2></section>`,
+  );
+  const packagedSource = /<img src="([^"]+)"/.exec(html)?.[1];
+
+  assert.match(packagedSource, /^assets\/image-\d{4}\.png$/);
+  assert.deepEqual(await zip.file(packagedSource).async("nodebuffer"), decoration);
+});
+
 test("fails explicitly instead of writing an unresolved staged URL", async () => {
   const zip = new JSZip();
   const packager = createAssetPackager({

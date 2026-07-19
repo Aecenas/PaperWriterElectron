@@ -1,26 +1,34 @@
-const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, safeStorage, screen, shell } = require("electron");
+const { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const nativeFs = require("node:fs");
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { randomUUID } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 const { fileURLToPath } = require("node:url");
 const JSZip = require("jszip");
+const mammoth = require("mammoth");
+const docx = require("docx");
+const iconvLite = require("iconv-lite");
 const {
   AI_PROTOCOLS,
   BUILTIN_AI_PROVIDERS,
   activeAiProviderConfig,
+  aiApplyResolverRequestParams,
   buildAiRequest,
   createAiModelId,
+  exactAiProviderConfig,
   extractAiStreamEvent,
+  mergeAiRequestParams,
   mergeAiUsage,
   normalizeAiConfig,
   normalizeAiModelConfig,
   normalizeAiProtocol,
   normalizeAiProviderConfig,
+  normalizeAiRequestParams,
   publicAiConfig,
+  taskAiProviderConfig,
 } = require("./ai-provider-core.cjs");
 const {
   CODEX_PROVIDER_ID,
@@ -66,6 +74,44 @@ const {
   materializeCodexImageAttachments,
   normalizeCodexImageMode,
 } = require("./codex-image-attachments.cjs");
+const {
+  createWorkspaceSearchIndex,
+  isPathInside,
+  isWorkspaceRelationshipCandidate,
+  readSearchDocument,
+  walkWorkspaceDocuments,
+} = require("./workspace-search.cjs");
+const {
+  DocumentRevisionConflictError,
+  REVISION_CONFLICT_CODE,
+  assertDiskRevision,
+  createConflictCopyPath,
+  diskRevisionsEqual,
+  readFileSnapshot,
+  readDiskRevision,
+} = require("./document-revision.cjs");
+const {
+  createDocumentInterchange,
+  decodeTextBuffer,
+  markdownToHtml,
+  sanitizeImportedHtml,
+} = require("./document-interchange.cjs");
+const { createResearchWebViewManager } = require("./research-web-view.cjs");
+const {
+  createSource: createResearchSource,
+  deleteCitationSource,
+  deleteSource: deleteResearchSource,
+  ensureWorkspace,
+  listCitationSources,
+  listSources: listResearchSources,
+  normalizeCitationResearchIdentity,
+  readSource: readResearchSource,
+  relinkSource: relinkResearchSource,
+  resolveSourceFile,
+  upsertCitationSource,
+  updateSource: updateResearchSource,
+} = require("./workspace-research.cjs");
+const { createResearchLibraryManager, importLegacyResearch, normalizeWebScopeKey } = require("./research-library.cjs");
 
 const APP_ROOT = path.resolve(__dirname, "..");
 const REQUESTED_FRONTEND_URL = process.env.PAPERWRITER_FRONTEND_URL || "";
@@ -123,6 +169,10 @@ const EXTRACTED_ASSET_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 const EXTRACTED_ASSET_CONCURRENCY = 4;
 const ASSET_SOURCE_ALIAS_LIMIT = 10000;
 const FILESYSTEM_ACCESS_FILE = "filesystem-access.json";
+const DOCUMENT_SCHEMA_VERSION = 2;
+const WORKSPACE_SEARCH_CACHE_FOLDER = "workspace-search";
+const MIGRATION_BACKUP_FOLDER = "migration-backups";
+const RESEARCH_READ_MAX_BYTES = 128 * 1024 * 1024;
 const EXPORT_CAPABILITY_TTL_MS = 30 * 60 * 1000;
 const PRODUCTION_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -144,6 +194,8 @@ const PRODUCTION_CONTENT_SECURITY_POLICY = [
 let mainWindow = null;
 let closeRequestInFlight = false;
 let forceCloseWindow = false;
+let closeAttentionActive = false;
+let rendererCanConfirmClose = false;
 let pendingUpdateInstall = false;
 let downloadGuardInstalled = false;
 let updateState = {
@@ -169,7 +221,14 @@ const filesystemAccessWriteQueue = createPathWriteQueue();
 const filesystemAccess = createFilesystemAccessRegistry();
 const exportCapabilities = new Map();
 const assetSourceAliases = new Map();
+const workspaceSearchIndexes = new Map();
+let activeWorkspaceWatcher = null;
+let activeWorkspaceWatchRoot = "";
+let activeWorkspaceWatchTimer = null;
 let stagedAssetStore = null;
+let documentInterchange = null;
+let researchLibrary = null;
+let researchWebViews = null;
 let canonicalAutosaveRoot = "";
 let canonicalAutosaveSessionRoot = "";
 let stagedAssetHeartbeatTimer = null;
@@ -482,9 +541,41 @@ function sendRendererEvent(sender, channel, payload) {
   return true;
 }
 
+function stopCloseAttention() {
+  if (!closeAttentionActive || !mainWindow || mainWindow.isDestroyed()) return;
+  if (process.platform === "win32") mainWindow.flashFrame(false);
+  closeAttentionActive = false;
+}
+
+function revealCloseConfirmation() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const shouldRequestAttention = mainWindow.isMinimized() || !mainWindow.isFocused();
+  if (process.platform === "win32" && shouldRequestAttention) {
+    mainWindow.flashFrame(true);
+    closeAttentionActive = true;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
+function markRendererUnavailable(reason, details = {}) {
+  rendererCanConfirmClose = false;
+  void writeAiDebugLog("renderer:unavailable", { reason, ...details }).catch(() => {});
+  if (!closeRequestInFlight || !mainWindow || mainWindow.isDestroyed()) return;
+  // The user already requested a close, but an unavailable renderer cannot
+  // complete the save/discard handshake. Let the native window close instead
+  // of leaving a permanently blank or unresponsive process behind.
+  closeRequestInFlight = false;
+  forceCloseWindow = true;
+  mainWindow.close();
+}
+
 function createWindow() {
   closeRequestInFlight = false;
   forceCloseWindow = false;
+  closeAttentionActive = false;
+  rendererCanConfirmClose = false;
   const workArea = screen.getPrimaryDisplay().workAreaSize;
   const windowWidth = Math.min(1440, Math.max(1080, Math.floor(workArea.width * 0.92)));
   const windowHeight = Math.min(940, Math.max(720, Math.floor(workArea.height * 0.9)));
@@ -517,6 +608,15 @@ function createWindow() {
     if (!isTrustedApplicationUrl(targetUrl)) event.preventDefault();
   });
   mainWindow.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  mainWindow.webContents.on("did-finish-load", () => {
+    rendererCanConfirmClose = true;
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    markRendererUnavailable("render-process-gone", {
+      reasonCode: details?.reason || "unknown",
+      exitCode: Number(details?.exitCode) || 0,
+    });
+  });
   if (!downloadGuardInstalled) {
     mainWindow.webContents.session.on("will-download", (event) => event.preventDefault());
     downloadGuardInstalled = true;
@@ -545,15 +645,46 @@ function createWindow() {
     if (forceCloseWindow) {
       return;
     }
+    if (!rendererCanConfirmClose || mainWindow.webContents.isDestroyed()) {
+      forceCloseWindow = true;
+      closeRequestInFlight = false;
+      return;
+    }
     event.preventDefault();
     if (closeRequestInFlight) {
       return;
     }
     closeRequestInFlight = true;
+    revealCloseConfirmation();
     mainWindow.webContents.send("app:close-request", {
       requestedAt: Date.now(),
       reason: pendingUpdateInstall ? "update-install" : "window-close",
     });
+  });
+  mainWindow.on("unresponsive", () => {
+    markRendererUnavailable("unresponsive");
+  });
+  mainWindow.on("responsive", () => {
+    rendererCanConfirmClose = true;
+  });
+  mainWindow.on("focus", () => {
+    stopCloseAttention();
+    sendRendererEvent(mainWindow?.webContents, "window:focus", { focusedAt: Date.now() });
+  });
+  mainWindow.on("blur", () => {
+    sendRendererEvent(mainWindow?.webContents, "window:blur", { blurredAt: Date.now() });
+  });
+  mainWindow.on("enter-full-screen", () => {
+    sendRendererEvent(mainWindow?.webContents, "window:fullscreen-changed", { fullscreen: true });
+  });
+  mainWindow.on("leave-full-screen", () => {
+    sendRendererEvent(mainWindow?.webContents, "window:fullscreen-changed", { fullscreen: false });
+  });
+  mainWindow.on("closed", () => {
+    closeAttentionActive = false;
+    rendererCanConfirmClose = false;
+    researchWebViews?.destroyAll();
+    mainWindow = null;
   });
 
   if (FRONTEND_URL) {
@@ -756,10 +887,75 @@ function refreshCodexCliConfig() {
   return queueAiConfigMutation(refreshCodexCliConfigUnlocked);
 }
 
+function validateAiRequestParamsPatch(value) {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("请求参数必须是 Key-Value 对象");
+  }
+  const normalized = normalizeAiRequestParams(value);
+  let sourceJson = "";
+  try {
+    sourceJson = JSON.stringify(value);
+  } catch {
+    throw new Error("请求参数包含无法保存的值");
+  }
+  if (sourceJson !== JSON.stringify(normalized)) {
+    throw new Error("请求参数包含空键、保留字段、危险键或无效值");
+  }
+  return normalized;
+}
+
+function mergeAndValidateAiTaskModels(existing, taskModelsPatch) {
+  if (!taskModelsPatch || typeof taskModelsPatch !== "object" || Array.isArray(taskModelsPatch)) {
+    return existing.taskModels;
+  }
+  const patchedTaskModels = { ...existing.taskModels, ...taskModelsPatch };
+  if (Object.prototype.hasOwnProperty.call(taskModelsPatch, "applyResolver")) {
+    const source = taskModelsPatch.applyResolver;
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      throw new Error("任务模型配置无效");
+    }
+    patchedTaskModels.applyResolver = {
+      ...source,
+      requestParams: validateAiRequestParamsPatch(source.requestParams || {}),
+    };
+  }
+  const merged = normalizeAiConfig({
+    ...existing,
+    taskModels: patchedTaskModels,
+  }).taskModels;
+  if (!Object.prototype.hasOwnProperty.call(taskModelsPatch, "applyResolver")) {
+    return merged;
+  }
+  const assignment = merged.applyResolver;
+  if (!assignment.providerId && !assignment.modelId) {
+    return merged;
+  }
+  const resolver = exactAiProviderConfig(existing, assignment.providerId, assignment.modelId);
+  if (!resolver) {
+    throw new Error("任务模型只能选择已连接供应商中的已连接模型");
+  }
+  if (resolver.transport === "codex-cli") {
+    if (Object.keys(assignment.requestParams || {}).length) {
+      throw new Error("Codex CLI 任务模型不支持 HTTP 请求参数");
+    }
+    if (!codexRuntimeStatus.ready) {
+      throw new Error("任务模型所选 Codex CLI 当前不可用");
+    }
+  } else if (!resolver.apiKey || !resolver.testedOk) {
+    throw new Error("任务模型只能选择已连接供应商中的已连接模型");
+  }
+  return merged;
+}
+
 async function saveAiConfigUnlocked(patch = {}) {
   const existing = await readAiConfig();
+  const nextTaskModels = mergeAndValidateAiTaskModels(existing, patch.taskModels);
   const provider = resolveAiProvider(existing, patch.provider || existing.activeProvider);
   const previousProviderConfig = existing.providers[provider];
+  if (Array.isArray(patch.models)) {
+    patch.models.forEach((model) => validateAiRequestParamsPatch(model?.requestParams || {}));
+  }
   const nextProviderLabel = previousProviderConfig.builtin
     ? previousProviderConfig.providerLabel
     : String(patch.providerLabel ?? previousProviderConfig.providerLabel).slice(0, 1024).trim().slice(0, 120);
@@ -791,14 +987,21 @@ async function saveAiConfigUnlocked(patch = {}) {
   const explicitApiKey = Boolean(patchedApiKey);
   const canReuseApiKey = apiKeyCanBeReused(previousProviderConfig.baseUrl, nextBaseUrl);
   const resetConnectionTest = patch.clearApiKey || patch.resetTest || !canReuseApiKey || nextBaseUrl !== previousProviderConfig.baseUrl;
-  const nextModels = resetConnectionTest
-    ? updatedModels.map((model) => ({ ...model, testedOk: false, testedAt: "", testMessage: "" }))
-    : updatedModels;
+  const previousModelsById = new Map((previousProviderConfig.models || []).map((model) => [model.id, model]));
+  const nextModels = updatedModels.map((model) => {
+    const previousModel = previousModelsById.get(model.id);
+    const requestParamsChanged = Boolean(previousModel)
+      && JSON.stringify(previousModel.requestParams || {}) !== JSON.stringify(model.requestParams || {});
+    return resetConnectionTest || requestParamsChanged
+      ? { ...model, testedOk: false, testedAt: "", testMessage: "" }
+      : model;
+  });
   const apiKey = patch.clearApiKey || (!canReuseApiKey && !explicitApiKey)
     ? ""
     : (explicitApiKey ? patchedApiKey : previousProviderConfig.apiKey);
   const next = normalizeAiConfig({
     ...existing,
+    taskModels: nextTaskModels,
     activeProvider: patch.activate === true ? provider : existing.activeProvider,
     activeModelId: patch.activate === true ? modelId : existing.activeModelId,
     providers: {
@@ -892,6 +1095,7 @@ function storedAiTestConfigIdentity(config, provider, modelId) {
     modelPresent: Boolean(modelConfig),
     modelName: modelConfig?.name || "",
     model: modelConfig?.model || "",
+    requestParams: modelConfig?.requestParams || {},
     baseUrl: providerConfig?.baseUrl || "",
     apiKey: providerConfig?.apiKey || "",
   });
@@ -1058,6 +1262,121 @@ function normalizeAiMessages(payload = {}) {
     }
   }
   return [{ role: "user", content: String(payload.prompt || "").slice(0, Math.min(200000, AI_INPUT_MAX_CHARS)) }];
+}
+
+function aiApplyResolverMessages(manifest, selectedBlock, optimizationContext = {}, repair = null) {
+  const safeOptimizationBlock = (block) => ({
+    type: String(block?.type || "paragraph").slice(0, 64),
+    text: String(block?.text || "").slice(0, 100000),
+    caption: String(block?.caption || "").slice(0, 2000),
+    items: Array.isArray(block?.items) ? block.items.slice(0, 1000).map((item) => ({ text: String(item?.text ?? item ?? "").slice(0, 10000) })) : [],
+    headers: Array.isArray(block?.headers) ? block.headers.slice(0, 100).map((item) => String(item || "").slice(0, 10000)) : [],
+    rows: Array.isArray(block?.rows) ? block.rows.slice(0, 1000).map((row) => (Array.isArray(row) ? row.slice(0, 100).map((item) => String(item || "").slice(0, 10000)) : [])) : [],
+  });
+  const safeManifest = {
+    version: 1,
+    documentFingerprint: String(manifest?.documentFingerprint || "").slice(0, 128),
+    blocks: Array.isArray(manifest?.blocks) ? manifest.blocks.slice(0, 5000).map((block) => ({
+      id: String(block?.id || "").slice(0, 128),
+      index: Math.max(0, Math.floor(Number(block?.index) || 0)),
+      type: String(block?.type || "").slice(0, 64),
+      text: String(block?.text || "").slice(0, 100000),
+      protected: Boolean(block?.protected),
+    })) : [],
+  };
+  const safeBlock = safeOptimizationBlock(selectedBlock);
+  const safeContext = {
+    selectedIndex: Math.max(0, Math.floor(Number(optimizationContext?.selectedIndex) || 0)),
+    totalBlocks: Math.max(0, Math.floor(Number(optimizationContext?.totalBlocks) || 0)),
+    previousBlocks: Array.isArray(optimizationContext?.previousBlocks)
+      ? optimizationContext.previousBlocks.slice(-2).map(safeOptimizationBlock)
+      : [],
+    nextBlocks: Array.isArray(optimizationContext?.nextBlocks)
+      ? optimizationContext.nextBlocks.slice(0, 2).map(safeOptimizationBlock)
+      : [],
+  };
+  const safeRepair = repair && typeof repair === "object" ? {
+    code: String(repair.code || "invalid_schema").slice(0, 64),
+    message: String(repair.message || "返回格式不符合要求").slice(0, 1000),
+    previousRaw: String(repair.previousRaw || "").slice(0, 16000),
+  } : null;
+  const payload = JSON.stringify({
+    manifest: safeManifest,
+    selectedOptimizationBlock: safeBlock,
+    optimizationContext: safeContext,
+  });
+  if (payload.length > AI_INPUT_MAX_CHARS) throw new Error("当前信笺过长，无法安全生成应用裁决");
+  const messages = [
+    {
+      role: "system",
+      content: [
+        "你是笺间的应用落点裁决器。你只能决定选中优化块在当前信笺中的落点，绝不能改写优化块内容。",
+        "只返回一个 JSON 对象，不要使用 Markdown 代码围栏，不要添加解释文字。",
+        "允许 action: replace, insert_before, insert_after, unresolved。",
+        "四种动作使用互斥字段，不适用字段必须省略，禁止返回 null、空字符串或空数组占位。",
+        "replace 只允许字段 version, action, targetBlockIds, confidence, reason, documentFingerprint；targetBlockIds 必须按正文顺序连续。",
+        "insert_before/insert_after 只允许字段 version, action, anchorBlockId, confidence, reason, documentFingerprint。",
+        "unresolved 只允许字段 version, action, confidence, reason, documentFingerprint，且 reason 必须说明无法定位的原因。",
+        "不得选择 protected=true 的块。无法可靠判断时必须 unresolved。",
+        "documentFingerprint 必须原样返回输入值；version 必须为 1；confidence 必须位于 0 到 1。",
+        'replace 示例：{"version":1,"action":"replace","targetBlockIds":["block-2-abc"],"confidence":0.96,"reason":"内容对应","documentFingerprint":"doc-abc"}',
+        'insert_before 示例：{"version":1,"action":"insert_before","anchorBlockId":"block-2-abc","confidence":0.91,"reason":"新增过渡段","documentFingerprint":"doc-abc"}',
+        'insert_after 示例：{"version":1,"action":"insert_after","anchorBlockId":"block-2-abc","confidence":0.91,"reason":"新增补充段","documentFingerprint":"doc-abc"}',
+        'unresolved 示例：{"version":1,"action":"unresolved","confidence":0.3,"reason":"存在多个同样合理的位置","documentFingerprint":"doc-abc"}',
+      ].join("\n"),
+    },
+    { role: "user", content: payload },
+  ];
+  if (safeRepair) {
+    messages.push(
+      { role: "assistant", content: safeRepair.previousRaw || "（上次响应为空）" },
+      {
+        role: "user",
+        content: `上次响应未通过本地校验（${safeRepair.code}：${safeRepair.message}）。只修正位置 JSON 中的格式、字段或目标，不要重新判断或改写优化内容，也不要扩展任务。只返回修正后的 JSON 对象，不要添加解释。`,
+      },
+    );
+  }
+  return messages;
+}
+
+async function resolveAiApplyWithModel(config, messages) {
+  if (!config?.testedOk) throw new Error("应用裁决模型尚未通过可用性测试");
+  if (config.transport === "codex-cli") {
+    let output = "";
+    let outputTooLong = false;
+    await streamCodexCompletion({
+      executable: codexRuntimeStatus.executablePath,
+      config,
+      messages,
+      cwd: app.getPath("temp"),
+      scope: { mode: "document-only", relativePath: "" },
+      onDelta: (delta) => {
+        if (outputTooLong) return;
+        output += String(delta || "");
+        if (output.length > 128 * 1024) {
+          output = output.slice(0, 128 * 1024);
+          outputTooLong = true;
+        }
+      },
+    });
+    if (outputTooLong) throw new Error("应用裁决响应过长");
+    return output.trim();
+  }
+  if (!config.apiKey) throw new Error("应用裁决模型缺少 API Key");
+  const request = buildAiRequest(config, messages, { stream: false });
+  const response = await aiFetch(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: JSON.stringify(request.body),
+  });
+  await assertAiResponseOk(response, [config.apiKey]);
+  const raw = await readResponseTextLimited(response, 512 * 1024);
+  const payload = JSON.parse(raw);
+  const output = config.protocol === "anthropic"
+    ? (payload?.content || []).filter((item) => item?.type === "text").map((item) => item.text || "").join("")
+    : String(payload?.choices?.[0]?.message?.content || "");
+  if (!output.trim()) throw new Error("应用裁决模型没有返回结果");
+  return output.trim();
 }
 
 async function streamAiCompletion(sender, requestId, config, messages, signal) {
@@ -1263,6 +1582,18 @@ async function ensureParentDir(filePath) {
 function isSupportedDocument(filePath) {
   const extension = path.extname(filePath).toLowerCase();
   return extension === DOCUMENT_EXTENSION || extension === LEGACY_DOCUMENT_EXTENSION;
+}
+
+function isReservedWorkspaceMetadataPath(filePath) {
+  return path.resolve(String(filePath || ""))
+    .split(/[\\/]+/)
+    .some((segment) => segment.toLocaleLowerCase("en-US") === ".jianjian");
+}
+
+function assertMutableWorkspaceEntry(filePath) {
+  if (isReservedWorkspaceMetadataPath(filePath)) {
+    throw new Error(".jianjian 是笺间工作区保留目录，不能通过文件树修改");
+  }
 }
 
 function createEmptyAiState() {
@@ -1679,13 +2010,85 @@ function nextZipAssetPath(zip, preferredPath, extension = ".png") {
   return assetPath;
 }
 
+function normalizeDocumentId(value) {
+  const id = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ? id : "";
+}
+
+function normalizeDocumentFootnotes(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value.slice(0, 5000).flatMap((footnote) => {
+    const text = typeof footnote?.text === "string" ? footnote.text.trim().slice(0, 20000) : "";
+    if (!text) return [];
+    const id = normalizeDocumentId(footnote?.id) || randomUUID();
+    if (seen.has(id)) return [];
+    seen.add(id);
+    const createdAt = typeof footnote?.createdAt === "string" && Number.isFinite(Date.parse(footnote.createdAt))
+      ? footnote.createdAt
+      : new Date().toISOString();
+    return [{
+      id,
+      text,
+      createdAt,
+      updatedAt: typeof footnote?.updatedAt === "string" && Number.isFinite(Date.parse(footnote.updatedAt)) ? footnote.updatedAt : createdAt,
+    }];
+  });
+}
+
+function normalizeCitationSources(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value.slice(0, 5000).flatMap((source) => {
+    if (!source || typeof source !== "object") return [];
+    const title = typeof source.title === "string" ? source.title.trim().slice(0, 1000) : "";
+    const url = typeof source.url === "string" && /^https?:\/\//i.test(source.url.trim()) ? source.url.trim().slice(0, 2048) : "";
+    const doi = typeof source.doi === "string" ? source.doi.trim().slice(0, 300) : "";
+    if (!title && !url && !doi) return [];
+    const id = normalizeDocumentId(source.id) || randomUUID();
+    if (seen.has(id)) return [];
+    seen.add(id);
+    const authors = (Array.isArray(source.authors) ? source.authors : (typeof source.author === "string" ? source.author.split(/[;,；，]/) : []))
+      .slice(0, 100).map((author) => String(author || "").trim().slice(0, 200)).filter(Boolean);
+    return [{
+      id,
+      type: ["book", "article", "web", "pdf", "report", "thesis", "other"].includes(source.type) ? source.type : "other",
+      title,
+      authors,
+      year: String(source.year ?? "").trim().slice(0, 32),
+      containerTitle: typeof source.containerTitle === "string" ? source.containerTitle.trim().slice(0, 1000) : "",
+      publisher: typeof source.publisher === "string" ? source.publisher.trim().slice(0, 500) : "",
+      url,
+      doi,
+      isbn: typeof source.isbn === "string" ? source.isbn.trim().slice(0, 64) : "",
+      accessedAt: typeof source.accessedAt === "string" ? source.accessedAt.slice(0, 64) : "",
+      pages: typeof source.pages === "string" ? source.pages.trim().slice(0, 128) : "",
+      notes: typeof source.notes === "string" ? source.notes.trim().slice(0, 10000) : "",
+      ...normalizeCitationResearchIdentity(source),
+    }];
+  });
+}
+
 function normalizeDocument(document = {}) {
   const now = new Date().toISOString();
+  const sourceVersion = Number.isInteger(Number(document.version)) && Number(document.version) > 0 ? Number(document.version) : 1;
+  const futureSchema = sourceVersion > DOCUMENT_SCHEMA_VERSION;
+  const usesV2 = sourceVersion >= DOCUMENT_SCHEMA_VERSION
+    || Boolean(document.documentId)
+    || Array.isArray(document.footnotes)
+    || Array.isArray(document.citationSources);
   const createdAt = typeof document.createdAt === "string" && document.createdAt
     ? document.createdAt
     : (typeof document.updatedAt === "string" && document.updatedAt ? document.updatedAt : now);
   return {
-    version: 1,
+    ...(sourceVersion >= DOCUMENT_SCHEMA_VERSION ? document : {}),
+    version: futureSchema ? sourceVersion : (usesV2 ? DOCUMENT_SCHEMA_VERSION : 1),
+    ...(usesV2 || futureSchema ? {
+      documentId: normalizeDocumentId(document.documentId) || randomUUID(),
+      derivedFrom: normalizeDocumentId(document.derivedFrom),
+      footnotes: normalizeDocumentFootnotes(document.footnotes),
+      citationSources: normalizeCitationSources(document.citationSources),
+    } : {}),
     title: typeof document.title === "string" && document.title.trim() ? document.title.trim().slice(0, 200) : "未命名信笺",
     author: typeof document.author === "string" ? document.author.trim().slice(0, 40) : "",
     html: typeof document.html === "string" && document.html.trim() ? document.html : "<p></p>",
@@ -1704,6 +2107,7 @@ function normalizeDocument(document = {}) {
     updatedAt: typeof document.updatedAt === "string" && document.updatedAt ? document.updatedAt : now,
     comments: normalizeDocumentComments(document.comments),
     aiState: normalizeSavedAiState(document.aiState),
+    ...(futureSchema ? { _readOnlyFutureSchema: true } : {}),
   };
 }
 
@@ -1865,6 +2269,9 @@ function linkPaperDocument(filePath, sourceDocument, metrics = null) {
 async function savePaperDocumentWithinMutation(filePath, document, { validateTarget, afterCommit } = {}) {
   const targetPath = path.resolve(String(filePath || ""));
   if (!targetPath || !isSupportedDocument(targetPath)) throw new Error("无效的信笺保存路径");
+  if (Number(document?.version || 1) > DOCUMENT_SCHEMA_VERSION || document?._readOnlyFutureSchema) {
+    throw new Error(`此信笺使用未来格式 v${Number(document?.version) || "?"}，当前版本只能只读打开`);
+  }
   return documentWriteQueue.run(targetPath, async () => {
     if (typeof validateTarget === "function") await validateTarget(targetPath);
     const normalized = normalizeDocument(document);
@@ -1893,7 +2300,28 @@ async function savePaperDocumentWithinMutation(filePath, document, { validateTar
       throw new Error("信笺文件超过安全写入上限，文档未保存");
     }
     preflightZipBuffer(output);
+    // Re-check immediately before the atomic replacement. Packaging images and
+    // generating the archive can take long enough for a sync client to update
+    // the target after the first validation.
+    if (typeof validateTarget === "function") await validateTarget(targetPath);
     await atomicWriteFile(targetPath, output);
+    const committedRevision = await readDiskRevision(targetPath);
+    const outputSha256 = createHash("sha256").update(output).digest("hex");
+    if (
+      !committedRevision
+      || committedRevision.size !== output.length
+      || committedRevision.sha256 !== outputSha256
+    ) {
+      throw new DocumentRevisionConflictError("工作区文件在写入完成后立即被外部版本替换", {
+        filePath: targetPath,
+        expectedRevision: {
+          size: output.length,
+          mtimeMs: committedRevision?.mtimeMs || Date.now(),
+          sha256: outputSha256,
+        },
+        actualRevision: committedRevision,
+      });
+    }
     invalidateDocumentCachesForPath(targetPath);
     documentAssetRegistry.register(targetPath);
     for (const [sourceUrl, assetPath] of packager.bySource) {
@@ -1908,6 +2336,7 @@ async function savePaperDocumentWithinMutation(filePath, document, { validateTar
     const result = {
       path: targetPath,
       document: linkPaperDocument(targetPath, packagedDocument),
+      diskRevision: committedRevision,
     };
     if (typeof afterCommit === "function") await afterCommit(result);
     return result;
@@ -1918,14 +2347,12 @@ async function savePaperDocument(filePath, document, options = {}) {
   return runDocumentMutation(() => savePaperDocumentWithinMutation(filePath, document, options));
 }
 
-async function loadPaperDocument(filePath, metrics = null) {
+async function loadPaperDocumentSnapshot(filePath, metrics = null) {
   const startedAt = Date.now();
   const sourcePath = path.resolve(String(filePath || ""));
-  const sourceStat = await fs.stat(sourcePath);
-  if (!sourceStat.isFile() || sourceStat.size > DEFAULT_ARCHIVE_LIMITS.maxArchiveBytes) {
-    throw new Error("信笺文件过大或不是普通文件，已拒绝加载");
-  }
-  const buffer = await fs.readFile(sourcePath);
+  const snapshot = await readFileSnapshot(sourcePath, { maxBytes: DEFAULT_ARCHIVE_LIMITS.maxArchiveBytes });
+  if (!snapshot) throw new Error("信笺文件不存在或已被移动");
+  const { buffer, revision: diskRevision, stat: sourceStat } = snapshot;
   if (metrics) {
     metrics.readMs = Date.now() - startedAt;
     metrics.fileBytes = buffer.byteLength;
@@ -1955,19 +2382,18 @@ async function loadPaperDocument(filePath, metrics = null) {
     metrics.documentJsonBytes = Buffer.byteLength(raw, "utf8");
   }
   if (!parsedDocument.createdAt) {
-    try {
-      const stat = await fs.stat(sourcePath);
-      parsedDocument.createdAt = stat.birthtime?.toISOString?.() || stat.ctime?.toISOString?.() || parsedDocument.updatedAt;
-    } catch {
-      // Fall back to updatedAt in normalizeDocument.
-    }
+    parsedDocument.createdAt = sourceStat.birthtime?.toISOString?.() || sourceStat.ctime?.toISOString?.() || parsedDocument.updatedAt;
   }
   const document = linkPaperDocument(sourcePath, parsedDocument, metrics);
 
   if (metrics) {
     metrics.totalMs = Date.now() - startedAt;
   }
-  return document;
+  return { document, diskRevision, rawDocument: parsedDocument };
+}
+
+async function loadPaperDocument(filePath, metrics = null) {
+  return (await loadPaperDocumentSnapshot(filePath, metrics)).document;
 }
 
 ipcMain.handle("app:get-paths", async () => {
@@ -1993,6 +2419,26 @@ ipcMain.handle("window:set-modal-overlay", async () => {
     return { ok: false, message: error?.message };
   }
 });
+
+ipcMain.handle("research:web-view-show", async (_event, payload = {}) => (
+  researchWebViews?.show(payload) || { ok: false, unsupported: true }
+));
+
+ipcMain.handle("research:web-view-bounds", async (_event, payload = {}) => (
+  researchWebViews?.updateBounds(payload) || { ok: false, unsupported: true }
+));
+
+ipcMain.handle("research:web-view-hide", async (_event, viewId = "") => (
+  researchWebViews?.hide(viewId) || { ok: true }
+));
+
+ipcMain.handle("research:web-view-control", async (_event, payload = {}) => (
+  researchWebViews?.control(payload) || { ok: false, unsupported: true }
+));
+
+ipcMain.handle("research:web-view-destroy", async (_event, viewId = "") => (
+  researchWebViews?.destroy(viewId) || { ok: true }
+));
 
 ipcMain.handle("ai:get-config", async () => publicAiConfigWithRuntime(await readAiConfig()));
 
@@ -2070,6 +2516,7 @@ ipcMain.handle("ai:test-config", async (_event, patch) => {
       modelId,
       modelName: String(patch?.modelName || initialModelConfig?.name || "").slice(0, 256),
       model: String(patch?.model || initialModelConfig?.model || initialProviderConfig.model || "").slice(0, 256),
+      requestParams: initialModelConfig?.requestParams || {},
       baseUrl,
       apiKey,
     };
@@ -2156,6 +2603,55 @@ ipcMain.handle("ai:generate", async (event, payload) => {
   return { ok: true, requestId };
 });
 
+ipcMain.handle("ai:resolve-apply", async (_event, payload = {}) => {
+  const config = await readAiConfig();
+  const taskModel = config.taskModels?.applyResolver || {};
+  const hasExplicitTaskModel = Boolean(taskModel.providerId || taskModel.modelId);
+  const selectedResolver = taskAiProviderConfig(config, taskModel);
+  const resolver = selectedResolver ? {
+    ...selectedResolver,
+    requestParams: selectedResolver.transport === "codex-cli"
+      ? {}
+      : aiApplyResolverRequestParams(
+        selectedResolver.provider,
+        selectedResolver.protocol,
+        mergeAiRequestParams(selectedResolver.requestParams, hasExplicitTaskModel ? taskModel.requestParams : {}),
+      ),
+  } : null;
+  if (!resolver) {
+    throw new Error(hasExplicitTaskModel
+      ? "应用裁决模型已失效，请在“AI 配置 → 任务模型”中重新选择"
+      : "请先在“AI 配置”中配置并测试至少一个可用的默认模型");
+  }
+  if ((!resolver.apiKey || !resolver.testedOk) && resolver.transport !== "codex-cli") {
+    throw new Error(hasExplicitTaskModel
+      ? "应用裁决模型已失效，请在“AI 配置 → 任务模型”中重新选择"
+      : "默认模型不可用，请在“AI 配置”中重新配置并测试");
+  }
+  if (resolver.transport === "codex-cli" && !codexRuntimeStatus.ready) {
+    throw new Error(hasExplicitTaskModel
+      ? "应用裁决所选 Codex CLI 当前不可用，请在“AI 配置 → 任务模型”中重新选择"
+      : "默认 Codex CLI 当前不可用，请在“AI 配置”中重新检查");
+  }
+  const messages = aiApplyResolverMessages(
+    payload.manifest,
+    payload.selectedBlock,
+    payload.optimizationContext,
+    payload.repair,
+  );
+  const raw = await resolveAiApplyWithModel(resolver, messages);
+  return {
+    ok: true,
+    raw,
+    model: {
+      providerId: resolver.provider,
+      providerLabel: resolver.providerLabel,
+      modelId: resolver.modelId,
+      modelName: resolver.modelName,
+    },
+  };
+});
+
 ipcMain.handle("ai:cancel", async (_event, requestId) => {
   const id = String(requestId || "");
   const controller = activeAiRequests.get(id);
@@ -2235,6 +2731,213 @@ ipcMain.handle("update:install", async () => {
   return { ...updateState, installPending: true };
 });
 
+function workspaceSearchCachePath(rootPath) {
+  const key = createHash("sha256").update(path.resolve(rootPath)).digest("hex");
+  return path.join(app.getPath("userData"), WORKSPACE_SEARCH_CACHE_FOLDER, `${key}.json`);
+}
+
+async function getWorkspaceSearchIndex(folderPath, { refresh = false } = {}) {
+  const rootPath = await assertAuthorizedDirectory(folderPath);
+  const key = process.platform === "win32" ? rootPath.toLocaleLowerCase("en-US") : rootPath;
+  let index = workspaceSearchIndexes.get(key);
+  if (!index) {
+    index = createWorkspaceSearchIndex({ rootPath, cachePath: workspaceSearchCachePath(rootPath) });
+    workspaceSearchIndexes.set(key, index);
+    await index.initialize();
+  } else if (refresh) {
+    await index.refresh();
+  }
+  return { index, rootPath };
+}
+
+function stopWorkspaceWatcher() {
+  if (activeWorkspaceWatchTimer) {
+    clearTimeout(activeWorkspaceWatchTimer);
+    activeWorkspaceWatchTimer = null;
+  }
+  activeWorkspaceWatcher?.close?.();
+  activeWorkspaceWatcher = null;
+  activeWorkspaceWatchRoot = "";
+}
+
+async function startWorkspaceWatcher(folderPath) {
+  const rootPath = await assertAuthorizedDirectory(folderPath);
+  if (activeWorkspaceWatcher && activeWorkspaceWatchRoot === rootPath) return rootPath;
+  stopWorkspaceWatcher();
+  // This is also the main-process identity of the currently open writing
+  // workspace. Keep it even when the host cannot provide recursive watching.
+  activeWorkspaceWatchRoot = rootPath;
+  try {
+    activeWorkspaceWatcher = nativeFs.watch(rootPath, { recursive: true, encoding: "utf8" }, (eventType, fileName) => {
+      if (activeWorkspaceWatchTimer) clearTimeout(activeWorkspaceWatchTimer);
+      activeWorkspaceWatchTimer = setTimeout(async () => {
+        activeWorkspaceWatchTimer = null;
+        try {
+          const { index } = await getWorkspaceSearchIndex(rootPath);
+          await index.refresh();
+        } catch (error) {
+          await writeAiDebugLog("workspace:watch:refresh-error", { rootPath, message: error?.message });
+        }
+        sendRendererEvent(mainWindow?.webContents, "workspace:changed", {
+          rootPath,
+          eventType: String(eventType || "change"),
+          relativePath: typeof fileName === "string" ? fileName.slice(0, 32768) : "",
+          changedAt: new Date().toISOString(),
+        });
+      }, 180);
+      activeWorkspaceWatchTimer.unref?.();
+    });
+    activeWorkspaceWatcher.on?.("error", (error) => {
+      void writeAiDebugLog("workspace:watch:error", { rootPath, message: error?.message });
+      sendRendererEvent(mainWindow?.webContents, "workspace:watch-error", { rootPath, message: error?.message || "文件监听失败" });
+    });
+  } catch (error) {
+    await writeAiDebugLog("workspace:watch:unavailable", { rootPath, message: error?.message });
+    return rootPath;
+  }
+  return rootPath;
+}
+
+ipcMain.handle("folder:search", async (_event, payload = {}) => {
+  const folderPath = String(payload.folderPath || "");
+  if (!folderPath) return { requestId: payload.requestId || "", query: "", canceled: false, results: [], totalMatches: 0 };
+  const { index } = await getWorkspaceSearchIndex(folderPath, { refresh: Boolean(payload.refresh) });
+  const results = await index.search(payload.query, {
+    requestId: String(payload.requestId || randomUUID()).slice(0, 128),
+    limit: Math.min(200, Math.max(1, Number(payload.limit) || 100)),
+    overrides: Array.isArray(payload.overrides) ? payload.overrides.slice(0, 100) : [],
+  });
+  return results;
+});
+
+ipcMain.handle("folder:search-cancel", async (_event, folderPath, requestId) => {
+  if (!folderPath || !requestId) return { ok: false };
+  const rootPath = await assertAuthorizedDirectory(folderPath);
+  const key = process.platform === "win32" ? rootPath.toLocaleLowerCase("en-US") : rootPath;
+  return { ok: Boolean(workspaceSearchIndexes.get(key)?.cancel(String(requestId))) };
+});
+
+ipcMain.handle("workspace:relationships", async (_event, payload = {}) => {
+  const rootPath = await assertAuthorizedDirectory(payload.folderPath);
+  const walked = await walkWorkspaceDocuments(rootPath);
+  const overrideByPath = new Map((Array.isArray(payload.overrides) ? payload.overrides : []).slice(0, 100)
+    .filter((item) => item?.path && item?.document && isPathInside(rootPath, item.path))
+    .map((item) => [process.platform === "win32" ? path.resolve(item.path).toLocaleLowerCase("en-US") : path.resolve(item.path), item.document]));
+  const records = (await mapWithConcurrency(walked.documents, 8, async (filePath) => {
+    try {
+      const key = process.platform === "win32" ? path.resolve(filePath).toLocaleLowerCase("en-US") : path.resolve(filePath);
+      const document = overrideByPath.get(key) || await readSearchDocument(filePath);
+      const documentId = normalizeDocumentId(document.documentId);
+      const links = [...String(document.html || "").matchAll(/data-document-id=["']([0-9a-f-]{36})["']/gi)]
+        .map((match) => normalizeDocumentId(match[1])).filter(Boolean);
+      return {
+        documentId,
+        needsIdentity: !documentId,
+        title: typeof document.title === "string" ? document.title.slice(0, 200) : path.basename(filePath, path.extname(filePath)),
+        path: filePath,
+        relativePath: path.relative(rootPath, filePath),
+        links: [...new Set(links)],
+      };
+    } catch {
+      return null;
+    }
+  })).filter(Boolean);
+  const byId = new Map();
+  records.forEach((record) => {
+    if (!record.documentId) return;
+    const group = byId.get(record.documentId) || [];
+    group.push(record);
+    byId.set(record.documentId, group);
+  });
+  const currentId = normalizeDocumentId(payload.documentId);
+  const currentLinks = (Array.isArray(payload.currentLinks) ? payload.currentLinks : []).slice(0, 5000)
+    .map((link) => ({
+      ...link,
+      targetDocumentId: normalizeDocumentId(link?.targetDocumentId || link?.documentId),
+    })).filter((link) => link.targetDocumentId);
+  const resolvedLinks = currentLinks.map((link) => {
+    const target = byId.get(link.targetDocumentId)?.[0];
+    return {
+      ...link,
+      documentId: link.targetDocumentId,
+      targetDocumentId: link.targetDocumentId,
+      title: target?.title || link.title || "未知笺记",
+      path: target?.path || "",
+      relativePath: target?.relativePath || "",
+      missing: !target,
+    };
+  });
+  return {
+    rootPath,
+    documents: records.filter((record) => isWorkspaceRelationshipCandidate(record, {
+      currentDocumentId: currentId,
+      currentPath: payload.currentPath,
+    })).map(({ links: _links, ...record }) => record),
+    links: resolvedLinks,
+    backlinks: currentId ? records.filter((record) => record.documentId !== currentId && record.links.includes(currentId)).map(({ links: _links, ...record }) => record) : [],
+    duplicates: [...byId.values()].filter((group) => group.length > 1).flatMap((group) => group.slice(1).map(({ links: _links, ...record }) => record)),
+  };
+});
+
+ipcMain.handle("workspace:watch", async (_event, folderPath) => {
+  if (!folderPath) {
+    stopWorkspaceWatcher();
+    return { ok: true, rootPath: "" };
+  }
+  return { ok: true, rootPath: await startWorkspaceWatcher(folderPath) };
+});
+
+ipcMain.handle("document:revision", async (_event, filePath) => {
+  const authorizedPath = await assertAuthorizedDocument(filePath);
+  return { path: authorizedPath, diskRevision: await readDiskRevision(authorizedPath) };
+});
+
+ipcMain.handle("document:regenerate-identity", async (_event, filePath, force = false) => {
+  const targetPath = await resolveAuthorizedOpenDocument(filePath);
+  const sourceSnapshot = await loadPaperDocumentSnapshot(targetPath);
+  const expectedRevision = sourceSnapshot.diskRevision;
+  const sourceDocument = sourceSnapshot.document;
+  if (Number(sourceSnapshot.rawDocument?.version || 1) > DOCUMENT_SCHEMA_VERSION || sourceDocument._readOnlyFutureSchema) {
+    throw new Error(`此信笺使用未来格式 v${Number(sourceSnapshot.rawDocument?.version) || "?"}，当前版本只能只读打开`);
+  }
+  const previousId = normalizeDocumentId(sourceDocument.documentId);
+  if (previousId && !force) {
+    return { canceled: false, path: targetPath, documentId: previousId, diskRevision: expectedRevision, changed: false };
+  }
+  const migrationBackupPath = Number(sourceDocument.version || 1) < DOCUMENT_SCHEMA_VERSION
+    ? await preservePreV2MigrationBackup(targetPath)
+    : "";
+  const documentId = randomUUID();
+  const nextDocument = {
+    ...sourceDocument,
+    version: DOCUMENT_SCHEMA_VERSION,
+    documentId,
+    derivedFrom: previousId || "",
+    footnotes: Array.isArray(sourceDocument.footnotes) ? sourceDocument.footnotes : [],
+    citationSources: Array.isArray(sourceDocument.citationSources) ? sourceDocument.citationSources : [],
+  };
+  const saved = await savePaperDocument(targetPath, nextDocument, {
+    validateTarget: (candidate) => assertDiskRevision(candidate, expectedRevision),
+  });
+  return {
+    canceled: false,
+    changed: true,
+    path: targetPath,
+    documentId,
+    document: saved.document,
+    diskRevision: saved.diskRevision,
+    ...(migrationBackupPath ? { migrationBackupPath } : {}),
+  };
+});
+
+ipcMain.handle("window:set-fullscreen", async (_event, fullscreen) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { fullscreen: false };
+  mainWindow.setFullScreen(Boolean(fullscreen));
+  return { fullscreen: mainWindow.isFullScreen() };
+});
+
+ipcMain.handle("window:get-fullscreen", async () => ({ fullscreen: Boolean(mainWindow?.isFullScreen?.()) }));
+
 ipcMain.handle("document:open", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "打开信笺",
@@ -2250,10 +2953,11 @@ ipcMain.handle("document:open", async () => {
   const filePath = await canonicalExistingPath(result.filePaths[0], "file");
   if (!isSupportedDocument(filePath)) throw new Error("请选择 .letterpaper 或 .paperdoc 信笺文件");
   const metrics = {};
-  const document = await loadPaperDocument(filePath, metrics);
+  const loaded = await loadPaperDocumentSnapshot(filePath, metrics);
+  const { document, diskRevision } = loaded;
   await authorizeDocumentPath(filePath);
   void writeAiDebugLog("document:open:loaded", { filePath, ...metrics });
-  return { canceled: false, path: filePath, document };
+  return { canceled: false, path: filePath, document, diskRevision, readOnly: Boolean(document._readOnlyFutureSchema) };
 });
 
 ipcMain.handle("document:open-path", async (_event, filePath) => {
@@ -2266,18 +2970,491 @@ ipcMain.handle("document:open-path", async (_event, filePath) => {
   try {
     const authorizedPath = await resolveAuthorizedOpenDocument(filePath);
     const metrics = {};
-    const document = await loadPaperDocument(authorizedPath, metrics);
+    const loaded = await loadPaperDocumentSnapshot(authorizedPath, metrics);
+    const { document, diskRevision } = loaded;
     const recoveryId = autosaveSessionIdForPath(authorizedPath);
     void writeAiDebugLog("document:open-path:loaded", { filePath: authorizedPath, ...metrics });
-    return { canceled: false, path: authorizedPath, document, ...(recoveryId ? { recoveryId } : {}) };
+    return { canceled: false, path: authorizedPath, document, diskRevision, readOnly: Boolean(document._readOnlyFutureSchema), ...(recoveryId ? { recoveryId } : {}) };
   } catch (error) {
     await writeAiDebugLog("document:open-path:error", {
       filePath,
       message: error?.message,
       code: error?.code,
     });
-    return { canceled: true };
+    return {
+      canceled: true,
+      error: String(error?.message || "文档打开失败").slice(0, 500),
+    };
   }
+});
+
+ipcMain.handle("document:import", async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "导入文档",
+    defaultPath: defaultDocumentsDir(),
+    properties: ["openFile"],
+    filters: [
+      { name: "可导入文档", extensions: ["md", "markdown", "html", "htm", "txt", "docx"] },
+      { name: "Markdown", extensions: ["md", "markdown"] },
+      { name: "HTML", extensions: ["html", "htm"] },
+      { name: "纯文本", extensions: ["txt"] },
+      { name: "Word 文档", extensions: ["docx"] },
+    ],
+  });
+  if (result.canceled || !result.filePaths?.[0]) return { canceled: true };
+  const sourcePath = await canonicalExistingPath(result.filePaths[0], "file");
+  const imported = await documentInterchange.importDocument({ sourcePath });
+  const now = new Date().toISOString();
+  const document = normalizeDocument({
+    ...imported.document,
+    version: DOCUMENT_SCHEMA_VERSION,
+    documentId: randomUUID(),
+    derivedFrom: "",
+    comments: [],
+    aiState: {},
+    createdAt: now,
+    updatedAt: now,
+  });
+  return {
+    canceled: false,
+    sourcePath,
+    format: imported.format,
+    document,
+    warnings: imported.warnings || [],
+  };
+});
+
+function interchangeFormatExtension(format) {
+  return ({ markdown: ".md", html: ".html", txt: ".txt", docx: ".docx" })[format] || "";
+}
+
+async function existingExportPickerDirectory(value) {
+  const candidate = typeof value === "string" ? value.trim().slice(0, 32768) : "";
+  if (!candidate || /[\u0000-\u001f\u007f]/.test(candidate) || !path.isAbsolute(candidate)) return "";
+  try {
+    const stats = await fs.stat(candidate);
+    return stats.isDirectory() ? candidate : "";
+  } catch {
+    return "";
+  }
+}
+
+async function pickInterchangeExportPath(format, suggestedName, initialDirectory = "") {
+  const extension = interchangeFormatExtension(format);
+  if (!extension) throw new Error("不支持的可编辑导出格式");
+  const labels = { markdown: "Markdown", html: "HTML", txt: "纯文本", docx: "Word 文档" };
+  const baseDirectory = await existingExportPickerDirectory(initialDirectory) || defaultDocumentsDir();
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: `导出 ${labels[format]}`,
+    defaultPath: path.join(baseDirectory, `${exportSafeName(suggestedName)}${extension}`),
+    filters: [{ name: labels[format], extensions: [extension.slice(1)] }],
+  });
+  return result.canceled || !result.filePath ? "" : authorizeExportTarget(ensureExtension(result.filePath, extension), format);
+}
+
+ipcMain.handle("document:export-editable", async (_event, payload = {}) => {
+  const format = ["markdown", "html", "txt", "docx"].includes(payload.format) ? payload.format : "";
+  if (!format) throw new Error("不支持的可编辑导出格式");
+  const selectedTargetPath = payload.targetPath
+    ? ensureExtension(path.resolve(String(payload.targetPath)), interchangeFormatExtension(format))
+    : await pickInterchangeExportPath(format, payload.document?.title || "未命名信笺");
+  if (!selectedTargetPath) return { canceled: true };
+  const targetPath = consumeExportTarget(selectedTargetPath, format);
+  const exported = await documentInterchange.exportDocument({
+    format,
+    document: normalizeDocument(payload.document || {}),
+    targetPath,
+    baseName: path.basename(targetPath, path.extname(targetPath)),
+  });
+  const root = path.dirname(targetPath);
+  const writes = [];
+  for (const asset of exported.assets || []) {
+    const assetPath = path.resolve(root, asset.relativePath);
+    if (!isPathInside(root, assetPath)) throw new Error("导出资源路径越过目标文件夹");
+    writes.push({ path: assetPath, buffer: asset.buffer });
+  }
+  // Sidecar assets land first; the main document is the bundle commit point.
+  writes.push({ path: targetPath, buffer: exported.buffer });
+  for (const write of writes) {
+    await fs.mkdir(path.dirname(write.path), { recursive: true });
+    await atomicWriteFile(write.path, write.buffer);
+  }
+  return { canceled: false, path: targetPath, format, warnings: exported.warnings || [], assets: Math.max(0, writes.length - 1) };
+});
+
+function requireResearchLibrary() {
+  if (!researchLibrary) throw new Error("独立资料库尚未初始化");
+  return researchLibrary;
+}
+
+ipcMain.handle("research:root-get", async () => requireResearchLibrary().getRoot());
+
+ipcMain.handle("research:root-pick", async () => {
+  const previous = requireResearchLibrary().getRoot();
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "选择资料目录",
+    defaultPath: previous.rootPath || app.getPath("documents"),
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled || !result.filePaths?.[0]) return { canceled: true, ...previous };
+  const selected = await requireResearchLibrary().selectRoot(result.filePaths[0]);
+  return { canceled: false, ...selected };
+});
+
+ipcMain.handle("research:root-clear", async () => requireResearchLibrary().clearRoot());
+
+ipcMain.handle("research:folder-list", async (_event, payload = {}) => (
+  requireResearchLibrary().listFolder(payload.libraryId, payload.relativePath || "")
+));
+
+ipcMain.handle("research:folder-create", async (_event, payload = {}) => (
+  requireResearchLibrary().createFolder(payload.libraryId, payload.parentRelativePath || "", payload.name || "")
+));
+
+ipcMain.handle("research:file-import", async (_event, payload = {}) => {
+  const library = requireResearchLibrary();
+  // Validate the capability and target before showing a privileged file picker.
+  await library.listFolder(payload.libraryId, payload.targetRelativePath || "");
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: "导入资料文件",
+    defaultPath: app.getPath("documents"),
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "所有资料文件", extensions: ["*"] }],
+  });
+  if (picked.canceled || !picked.filePaths?.length) {
+    return {
+      canceled: true,
+      libraryId: payload.libraryId || "",
+      targetRelativePath: payload.targetRelativePath || "",
+      imported: [],
+    };
+  }
+  return library.importFiles(payload.libraryId, payload.targetRelativePath || "", picked.filePaths);
+});
+
+ipcMain.handle("research:entry-rename", async (_event, payload = {}) => (
+  requireResearchLibrary().renameEntry(payload.libraryId, payload.relativePath, payload.nextName)
+));
+
+ipcMain.handle("research:entry-move", async (_event, payload = {}) => (
+  requireResearchLibrary().moveEntry(payload.libraryId, payload.relativePath, payload.targetFolderRelativePath || "")
+));
+
+ipcMain.handle("research:entry-trash", async (_event, payload = {}) => (
+  requireResearchLibrary().trashEntry(payload.libraryId, payload.relativePath, shell.trashItem?.bind(shell))
+));
+
+ipcMain.handle("research:entry-show", async (_event, payload = {}) => (
+  requireResearchLibrary().showEntry(payload.libraryId, payload.relativePath || "", shell.showItemInFolder?.bind(shell))
+));
+
+ipcMain.handle("research:entry-copy-path", async (_event, payload = {}) => {
+  const resolved = await requireResearchLibrary().copyEntryPath(payload.libraryId, payload.relativePath || "");
+  clipboard.writeText(resolved.path);
+  return { ok: true, libraryId: resolved.libraryId, relativePath: resolved.relativePath };
+});
+
+ipcMain.handle("research:source-list", async (_event, payload = {}) => (
+  requireResearchLibrary().listSources(payload.libraryId)
+));
+
+async function runResearchSourceMutation(task) {
+  try {
+    return { ok: true, ...(await task()) };
+  } catch (error) {
+    if (error?.code !== REVISION_CONFLICT_CODE) throw error;
+    return {
+      ok: false,
+      conflict: true,
+      code: REVISION_CONFLICT_CODE,
+      message: error?.message || "资料来源已被外部修改",
+      expectedRevision: error?.expectedRevision || null,
+      actualRevision: error?.actualRevision || null,
+    };
+  }
+}
+
+ipcMain.handle("research:source-upsert", async (_event, payload = {}) => runResearchSourceMutation(() => (
+  requireResearchLibrary().upsertSource(payload.libraryId, payload.source || {}, payload.expectedRevision || null)
+)));
+
+ipcMain.handle("research:source-delete", async (_event, payload = {}) => runResearchSourceMutation(() => (
+  requireResearchLibrary().deleteSource(payload.libraryId, payload.sourceId, payload.expectedRevision || null)
+)));
+
+ipcMain.handle("research:web-tree-list", async (_event, payload = {}) => (
+  requireResearchLibrary().listWebTree(payload.libraryId)
+));
+
+ipcMain.handle("research:web-folder-create", async (_event, payload = {}) => runResearchSourceMutation(() => (
+  requireResearchLibrary().createWebFolder(payload.libraryId, payload.folder || {}, payload.expectedRevision || null)
+)));
+
+ipcMain.handle("research:web-folder-update", async (_event, payload = {}) => runResearchSourceMutation(() => (
+  requireResearchLibrary().updateWebFolder(payload.libraryId, payload.folder || {}, payload.expectedRevision || null)
+)));
+
+ipcMain.handle("research:web-folder-delete", async (_event, payload = {}) => runResearchSourceMutation(() => (
+  requireResearchLibrary().deleteWebFolder(payload.libraryId, payload.folderId, payload.expectedRevision || null)
+)));
+
+ipcMain.handle("research:web-source-move", async (_event, payload = {}) => runResearchSourceMutation(() => (
+  requireResearchLibrary().moveWebSource(payload.libraryId, payload.sourceId, payload.placement || {}, payload.expectedRevision || null)
+)));
+
+ipcMain.handle("research:web-selection-copy", async (_event, payload = {}) => runResearchSourceMutation(async () => {
+  if (!activeWorkspaceWatchRoot) throw new Error("当前没有打开的写作工作区");
+  const workspace = await ensureWorkspace(activeWorkspaceWatchRoot);
+  const selection = payload.selection && typeof payload.selection === "object" ? payload.selection : {};
+  const targetScopeKey = normalizeWebScopeKey(selection.targetScopeKey);
+  if (targetScopeKey !== `workspace:${String(workspace.manifest.workspaceId || "").toLocaleLowerCase("en-US")}`) {
+    throw new Error("只能复制到当前打开工作区的私区");
+  }
+  return requireResearchLibrary().copyWebSelection(payload.libraryId, { ...selection, targetScopeKey });
+}));
+
+ipcMain.handle("research:web-source-upsert", async (_event, payload = {}) => runResearchSourceMutation(async () => {
+  const library = requireResearchLibrary();
+  const revisions = payload.revisions && typeof payload.revisions === "object" ? payload.revisions : {};
+  const saved = await library.upsertSource(payload.libraryId, payload.source || {}, revisions.source || null);
+  try {
+    const tree = await library.moveWebSource(
+      payload.libraryId,
+      saved.source.id,
+      payload.placement || { scopeKey: "global", folderId: "" },
+      revisions.tree || null,
+    );
+    return { ...saved, tree, placementFallback: false };
+  } catch (error) {
+    return {
+      ...saved,
+      tree: await library.listWebTree(payload.libraryId),
+      placementFallback: true,
+      warning: error?.code === REVISION_CONFLICT_CODE
+        ? "网页已保存，但分组索引发生冲突；新网页暂时回退到全局未分组。"
+        : `网页已保存，但分组位置未能写入：${error?.message || "未知错误"}`,
+    };
+  }
+}));
+
+ipcMain.handle("research:legacy-import", async (_event, payload = {}) => {
+  const workspacePath = await assertAuthorizedDirectory(payload.workspacePath);
+  const workspaceKey = process.platform === "win32"
+    ? workspacePath.toLocaleLowerCase("en-US")
+    : workspacePath;
+  const activeWorkspaceKey = process.platform === "win32"
+    ? activeWorkspaceWatchRoot.toLocaleLowerCase("en-US")
+    : activeWorkspaceWatchRoot;
+  if (!activeWorkspaceKey || workspaceKey !== activeWorkspaceKey) {
+    throw new Error("只能从左侧文件区当前打开的写作工作区导入旧资料库");
+  }
+  const library = requireResearchLibrary();
+  // Validate the target capability before reading anything from the legacy workspace.
+  await library.listSources(payload.libraryId);
+  const legacy = await listResearchSources(workspacePath);
+  return importLegacyResearch({
+    manager: library,
+    libraryId: payload.libraryId,
+    workspaceId: legacy.workspaceId,
+    sources: legacy.sources,
+    warnings: legacy.warnings,
+    resolveFile: (source) => resolveSourceFile(workspacePath, source),
+  });
+});
+
+ipcMain.handle("research:pdf-read", async (_event, payload = {}) => (
+  requireResearchLibrary().readPdf(payload.libraryId, payload.relativePath)
+));
+
+function decodeResearchPreviewText(bytes) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+  if ((buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf)
+    || (buffer[0] === 0xff && buffer[1] === 0xfe)
+    || (buffer[0] === 0xfe && buffer[1] === 0xff)) {
+    return decodeTextBuffer(buffer, "utf8", iconvLite);
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    return iconvLite.decode(buffer, "gb18030");
+  }
+}
+
+ipcMain.handle("research:preview-read", async (_event, payload = {}) => {
+  const preview = await requireResearchLibrary().readPreview(payload.libraryId, payload.relativePath);
+  const common = {
+    libraryId: preview.libraryId,
+    relativePath: preview.relativePath,
+    name: preview.name,
+    previewKind: preview.previewKind,
+    mime: preview.mime,
+    size: preview.size,
+    diskRevision: preview.diskRevision,
+  };
+  if (preview.previewKind === "image") return { ...common, bytes: preview.bytes };
+  const text = decodeResearchPreviewText(preview.bytes);
+  if (preview.previewKind !== "markdown") return { ...common, text };
+  const converted = markdownToHtml(text);
+  const sanitized = await sanitizeImportedHtml(converted.html, {
+    sourcePath: preview.path,
+    fsApi: fs,
+    pathApi: path,
+  });
+  return { ...common, html: sanitized.html, warnings: sanitized.warnings || [] };
+});
+
+ipcMain.handle("research:document-open", async (_event, payload = {}) => {
+  const resolved = await requireResearchLibrary().copyEntryPath(payload.libraryId, payload.relativePath);
+  if (!isSupportedDocument(resolved.path)) throw new Error("该资料不是笺间文档");
+  const filePath = await authorizeDocumentPath(resolved.path);
+  const metrics = {};
+  const loaded = await loadPaperDocumentSnapshot(filePath, metrics);
+  const recoveryId = autosaveSessionIdForPath(filePath);
+  void writeAiDebugLog("research:document-open:loaded", { filePath, ...metrics });
+  return {
+    canceled: false,
+    path: filePath,
+    document: loaded.document,
+    diskRevision: loaded.diskRevision,
+    readOnly: Boolean(loaded.document._readOnlyFutureSchema),
+    ...(recoveryId ? { recoveryId } : {}),
+  };
+});
+
+ipcMain.handle("research:watch", async (_event, payload = {}) => (
+  requireResearchLibrary().watchLibrary(payload.libraryId, {
+    onChange: (change) => sendRendererEvent(mainWindow?.webContents, "research:changed", change),
+    onError: (error) => sendRendererEvent(mainWindow?.webContents, "research:watch-error", error),
+  })
+));
+
+async function researchListPayload(rootPath) {
+  const listed = await listResearchSources(rootPath);
+  const sources = await mapWithConcurrency(listed.sources || [], 12, async (source) => {
+    if (source.type !== "file") return source;
+    try {
+      await resolveSourceFile(rootPath, source);
+      return { ...source, missing: false };
+    } catch (error) {
+      return { ...source, missing: true, missingReason: error?.message || "资料文件不存在" };
+    }
+  });
+  return { ...listed, sources };
+}
+
+ipcMain.handle("research:list", async (_event, workspacePath) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  await ensureWorkspace(rootPath);
+  return { rootPath, ...(await researchListPayload(rootPath)) };
+});
+
+ipcMain.handle("workspace:identity", async (_event, workspacePath) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  const workspace = await ensureWorkspace(rootPath);
+  return {
+    workspaceId: workspace.manifest.workspaceId,
+    workspaceName: path.basename(rootPath) || "当前工作区",
+  };
+});
+
+ipcMain.handle("research:create", async (_event, workspacePath, source = {}) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  const nextSource = { ...source };
+  // This legacy v0.9.5 route remains only for compatibility. Never trust a
+  // renderer-provided absolute path: every local file must come from the
+  // privileged system picker, just like the v0.9.6 research-library routes.
+  delete nextSource.filePath;
+  if (nextSource.type === "file") {
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: nextSource.storage === "managed" ? "选择要托管的研究资料" : "选择工作区内的研究资料",
+      defaultPath: nextSource.storage === "managed" ? app.getPath("documents") : rootPath,
+      properties: ["openFile"],
+      filters: [{ name: "研究资料", extensions: ["pdf", "docx", "md", "txt", "html", "htm", "png", "jpg", "jpeg", "webp"] }],
+    });
+    if (picked.canceled || !picked.filePaths?.[0]) return { canceled: true };
+    nextSource.filePath = await canonicalExistingPath(picked.filePaths[0], "file");
+  }
+  const created = await createResearchSource(rootPath, nextSource);
+  return { canceled: false, source: created, ...(await researchListPayload(rootPath)) };
+});
+
+ipcMain.handle("research:update", async (_event, workspacePath, sourceId, patch = {}) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  const source = await updateResearchSource(rootPath, sourceId, patch);
+  return { source, ...(await researchListPayload(rootPath)) };
+});
+
+ipcMain.handle("research:delete", async (_event, workspacePath, sourceId) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  await deleteResearchSource(rootPath, sourceId);
+  return { ok: true, ...(await researchListPayload(rootPath)) };
+});
+
+ipcMain.handle("research:relink", async (_event, workspacePath, sourceId) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  const previous = await readResearchSource(rootPath, sourceId);
+  if (previous.type !== "file") throw new Error("只有本地文件资料可以重新定位");
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: "重新定位研究资料",
+    defaultPath: previous.storage === "managed" ? app.getPath("documents") : rootPath,
+    properties: ["openFile"],
+    filters: [{ name: "研究资料", extensions: ["pdf", "docx", "md", "txt", "html", "htm", "png", "jpg", "jpeg", "webp"] }],
+  });
+  if (picked.canceled || !picked.filePaths?.[0]) return { canceled: true };
+  const filePath = await canonicalExistingPath(picked.filePaths[0], "file");
+  const source = await relinkResearchSource(rootPath, sourceId, filePath);
+  return { canceled: false, source, ...(await researchListPayload(rootPath)) };
+});
+
+ipcMain.handle("research:read-file", async (_event, workspacePath, sourceId) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  const source = await readResearchSource(rootPath, sourceId);
+  if (source.type !== "file") throw new Error("该资料不是本地文件");
+  const resolved = await resolveSourceFile(rootPath, source);
+  const filePath = resolved.filePath;
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile() || stat.size > RESEARCH_READ_MAX_BYTES) throw new Error("研究资料过大，无法内嵌读取；请使用系统应用打开");
+  return { source, bytes: await fs.readFile(filePath), size: stat.size };
+});
+
+ipcMain.handle("research:open-external", async (_event, workspacePath, sourceId) => {
+  if (workspacePath && typeof workspacePath === "object" && !Array.isArray(workspacePath)) {
+    return requireResearchLibrary().openEntryExternal(
+      workspacePath.libraryId,
+      workspacePath.relativePath,
+      shell.openPath.bind(shell),
+    );
+  }
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  const source = await readResearchSource(rootPath, sourceId);
+  if (source.type === "web") {
+    let url;
+    try { url = new URL(source.url); } catch { throw new Error("资料网址无效"); }
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("资料网址协议不受支持");
+    await shell.openExternal(url.href);
+    return { ok: true };
+  }
+  if (source.type !== "file") return { ok: false };
+  const resolved = await resolveSourceFile(rootPath, source);
+  const error = await shell.openPath(resolved.filePath);
+  return { ok: !error, error };
+});
+
+ipcMain.handle("citation:list", async (_event, workspacePath) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  return { rootPath, ...(await listCitationSources(rootPath)) };
+});
+
+ipcMain.handle("citation:upsert", async (_event, workspacePath, source = {}) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  const saved = await upsertCitationSource(rootPath, source);
+  return { source: saved, rootPath, ...(await listCitationSources(rootPath)) };
+});
+
+ipcMain.handle("citation:delete", async (_event, workspacePath, sourceId) => {
+  const rootPath = await assertAuthorizedDirectory(workspacePath);
+  const deleted = await deleteCitationSource(rootPath, sourceId);
+  return { ...deleted, rootPath, ...(await listCitationSources(rootPath)) };
 });
 
 ipcMain.handle("folder:open", async () => {
@@ -2348,7 +3525,10 @@ ipcMain.handle("folder:create", async (_event, parentPath, name) => {
   }
   const authorizedParent = await assertAuthorizedDirectory(parentPath);
   const folderName = sanitizeName(name, "新建文件夹");
+  if (folderName.toLocaleLowerCase("en-US") === ".jianjian") throw new Error("该名称由笺间工作区保留");
   const targetPath = await uniquePath(path.join(authorizedParent, folderName));
+  assertMutableWorkspaceEntry(authorizedParent);
+  assertMutableWorkspaceEntry(targetPath);
   await fs.mkdir(targetPath, { recursive: false });
   return { ok: true, path: targetPath, ...(await listFolderEntries(authorizedParent)) };
 });
@@ -2359,15 +3539,19 @@ ipcMain.handle("document:create-in-folder", async (_event, folderPath, title, te
   }
   return runDocumentMutation(async () => {
     const authorizedFolder = await assertAuthorizedDirectory(folderPath);
+    assertMutableWorkspaceEntry(authorizedFolder);
     const safeTitle = sanitizeName(title, "未命名信笺");
     const filePath = await uniquePath(path.join(authorizedFolder, `${safeTitle}${DOCUMENT_EXTENSION}`));
     const document = normalizeDocument({
       ...templateDocument,
+      version: DOCUMENT_SCHEMA_VERSION,
+      documentId: normalizeDocumentId(templateDocument?.documentId) || randomUUID(),
+      derivedFrom: "",
       title: safeTitle,
       html: "<p></p>",
     });
     const saved = await savePaperDocumentWithinMutation(filePath, document);
-    return { ok: true, path: filePath, document: saved.document, ...(await listFolderEntries(authorizedFolder)) };
+    return { ok: true, path: filePath, document: saved.document, diskRevision: saved.diskRevision, ...(await listFolderEntries(authorizedFolder)) };
   });
 });
 
@@ -2378,6 +3562,7 @@ ipcMain.handle("entry:rename", async (_event, targetPath, nextName) => {
   return runDocumentMutation(async () => {
   const authorizedEntry = await assertAuthorizedEntry(targetPath, { destructive: true });
   const currentPath = authorizedEntry.path;
+  assertMutableWorkspaceEntry(currentPath);
   const stat = authorizedEntry.stat;
   const parsed = path.parse(currentPath);
   let safeName = sanitizeName(nextName, parsed.name);
@@ -2388,6 +3573,7 @@ ipcMain.handle("entry:rename", async (_event, targetPath, nextName) => {
     }
   }
   const nextPath = path.join(parsed.dir, stat.isFile() && isSupportedDocument(currentPath) ? `${safeName}${DOCUMENT_EXTENSION}` : safeName);
+  assertMutableWorkspaceEntry(nextPath);
   if (nextPath === currentPath) {
     return { ok: true, path: currentPath, ...(await listAuthorizedFolderEntries(parsed.dir)) };
   }
@@ -2411,6 +3597,7 @@ ipcMain.handle("entry:delete", async (_event, targetPath) => {
   return runDocumentMutation(async () => {
   const authorizedEntry = await assertAuthorizedEntry(targetPath, { destructive: true });
   const currentPath = authorizedEntry.path;
+  assertMutableWorkspaceEntry(currentPath);
   const parentPath = path.dirname(currentPath);
   if (typeof shell.trashItem === "function") {
     await shell.trashItem(currentPath);
@@ -2432,6 +3619,8 @@ ipcMain.handle("entry:move", async (_event, sourcePath, targetFolderPath) => {
   const authorizedSource = await assertAuthorizedEntry(sourcePath, { destructive: true });
   const fromPath = authorizedSource.path;
   const toFolder = await assertAuthorizedDirectory(targetFolderPath);
+  assertMutableWorkspaceEntry(fromPath);
+  assertMutableWorkspaceEntry(toFolder);
   const sourceStat = authorizedSource.stat;
   if (sourceStat.isDirectory()) {
     const relative = path.relative(fromPath, toFolder);
@@ -2468,9 +3657,51 @@ ipcMain.handle("document:backup", async (_event, filePath) => {
   const sourcePath = await assertAuthorizedDocument(filePath);
   const parsed = path.parse(sourcePath);
   const backupPath = await uniquePath(path.join(parsed.dir, `${parsed.name}_备份_${timestampForFileName()}${DOCUMENT_EXTENSION}`));
-  await fs.copyFile(sourcePath, backupPath);
+  const sourceSnapshot = await loadPaperDocumentSnapshot(sourcePath);
+  if (Number(sourceSnapshot.rawDocument?.version || 1) > DOCUMENT_SCHEMA_VERSION || sourceSnapshot.document._readOnlyFutureSchema) {
+    throw new Error(`此信笺使用未来格式 v${Number(sourceSnapshot.rawDocument?.version) || "?"}，当前版本不能复制备份`);
+  }
+  let sourceDocument = sourceSnapshot.document;
+  let sourceDiskRevision = sourceSnapshot.diskRevision;
+  let migrationBackupPath = "";
+  const rawSourceId = normalizeDocumentId(sourceSnapshot.rawDocument?.documentId);
+  if (Number(sourceSnapshot.rawDocument?.version || 1) < DOCUMENT_SCHEMA_VERSION || !rawSourceId) {
+    migrationBackupPath = await preservePreV2MigrationBackup(sourcePath);
+    sourceDocument = {
+      ...sourceDocument,
+      version: DOCUMENT_SCHEMA_VERSION,
+      documentId: rawSourceId || randomUUID(),
+      derivedFrom: normalizeDocumentId(sourceDocument.derivedFrom),
+      footnotes: Array.isArray(sourceDocument.footnotes) ? sourceDocument.footnotes : [],
+      citationSources: Array.isArray(sourceDocument.citationSources) ? sourceDocument.citationSources : [],
+    };
+    const migrated = await savePaperDocumentWithinMutation(sourcePath, sourceDocument, {
+      validateTarget: (candidate) => assertDiskRevision(candidate, sourceDiskRevision),
+    });
+    sourceDocument = migrated.document;
+    sourceDiskRevision = migrated.diskRevision;
+  }
+  const parentId = normalizeDocumentId(sourceDocument.documentId);
+  if (!parentId) throw new Error("源信笺缺少有效文档身份，无法建立备份关系");
+  const backupDocument = {
+    ...sourceDocument,
+    version: DOCUMENT_SCHEMA_VERSION,
+    documentId: randomUUID(),
+    derivedFrom: parentId,
+    title: `${sourceDocument.title || parsed.name}（备份）`,
+  };
+  const savedBackup = await savePaperDocumentWithinMutation(backupPath, backupDocument);
   await authorizeDocumentPath(backupPath);
-  return { ok: true, path: backupPath, ...(await listAuthorizedFolderEntries(parsed.dir)) };
+  return {
+    ok: true,
+    path: backupPath,
+    diskRevision: savedBackup.diskRevision,
+    sourcePath,
+    sourceDocument,
+    sourceDiskRevision,
+    ...(migrationBackupPath ? { migrationBackupPath } : {}),
+    ...(await listAuthorizedFolderEntries(parsed.dir)),
+  };
   });
 });
 
@@ -2482,6 +3713,7 @@ async function listAuthorizedFolderEntries(folderPath) {
 }
 
 async function listFolderEntries(folderPath) {
+  if (isReservedWorkspaceMetadataPath(folderPath)) throw new Error(".jianjian 是工作区内部目录");
   const startedAt = Date.now();
   const entries = await fs.readdir(folderPath, { withFileTypes: true });
   if (entries.length > 20000) throw new Error("这个文件夹包含过多项目，请选择更具体的信笺文件夹");
@@ -2495,6 +3727,7 @@ async function listFolderEntries(folderPath) {
   const folders = [];
   const fileReads = [];
   for (const entry of entries) {
+    if (entry.name.toLocaleLowerCase("en-US") === ".jianjian") continue;
     const filePath = path.join(folderPath, entry.name);
     if (entry.isDirectory()) {
       folders.push({
@@ -2548,7 +3781,27 @@ async function listFolderEntries(folderPath) {
   };
 }
 
-ipcMain.handle("document:save", async (_event, document, currentPath, saveAs, reservedPaths = []) => {
+async function preservePreV2MigrationBackup(filePath) {
+  try {
+    const rawDocument = await readSearchDocument(filePath);
+    if (Number(rawDocument?.version || 1) >= DOCUMENT_SCHEMA_VERSION) return "";
+    const backupRoot = path.join(app.getPath("userData"), MIGRATION_BACKUP_FOLDER);
+    await fs.mkdir(backupRoot, { recursive: true });
+    const safeName = sanitizeFilesystemName(path.basename(filePath, path.extname(filePath)), "未命名信笺", 72);
+    const backupPath = path.join(backupRoot, `${safeName}_pre-v2_${timestampForFileName()}_${randomUUID().slice(0, 8)}${DOCUMENT_EXTENSION}`);
+    await fs.copyFile(filePath, backupPath);
+    return backupPath;
+  } catch (error) {
+    if (error?.code === "ENOENT") return "";
+    await writeAiDebugLog("document:migration-backup:error", { filePath, message: error?.message });
+    throw new Error("无法建立格式迁移备份，已取消保存", { cause: error });
+  }
+}
+
+ipcMain.handle("document:save", async (_event, document, currentPath, saveAs, reservedPaths = [], expectedRevision = null, saveOptions = {}) => {
+  if (Number(document?.version || 1) > DOCUMENT_SCHEMA_VERSION || document?._readOnlyFutureSchema) {
+    throw new Error(`此信笺使用未来格式 v${Number(document?.version) || "?"}，当前版本只能只读打开`);
+  }
   const sourcePath = currentPath && isSupportedDocument(currentPath) ? path.resolve(String(currentPath)) : "";
   let filePath = currentPath;
   let userSelectedTarget = false;
@@ -2595,56 +3848,131 @@ ipcMain.handle("document:save", async (_event, document, currentPath, saveAs, re
     throw error;
   });
   const targetIdentity = targetStat?.isFile() ? { dev: targetStat.dev, ino: targetStat.ino } : null;
-  const saved = await savePaperDocument(filePath, document, {
-    validateTarget: async (targetPath) => {
-      const authorizedTarget = await assertAuthorizedDocumentTarget(targetPath);
-      const currentStat = await fs.stat(authorizedTarget).catch((error) => {
-        if (error?.code === "ENOENT") return null;
-        throw error;
-      });
-      if (targetIdentity) {
-        if (!currentStat?.isFile() || currentStat.dev !== targetIdentity.dev || currentStat.ino !== targetIdentity.ino) {
-          throw new Error("保存期间目标信笺已被移动、删除或替换，请重新打开后再保存");
-        }
-      } else if (currentStat) {
-        throw new Error("保存期间目标位置出现了同名文件，请重新选择保存位置");
+  let documentToSave = document;
+  if (userSelectedTarget && sourcePath && targetKey !== sourceKey) {
+    const parentId = normalizeDocumentId(document?.documentId);
+    documentToSave = {
+      ...document,
+      version: DOCUMENT_SCHEMA_VERSION,
+      documentId: randomUUID(),
+      derivedFrom: parentId,
+    };
+  }
+
+  const writeConflictCopy = async (error) => {
+    let conflictCopyPath = createConflictCopyPath(filePath);
+    for (let sequence = 0; sequence < 100; sequence += 1) {
+      conflictCopyPath = createConflictCopyPath(filePath, { sequence });
+      try {
+        await fs.access(conflictCopyPath);
+      } catch (accessError) {
+        if (accessError?.code === "ENOENT") break;
+        throw accessError;
       }
-    },
-    afterCommit: userSelectedTarget && sourceKey && sourceKey !== targetKey
-      ? async () => rebaseAssetPathReferences(sourcePath, filePath)
-      : undefined,
-  });
-  return { canceled: false, path: filePath, document: saved.document };
+    }
+    const conflictDocument = {
+      ...documentToSave,
+      version: DOCUMENT_SCHEMA_VERSION,
+      documentId: randomUUID(),
+      derivedFrom: normalizeDocumentId(documentToSave?.documentId),
+      title: `${normalizeDocument(documentToSave).title}（本机冲突副本）`,
+    };
+    const conflictSaved = await savePaperDocument(conflictCopyPath, conflictDocument);
+    await authorizeDocumentPath(conflictCopyPath);
+    return {
+      canceled: false,
+      conflict: true,
+      code: REVISION_CONFLICT_CODE,
+      path: filePath,
+      conflictCopyPath,
+      conflictDocument: conflictSaved.document,
+      expectedRevision: error.expectedRevision || expectedRevision,
+      actualRevision: error.actualRevision || await readDiskRevision(filePath),
+    };
+  };
+
+  if (!userSelectedTarget && sourcePath) {
+    try {
+      await assertDiskRevision(filePath, expectedRevision);
+    } catch (error) {
+      if (error?.code !== REVISION_CONFLICT_CODE) throw error;
+      return writeConflictCopy(error);
+    }
+  }
+
+  const migrationBackupPath = sourcePath && Number(documentToSave?.version || 1) >= DOCUMENT_SCHEMA_VERSION
+    ? await preservePreV2MigrationBackup(filePath)
+    : "";
+  let saved;
+  try {
+    saved = await savePaperDocument(filePath, documentToSave, {
+      validateTarget: async (targetPath) => {
+        const authorizedTarget = await assertAuthorizedDocumentTarget(targetPath);
+        if (!userSelectedTarget && sourcePath) {
+          await assertDiskRevision(authorizedTarget, expectedRevision);
+        }
+        const currentStat = await fs.stat(authorizedTarget).catch((error) => {
+          if (error?.code === "ENOENT") return null;
+          throw error;
+        });
+        if (targetIdentity) {
+          if (!currentStat?.isFile() || currentStat.dev !== targetIdentity.dev || currentStat.ino !== targetIdentity.ino) {
+            throw new DocumentRevisionConflictError("保存期间目标信笺已被移动、删除或替换", {
+              filePath: authorizedTarget,
+              expectedRevision,
+              actualRevision: await readDiskRevision(authorizedTarget),
+            });
+          }
+        } else if (!targetIdentity && currentStat) {
+          throw new DocumentRevisionConflictError("保存期间目标位置出现了同名文件", {
+            filePath: authorizedTarget,
+            expectedRevision: null,
+            actualRevision: await readDiskRevision(authorizedTarget),
+          });
+        }
+      },
+      afterCommit: userSelectedTarget && sourceKey && sourceKey !== targetKey
+        ? async () => rebaseAssetPathReferences(sourcePath, filePath)
+        : undefined,
+    });
+  } catch (error) {
+    if (!userSelectedTarget && sourcePath && error?.code === REVISION_CONFLICT_CODE) {
+      return writeConflictCopy(error);
+    }
+    throw error;
+  }
+  return { canceled: false, path: filePath, document: saved.document, diskRevision: saved.diskRevision, ...(migrationBackupPath ? { migrationBackupPath } : {}) };
 });
 
 function exportSafeName(suggestedName) {
   return sanitizeFilesystemName(suggestedName, "未命名信笺", 60);
 }
 
-async function pickDocumentExportPath(format, suggestedName) {
+async function pickDocumentExportPath(format, suggestedName, initialDirectory = "") {
   const safeName = exportSafeName(suggestedName);
+  const rememberedDirectory = await existingExportPickerDirectory(initialDirectory);
   if (format === "images") {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "选择分页图片导出文件夹",
-      defaultPath: path.join(defaultDocumentsDir(), safeName),
+      defaultPath: rememberedDirectory || path.join(defaultDocumentsDir(), safeName),
       properties: ["openDirectory", "createDirectory"],
     });
-    return result.canceled || !result.filePaths?.[0]
-      ? { canceled: true }
-      : { canceled: false, path: authorizeExportTarget(result.filePaths[0], "images"), format: "images" };
+    if (result.canceled || !result.filePaths?.[0]) return { canceled: true };
+    const targetPath = authorizeExportTarget(result.filePaths[0], "images");
+    return { canceled: false, path: targetPath, directory: targetPath, format: "images" };
   }
 
   const result = await dialog.showSaveDialog(mainWindow, {
     title: "选择 PDF 导出位置",
-    defaultPath: path.join(defaultDocumentsDir(), `${safeName}.pdf`),
+    defaultPath: path.join(rememberedDirectory || defaultDocumentsDir(), `${safeName}.pdf`),
     filters: [
       { name: "PDF 文档", extensions: ["pdf"] },
       { name: "All Files", extensions: ["*"] },
     ],
   });
-  return result.canceled || !result.filePath
-    ? { canceled: true }
-    : { canceled: false, path: authorizeExportTarget(ensureExtension(result.filePath, ".pdf"), "pdf"), format: "pdf" };
+  if (result.canceled || !result.filePath) return { canceled: true };
+  const targetPath = authorizeExportTarget(ensureExtension(result.filePath, ".pdf"), "pdf");
+  return { canceled: false, path: targetPath, directory: path.dirname(targetPath), format: "pdf" };
 }
 
 function sendExportProgress(event, payload) {
@@ -2653,9 +3981,13 @@ function sendExportProgress(event, payload) {
   }
 }
 
-ipcMain.handle("document:pick-export-path", async (_event, format, suggestedName) => (
-  pickDocumentExportPath(format === "images" ? "images" : "pdf", suggestedName)
-));
+ipcMain.handle("document:pick-export-path", async (_event, format, suggestedName, initialDirectory) => {
+  if (["markdown", "html", "txt", "docx"].includes(format)) {
+    const targetPath = await pickInterchangeExportPath(format, suggestedName, initialDirectory);
+    return targetPath ? { canceled: false, path: targetPath, directory: path.dirname(targetPath), format } : { canceled: true };
+  }
+  return pickDocumentExportPath(format === "images" ? "images" : "pdf", suggestedName, initialDirectory);
+});
 
 ipcMain.handle("document:export-pdf", async (event, suggestedName, targetPath) => {
   const safeName = exportSafeName(suggestedName);
@@ -2849,6 +4181,22 @@ ipcMain.handle("asset:pick-image", async () => {
 ipcMain.handle("asset:pick-audio", async () => pickLocalMediaAsset("audio"));
 ipcMain.handle("asset:pick-video", async () => pickLocalMediaAsset("video"));
 
+function safeClipboardUuid(value) {
+  const id = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ? id : "";
+}
+
+ipcMain.handle("clipboard:write-image-reference", async (_event, payload = {}) => {
+  const documentId = safeClipboardUuid(payload?.documentId);
+  const imageId = safeClipboardUuid(payload?.imageId);
+  const number = Math.max(1, Math.min(5_000, Number.parseInt(payload?.number, 10) || 1));
+  if (!documentId || !imageId) return { ok: false, message: "图片引用身份无效" };
+  const label = `图${number}`;
+  const html = `<span data-paper-image-reference="true" data-image-id="${imageId}" data-image-number="${number}" data-missing="false" data-source-document-id="${documentId}">${label}</span>`;
+  clipboard.write({ text: label, html });
+  return { ok: true };
+});
+
 ipcMain.handle("external:open", async (_event, urlValue) => {
   try {
     const rawUrl = String(urlValue || "");
@@ -2950,6 +4298,7 @@ ipcMain.handle("app:close-ready", async () => {
 ipcMain.handle("app:close-canceled", async () => {
   closeRequestInFlight = false;
   pendingUpdateInstall = false;
+  stopCloseAttention();
   return { ok: true };
 });
 
@@ -2961,10 +4310,25 @@ app.whenReady().then(async () => {
   await initializeAutosaveStorage();
   await migratePlaintextAiSecrets();
   await initializeFilesystemAccess();
+  researchLibrary = createResearchLibraryManager({ userDataPath: app.getPath("userData") });
+  await researchLibrary.initialize();
+  researchWebViews = createResearchWebViewManager({
+    WebContentsView,
+    session,
+    shell,
+    getWindow: () => mainWindow,
+    sendState: (payload) => sendRendererEvent(mainWindow?.webContents, "research:web-view-state", payload),
+  });
   stagedAssetStore = createStagedAssetStore({
     rootDir: path.join(app.getPath("temp"), "PaperWriterAssets"),
   });
   await stagedAssetStore.initialize();
+  documentInterchange = createDocumentInterchange({
+    mammoth,
+    docx,
+    iconvLite,
+    resolveAsset: readProtocolAsset,
+  });
   stagedAssetHeartbeatTimer = setInterval(() => {
     stagedAssetStore?.touch().catch(() => {});
   }, 60 * 60 * 1000);
@@ -2977,6 +4341,9 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", (event) => {
+  stopWorkspaceWatcher();
+  researchLibrary?.closeWatcher();
+  researchWebViews?.destroyAll();
   for (const controller of activeAiRequests.values()) controller.abort();
   activeAiRequests.clear();
   if (stagedAssetHeartbeatTimer) {

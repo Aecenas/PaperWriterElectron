@@ -5,7 +5,9 @@ import { EditorState } from "@tiptap/pm/state";
 import { history, undo } from "@tiptap/pm/history";
 import {
   deleteRecoveryBestEffort,
+  readEditorSelectionState,
   replaceEditorContentWithoutHistory,
+  restoreEditorSelectionWithoutHistory,
   sameDocumentPath,
   selectAutosaveSnapshotTabs,
   sessionTabSignature,
@@ -47,6 +49,26 @@ test("document replacement rebuilds plugin state and clears undo history", () =>
   assert.equal(replaceEditorContentWithoutHistory(editor, "B"), true);
   assert.equal(state.doc.textContent, "B");
   assert.equal(undo(state, () => {}), false);
+});
+
+test("a remounted secondary editor restores its saved selection without changing content or undo history", () => {
+  let state = EditorState.create({ schema, doc: docWithText("secondary pane"), plugins: [history()] });
+  state = state.apply(state.tr.insertText(" edited", 10));
+  const documentBeforeRestore = state.doc.toJSON();
+  const dispatch = (transaction) => { state = state.apply(transaction); };
+  const editor = {
+    get state() { return state; },
+    view: { dispatch },
+  };
+
+  const savedSelection = { from: 3, to: 8 };
+  assert.equal(restoreEditorSelectionWithoutHistory(editor, savedSelection), true);
+  assert.deepEqual(readEditorSelectionState(editor), savedSelection);
+  assert.deepEqual(state.doc.toJSON(), documentBeforeRestore);
+
+  let undone = null;
+  assert.equal(undo(state, (transaction) => { undone = state.apply(transaction); }), true);
+  assert.equal(undone.doc.textContent, "secondary pane");
 });
 
 test("Windows document paths compare case-insensitively with either separator", () => {

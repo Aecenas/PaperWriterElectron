@@ -15,7 +15,8 @@ import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
-import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import tocTitleSignatureAsset from "./assets/decor/toc-title-signature.png?inline";
+import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import {
   AlignCenter,
@@ -23,6 +24,7 @@ import {
   AlignRight,
   ArrowLeft,
   Bot,
+  BookOpen,
   Bold,
   Check,
   CheckCircle2,
@@ -32,10 +34,14 @@ import {
   Download,
   Eraser,
   FileImage,
+  FileSearch,
   FilePlus,
   FileText,
+  FolderSearch,
   FolderOpen,
   FolderPlus,
+  FileInput,
+  Focus,
   Globe2,
   Hash,
   Heading1,
@@ -45,14 +51,18 @@ import {
   Highlighter,
   KeyRound,
   ImagePlus,
+  Info,
   Italic,
   List,
   ListOrdered,
   ListTree,
   Link2,
   MessageSquare,
+  Maximize2,
   Minus,
+  Minimize2,
   Music2,
+  NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -62,6 +72,7 @@ import {
   Quote,
   Redo2,
   RefreshCw,
+  Search,
   Save,
   SaveAll,
   SeparatorHorizontal,
@@ -81,13 +92,104 @@ import {
   X,
 } from "lucide-react";
 import { bridge } from "./bridge.js";
+import AiModeChooser from "./AiModeChooser.jsx";
+import SettingsCenter from "./SettingsCenter.jsx";
+import { shouldConfirmAiModeChange, shouldConfirmAiModeExit } from "./ai-mode-chooser-model.js";
+import { applyLetterTemplateToDocument } from "./letter-template-application.js";
+import { DocumentFindWidget, WorkspaceSearchPalette } from "./WorkspaceSearchPanel.jsx";
+import "./workspace-features.css";
+import ReleaseNotesDialog from "./ReleaseNotesDialog.jsx";
+import { CURRENT_RELEASE_VERSION } from "./release-notes.js";
 import { groupTestedAiProviders } from "./ai-provider-selector.js";
+import {
+  AI_REQUEST_PARAM_BOOLEAN_OPTIONS,
+  AI_REQUEST_PARAM_TYPE_OPTIONS,
+  aiRequestParamPreset,
+  aiRequestParamsEqual,
+  aiRequestParamsWithProviderDefaults,
+  aiApplyResolverEditableRequestParams,
+  aiTaskRequestParamsForEditor,
+  aiModelCapabilities,
+  createAiRequestParamRow,
+  normalizeUiAiRequestParams,
+  parseAiRequestParamRows,
+  requestParamsToRows,
+} from "./ai-request-params.js";
 import { normalizeCodexImageMode, normalizeCodexScope } from "./codex-scope.js";
 import { computePaperDerivedState, EMPTY_PAPER_DERIVED_STATE } from "./editor-derived-state.js";
+import { applyDocumentTextReplacements, moveActiveDocumentSearchMatch, searchDocumentText } from "./document-search.js";
+import { DocumentSearchExtension, renderDocumentSearchState } from "./document-search-extension.js";
+import {
+  buildAiApplyBlockManifest,
+  createManualAiDirectApplyOperation,
+  findCommentsOverlappingAiApplyOperation,
+  resolveAiDirectApplyWithRepair,
+} from "./ai-direct-apply.js";
+import {
+  createDerivedDocumentIdentity,
+  createDocumentId,
+  getDocumentSchemaCompatibility,
+  mergePersistedDocumentIdentity,
+  normalizeCitationSources,
+  normalizeDocumentId,
+  normalizeDocumentSchemaV2,
+} from "./document-schema-v2.js";
+import {
+  collectKnowledgeReferences,
+  createKnowledgeExtensions,
+  createKnowledgeUpdateGuard,
+  KNOWLEDGE_TAIL_NODE_TYPES,
+  nextInternalLinkUsage,
+  removeKnowledgeNodesByAttribute,
+  stripDerivedKnowledgeDataFromHtml,
+  synchronizeKnowledgeReferences,
+} from "./knowledge-extensions.js";
+import {
+  createStructuredInlineExtensions,
+  imageReferenceNumberAt,
+  normalizeExternalLinkUrl,
+  synchronizeStructuredInlineReferences,
+} from "./structured-inline-extensions.js";
 import { createDocumentCommentId, mapDocumentCommentsThroughTransaction, normalizeDocumentComments } from "./editor-comments.js";
+import ResearchSidebar from "./ResearchSidebar.jsx";
+import SecondaryResearchPane from "./SecondaryResearchPane.jsx";
+import StructureInspector from "./StructureInspector.jsx";
+import GroupTabStrip from "./GroupTabStrip.jsx";
+import CitationPickerDialog from "./CitationPickerDialog.jsx";
+import { CitationSourceDialog, FootnoteDialog, KnowledgeReferencePopover } from "./KnowledgeDialogs.jsx";
+import {
+  WORKSPACE_GROUP_ID,
+  WORKSPACE_VIEW_KIND,
+  closeWorkspaceView,
+  createDocumentWorkspaceView,
+  createWorkspaceGroupsSnapshot,
+  createWorkspaceGroupsState,
+  findWorkspaceView,
+  getActiveWorkspaceView,
+  moveWorkspaceDocument,
+  normalizeWorkspaceGroupsState,
+  normalizeWorkspaceSplitRatio,
+  openWorkspaceDocument,
+  openWorkspaceResearch,
+  removeWorkspaceViews,
+  reorderWorkspaceView,
+  restoreWorkspaceGroupsSnapshot,
+  selectWorkspaceView,
+  updateWorkspaceResearchTarget,
+  updateWorkspaceResearchViewState,
+} from "./workspace-groups.js";
+import { HierarchicalTreeRows, TreeItemButton } from "./HierarchicalTree.jsx";
+import {
+  canOpenResearchItem,
+  normalizeResearchRelativePath,
+  researchEntryType,
+  researchPreviewKind,
+} from "./research-ui-model.js";
 import {
   deleteRecoveryBestEffort,
+  readEditorSelectionState,
   replaceEditorContentWithoutHistory,
+  restoreEditorSelectionWithoutHistory,
   sameDocumentPath,
   selectAutosaveSnapshotTabs,
   sessionTabSignature,
@@ -165,17 +267,16 @@ const IMAGE_WIDTH_OPTIONS = [
 ];
 const AUDIO_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
-const ALLOWED_LINK_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 const USER_TEMPLATE_STORAGE_KEY = "paperwriter.userLetterTemplates";
 const USER_TEMPLATE_GROUP_STORAGE_KEY = "paperwriter.userLetterTemplateGroups";
 const BASE_USER_TEMPLATE_GROUP_ID = "user-group-default";
 const NEW_DOCUMENT_TEMPLATE_STORAGE_KEY = "paperwriter.newDocumentTemplateId";
 const NEW_DOCUMENT_TEMPLATE_HISTORY_STORAGE_KEY = "paperwriter.newDocumentTemplateHistory";
 const SESSION_STORAGE_KEY = "paperwriter.sessionState";
+const EXPORT_LAST_DIRECTORY_STORAGE_KEY = "paperwriter.exportLastDirectory";
 const IMAGE_EXPORT_STAGE_ID = "paperwriter-image-export-stage";
 const IMAGE_EXPORT_SEGMENT_PADDING = 24;
 const FOLDER_LIST_TIMEOUT_MS = 8000;
-const FOLDER_DOUBLE_CLICK_MAX_MS = 300;
 const UPDATE_RESULT_RESET_MS = 2800;
 const UPDATE_AUTO_CHECK_STORAGE_KEY = "paperwriter.updateLastAutoCheckAt";
 const UPDATE_AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -184,6 +285,7 @@ const AI_FIXED_LETTER_TEMPLATE_ID = "fiber-letter";
 const AI_CHAT_SYSTEM_PREFIX = "你是笺间的 AI 问答助手。你可以阅读用户当前正在写的信笺内容，并围绕内容、结构、表达、事实一致性和写作策略回答问题。回答要具体、克制、可执行。";
 const CODEX_DOCUMENT_ONLY_SCOPE = Object.freeze({ mode: "document-only", relativePath: "" });
 const AI_CHAT_SELECTION_PLUGIN_KEY = new PluginKey("paperwriterAiChatSelections");
+const AI_APPLY_PREVIEW_PLUGIN_KEY = new PluginKey("paperwriterAiApplyPreview");
 const DOCUMENT_COMMENT_PLUGIN_KEY = new PluginKey("paperwriterDocumentComments");
 const HEADING_NUMBERING_PLUGIN_KEY = new PluginKey("paperwriterHeadingNumbers");
 const PAPER_DERIVED_STATE_PLUGIN_KEY = new PluginKey("paperwriterDerivedState");
@@ -236,6 +338,24 @@ const AI_PROTOCOL_OPTIONS = [
   { id: "openai", label: "OpenAI 兼容", baseUrl: "https://api.openai.com/v1", description: "Chat Completions 接口" },
   { id: "anthropic", label: "Anthropic 原生", baseUrl: "https://api.anthropic.com/v1", description: "Messages API 接口" },
 ];
+const AI_REASONING_EFFORT_OPTIONS = [
+  { value: "", label: "服务商默认" },
+  { value: "minimal", label: "最简（minimal）" },
+  { value: "low", label: "低（low）" },
+  { value: "medium", label: "中（medium）" },
+  { value: "high", label: "高（high）" },
+  { value: "xhigh", label: "超高（xhigh）" },
+  { value: "max", label: "最高（max）" },
+];
+const AI_TASK_MODEL_DEFINITIONS = [
+  {
+    id: "applyResolver",
+    label: "直接应用定位",
+    description: "只判断优化块在正文中的替换或插入位置，不参与内容优化与改写。内置 Gemini、DeepSeek 固定使用 JSON 输出，并使用各自模型允许的最大输出上限。",
+    selectLabel: "直接应用定位模型",
+  },
+];
+const AI_MODEL_REQUIRED_MESSAGE = "必须配置好至少一个可用模型，才能进入 AI 模式。配置完成后，再次点击“AI模式”即可。";
 const DEFAULT_AI_CONFIG = {
   activeProvider: "gemini",
   activeModelId: "gemini-default",
@@ -249,6 +369,7 @@ const DEFAULT_AI_CONFIG = {
   baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
   hasApiKey: false,
   apiKeyLast4: "",
+  taskModels: { applyResolver: { providerId: "", modelId: "", requestParams: {} } },
 };
 const TEMPLATE_FONT_OPTIONS = [
   "LXGW WenKai Screen",
@@ -357,34 +478,53 @@ const ICON_ASSETS = {
 };
 
 const DECOR_ASSETS = {
-  tocTitleSignature: new URL("./assets/decor/toc-title-signature.png", import.meta.url).href,
+  // Keep document-owned decoration self-contained. The asset packager converts
+  // this data URL into an assets/... entry whenever a table of contents is saved.
+  tocTitleSignature: tocTitleSignatureAsset,
 };
 
 const HELP_SCREENSHOTS = {
-  "workspace-sidebar": new URL("./assets/help/screenshots/workspace-sidebar.webp", import.meta.url).href,
-  "tabs-queue": new URL("./assets/help/screenshots/tabs-queue.webp", import.meta.url).href,
-  "save-export": new URL("./assets/help/screenshots/save-export.webp", import.meta.url).href,
+  "files-sidebar": new URL("./assets/help/screenshots/files-sidebar.webp", import.meta.url).href,
+  "tabs-groups": new URL("./assets/help/screenshots/tabs-groups.webp", import.meta.url).href,
+  "save-recovery": new URL("./assets/help/screenshots/save-recovery.webp", import.meta.url).href,
+  interchange: new URL("./assets/help/screenshots/interchange.webp", import.meta.url).href,
+  search: new URL("./assets/help/screenshots/search.webp", import.meta.url).href,
   "editor-outline": new URL("./assets/help/screenshots/editor-outline.webp", import.meta.url).href,
   "selection-links": new URL("./assets/help/screenshots/selection-links.webp", import.meta.url).href,
   comments: new URL("./assets/help/screenshots/comments.webp", import.meta.url).href,
+  "comments-compose": new URL("./assets/help/screenshots/comments-compose.webp", import.meta.url).href,
+  "comments-thread": new URL("./assets/help/screenshots/comments-thread.webp", import.meta.url).href,
   "media-pagination": new URL("./assets/help/screenshots/media-pagination.webp", import.meta.url).href,
   table: new URL("./assets/help/screenshots/table.webp", import.meta.url).href,
+  "footnotes-citations": new URL("./assets/help/screenshots/footnotes-citations.webp", import.meta.url).href,
+  "related-notes": new URL("./assets/help/screenshots/related-notes.webp", import.meta.url).href,
+  "research-library": new URL("./assets/help/screenshots/research-library.webp", import.meta.url).href,
+  "research-readers": new URL("./assets/help/screenshots/research-readers.webp", import.meta.url).href,
+  "ai-modes": new URL("./assets/help/screenshots/ai-modes.webp", import.meta.url).href,
+  "ai-model-chooser": new URL("./assets/help/screenshots/ai-model-chooser.webp", import.meta.url).href,
   "ai-providers": new URL("./assets/help/screenshots/ai-providers.webp", import.meta.url).href,
   "codex-cli": new URL("./assets/help/screenshots/codex-cli.webp", import.meta.url).href,
+  "codex-cli-models": new URL("./assets/help/screenshots/codex-cli-models.webp", import.meta.url).href,
   "ai-optimize": new URL("./assets/help/screenshots/ai-optimize.webp", import.meta.url).href,
+  "ai-optimize-apply": new URL("./assets/help/screenshots/ai-optimize-apply.webp", import.meta.url).href,
   "ai-chat": new URL("./assets/help/screenshots/ai-chat.webp", import.meta.url).href,
-  "split-view": new URL("./assets/help/screenshots/split-view.webp", import.meta.url).href,
+  "ai-isolation": new URL("./assets/help/screenshots/ai-isolation.webp", import.meta.url).href,
+  "focus-mode": new URL("./assets/help/screenshots/focus-mode.webp", import.meta.url).href,
+  "template-quick-menu": new URL("./assets/help/screenshots/template-quick-menu.webp", import.meta.url).href,
+  "template-quick-picker": new URL("./assets/help/screenshots/template-quick-picker.webp", import.meta.url).href,
   "templates-gallery": new URL("./assets/help/screenshots/templates-gallery.webp", import.meta.url).href,
   "template-editor": new URL("./assets/help/screenshots/template-editor.webp", import.meta.url).href,
+  "template-editor-advanced": new URL("./assets/help/screenshots/template-editor-advanced.webp", import.meta.url).href,
   "statusbar-update": new URL("./assets/help/screenshots/statusbar-update.webp", import.meta.url).href,
-  workspace: new URL("./assets/help/screenshots/workspace-sidebar.webp", import.meta.url).href,
+  "release-notes": new URL("./assets/help/screenshots/release-notes.webp", import.meta.url).href,
 };
 
 const HELP_CATEGORIES = [
   { id: "files", label: "文件与组织", icon: FolderOpen },
-  { id: "writing", label: "写作编辑", icon: Pencil },
+  { id: "writing", label: "写作与结构", icon: Pencil },
+  { id: "research", label: "资料与研究", icon: BookOpen },
   { id: "ai", label: "AI 功能", icon: Sparkles },
-  { id: "view", label: "视图与效率", icon: PanelRightClose },
+  { id: "view", label: "视图与设置", icon: PanelRightClose },
 ];
 
 const AI_CHAT_PROMPT_PRESETS = [
@@ -395,48 +535,70 @@ const AI_CHAT_PROMPT_PRESETS = [
 ];
 const HELP_TOPICS = [
   {
-    id: "workspace-sidebar",
+    id: "files-sidebar",
     categoryId: "files",
-    title: "工作区、文件树与大纲",
-    summary: "**左侧栏**用于管理工作区文件，并在[[文件树]]和[[正文大纲]]之间切换。",
-    illustration: "workspace-sidebar",
-    illustrationAlt: "笺间左侧栏，顶部可切换文件树和大纲，下方显示工作区文件夹与信笺。",
-    illustrationCaption: "左侧栏同时承担工作区浏览与长文导航。",
-    steps: ["点击工作区名称选择或切换本地目录。", "单击箭头展开文件夹，双击文件夹进入；单击信笺即可打开。", "切换到__大纲__后，点击一至三级标题快速定位正文。"],
-    tips: ["右键文件或文件夹可新建、重命名、备份或删除，输入和确认均在应用内完成。", "可把信笺拖到当前可见的文件夹；移动后已打开标签会同步更新路径。"],
+    title: "文件区、资料区和结构区",
+    summary: "左侧栏以[[文件、资料、结构]]三个入口组织写作文件、研究资料和当前信笺关系。",
+    illustration: "files-sidebar",
+    illustrationAlt: "笺间当前界面左侧显示文件、资料和结构三个入口，右侧为信笺编辑组。",
+    illustrationCaption: "三个入口各管一类内容，切换不会关闭正在编辑的信笺。",
+    steps: ["在__文件__中选择写作文件夹，展开目录并打开 `.letterpaper` 信笺。", "在__资料__中选择独立资料文件夹，管理资料文件和网页来源。", "在__结构__中查看当前信笺的大纲、脚注与引用、关联笺记。"],
+    tips: ["文件区支持新建、重命名、备份、移动和删除；这些操作均使用应用内确认。", "资料目录与写作文件夹相互独立，结构页始终跟随当前激活的信笺。"],
   },
   {
-    id: "tabs-queue",
+    id: "tabs-groups",
     categoryId: "files",
-    title: "标签页、打开队列与阅读位置",
-    summary: "多个信笺共享[[顶部标签栏]]，切换时会恢复各自的阅读位置。",
-    illustration: "tabs-queue",
-    illustrationAlt: "顶部标签栏中打开了多个信笺，并显示新增标签按钮和关闭按钮。",
-    illustrationCaption: "标签页保存每篇信笺各自的编辑与阅读现场。",
-    steps: ["点击标签切换信笺；再次回来时会恢复上次滚动位置。", "点击关闭只移除标签，**不会删除文件**。", "标签栏达到容量后继续打开信笺，会按打开队列腾出位置。"],
-    tips: ["未保存信笺关闭前会进入保存确认；应用退出时也会统一处理。", "AI 模式中仍可在原文侧切换已打开信笺，AI 记录随信笺切换。"],
+    title: "标签页与双编辑组",
+    summary: "写作区包含左右两个[[独立编辑组]]，右组还能混排信笺和资料标签。",
+    illustration: "tabs-groups",
+    illustrationAlt: "左右两个编辑组分别显示多枚信笺和资料标签，中间有可拖动分隔线。",
+    illustrationCaption: "每组独立切换标签，适合边阅读资料边整理正文。",
+    steps: ["点击标签切换内容；拖动标签可在组内排序，也可移到另一组。", "通过标签右键菜单把信笺移到左组或右组；资料只在右组打开。", "拖动中间分隔线调整宽度；关闭右组最后一个标签后恢复单栏。"],
+    tips: ["左组至少保留一个信笺，同一信笺不会同时出现在两个组中。", "标签顺序、活动项、分栏比例和资料阅读位置都会随会话恢复。"],
   },
   {
-    id: "save-export",
+    id: "save-recovery",
     categoryId: "files",
-    title: "保存、恢复与导出",
-    summary: "信笺以 `.letterpaper` 保存；新版导出弹窗可输出 **PDF** 或[[分页图片]]。",
-    illustration: "save-export",
-    illustrationAlt: "导出弹窗中可选择 PDF 文档或分页图片，并选择保存位置。",
-    illustrationCaption: "选择格式和路径后，弹窗会显示导出进度与结果。",
-    steps: ["保存会写回当前文件；另存为会生成新的 `.letterpaper` 信笺。", "打开导出弹窗，选择 PDF 或分页图片，再指定保存位置。", "分页图片按正文中的__分页符__输出连续编号的 PNG。"],
-    tips: ["未命名信笺会先进入临时会话，重启后可恢复，正式保存时再选择路径。", "`.letterpaper` 会携带正文、内嵌素材、排版、评注和 AI 记录。"],
+    title: "保存、恢复、同步冲突与格式兼容",
+    summary: "`.letterpaper` 保存完整信笺；恢复缓存和[[磁盘版本检查]]共同保护尚未写回的内容。",
+    illustration: "save-recovery",
+    illustrationAlt: "笺间状态栏显示恢复缓存已写入、缓存大小和当前版本，正文标签显示尚未保存状态。",
+    illustrationCaption: "恢复缓存用于意外恢复，正式保存仍写入 `.letterpaper` 文件。",
+    steps: ["使用 `Ctrl+S` 写回当前文件，或用另存为生成一份新信笺。", "意外退出后，重新打开应用并从恢复会话继续未保存内容。", "磁盘文件被其他程序改动时，选择保留磁盘版本；笺间会把本机编辑保存为冲突副本。"],
+    tips: ["旧版信笺在需要新结构功能时升级到 v2，并在首次保存时保留迁移前备份。", "来自未来版本的信笺以只读方式打开，避免当前版本破坏未知内容。"],
+  },
+  {
+    id: "interchange",
+    categoryId: "files",
+    title: "导入、导出与格式边界",
+    summary: "顶部__导出__入口同时提供文档导入，以及版式输出和[[可编辑交换]]。",
+    illustration: "interchange",
+    illustrationAlt: "导出弹窗展示 PDF、分页图片、DOCX、Markdown、HTML 和 TXT 六种格式。",
+    illustrationCaption: "PDF 保留视觉呈现，可编辑格式便于在其他软件中继续处理。",
+    steps: ["选择导入文档，可打开 Markdown、HTML、TXT 或 DOCX；导入结果始终成为未保存的新信笺。", "选择导出信笺，可输出 PDF、分页 PNG、DOCX、Markdown、HTML 或 TXT。", "为导出文件选择位置；笺间会记住上次使用的导出目录。"],
+    tips: ["通用导出不包含评注和 AI 记录；脚注与引用会输出，参考文献由顶部__参考__开关决定。", "Markdown 图片写入同名 `.assets` 目录；需要最高视觉保真时请使用 PDF。"],
+  },
+  {
+    id: "search",
+    categoryId: "files",
+    title: "文档查找替换与文件夹搜索",
+    summary: "搜索入口区分[[当前文档]]和[[当前文件夹及子文件夹]]两种范围。",
+    illustration: "search",
+    illustrationAlt: "正文右上角打开查找和替换面板，顶部搜索菜单同时显示文档搜索与文件夹搜索。",
+    illustrationCaption: "在文内快速定位，或跨当前文件夹检索文件名、标题、作者和正文。",
+    steps: ["按 `Ctrl+F` 查找当前信笺，使用上下按钮或 Enter 在匹配项间移动。", "展开替换或按 `Ctrl+H`，可替换当前匹配或一次替换全部。", "按 `Ctrl+P` 搜索当前文件夹及全部子文件夹，选择结果即可打开并定位。"],
+    tips: ["已打开但尚未保存的信笺会使用内存中的最新正文参与文件夹搜索。", "只读信笺可以查找，但不能执行替换。"],
   },
   {
     id: "editor-outline",
     categoryId: "writing",
-    title: "正文、标题编号与目录",
-    summary: "标题、署名、日期和正文均可直接编辑，章节结构由[[标题层级]]驱动。",
+    title: "标题、大纲与正文目录",
+    summary: "标题、署名、日期和正文均可直接编辑，一至三级标题同时驱动[[结构大纲]]和正文目录。",
     illustration: "editor-outline",
-    illustrationAlt: "信笺正文展示分节内容，顶部工具栏提供标题层级和目录入口。",
-    illustrationCaption: "使用标题层级组织正文后，可在大纲和目录中导航。",
-    steps: ["在页面中直接编辑标题、署名、日期和正文。", "通过顶部工具栏设置一至三级标题，并按需要启用或取消当前标题编号。", "点击目录按钮生成或关闭正文目录；大纲会随标题实时更新。"],
-    tips: ["模板可以分别设置各级标题是否默认编号，当前标题仍可单独覆盖。", "撤销和重做位于顶部工具栏，正文样式跟随当前信笺模板。"],
+    illustrationAlt: "结构页显示分层大纲，正文顶部工具栏显示标题和目录按钮。",
+    illustrationCaption: "标题层级既用于正文排版，也用于长文导航。",
+    steps: ["在页面中直接编辑标题、署名、日期和正文。", "使用顶部__标题__菜单设置一至三级标题，并按需覆盖当前标题编号。", "打开__结构 → 大纲__跳转章节，或点击顶部__目录__生成和关闭正文目录。"],
+    tips: ["模板可以分别设置各级标题的默认编号，当前标题仍可单独覆盖。", "调整标题文字或层级后，大纲和正文目录会同步刷新。"],
   },
   {
     id: "selection-links",
@@ -457,19 +619,23 @@ const HELP_TOPICS = [
     illustration: "comments",
     illustrationAlt: "信笺正文选中了需要评注的文字，选区工具条提供评注入口。",
     illustrationCaption: "先选中具体文字，再从选区工具条创建评注。",
+    illustrations: [
+      { type: "comments-compose", alt: "选中文字后打开新建评注输入框，可输入意见并保存。", caption: "新建评注会明确绑定当前选中的文字范围。" },
+      { type: "comments-thread", alt: "正文中的评注范围被高亮，右侧评注卡片显示查看、编辑和删除操作。", caption: "点击页面侧边的评注锚点，可回看并管理这条意见。" },
+    ],
     steps: ["框选文字后点击悬浮条中的评注按钮。", "输入评注并保存，正文出现高亮，页面侧边出现对应锚点。", "点击锚点查看、编辑或删除评注。"],
     tips: ["评注会随 `.letterpaper` 保存，复制信笺时一并携带。", "正文增删后评注范围会跟随内容映射；过度密集的位置会限制继续添加。"],
   },
   {
     id: "media-pagination",
     categoryId: "writing",
-    title: "图片、音视频、引用与分页",
-    summary: "媒体菜单插入本地素材，元素菜单负责[[引用、分割线和分页符]]。",
+    title: "图片、音视频、图片引用与分页",
+    summary: "__媒体__菜单插入本地素材，图片还能生成仅限当前信笺使用的[[图号引用]]。",
     illustration: "media-pagination",
-    illustrationAlt: "顶部媒体与元素菜单展开，显示图片、音频、视频、链接、引用、分割线和分页符。",
-    illustrationCaption: "媒体与结构元素分为两个菜单，减少顶部工具栏拥挤。",
-    steps: ["从媒体菜单插入图片、音频或视频；图片可调整宽度并编辑标题。", "从元素菜单插入引用块、分割线、分页符或表格。", "导出分页图片时，每个分页符之间的内容成为一张图片。"],
-    tips: ["音频上限为 20 MB，视频上限为 100 MB，素材会随信笺打包保存。", "模板可隐藏图片标题或编号；文字仍保留，重新开启后会恢复。"],
+    illustrationAlt: "写作界面展开媒体菜单，列出图片、音频、视频和链接；正文保留图片引用标记。",
+    illustrationCaption: "媒体菜单集中插入图片、音频、视频和链接；分页符位于相邻的元素菜单。",
+    steps: ["从__媒体__插入图片、音频或视频；图片可调整宽度并编辑标题。", "点击图片工具条中的复制引用，再在同一信笺粘贴 `[图N.标题]` 引用。", "从__元素__插入引文、分割线或分页符；分页图片按分页符输出连续 PNG。"],
+    tips: ["音频上限为 20 MB，视频上限为 100 MB，素材会随信笺打包保存。", "图片引用只在本文档有效；图片增删后图号会自动更新。"],
   },
   {
     id: "table-edit",
@@ -483,15 +649,73 @@ const HELP_TOPICS = [
     tips: ["表格工具条会悬在表格上方，避免遮挡单元格内容。"],
   },
   {
+    id: "footnotes-citations",
+    categoryId: "writing",
+    title: "脚注、文献引用与自动参考文献",
+    summary: "脚注和文献引用从__元素__菜单插入，在[[结构 → 注引]]中统一管理。",
+    illustration: "footnotes-citations",
+    illustrationAlt: "元素菜单显示脚注和文献引用，结构页注引标签列出脚注与参考文献来源。",
+    illustrationCaption: "插入在正文完成，查看、编辑和删除集中在结构页。",
+    steps: ["把光标放在目标位置，从__元素__选择脚注，输入内容后插入。", "选择文献引用，从已有来源中搜索，或新增来源并填写本次引用页码。", "点击顶部__参考__开关，在文尾生成或关闭自动参考文献。"],
+    tips: ["脚注和引用编号会随正文顺序动态更新，并参与可编辑格式导出。", "结构页可跳到正文中的首次使用位置；删除脚注会同时移除对应标记。"],
+  },
+  {
+    id: "related-notes",
+    categoryId: "writing",
+    title: "关联笺记、反向链接与失效重联",
+    summary: "关联笺记使用稳定文档身份连接工作区信笺，并在[[结构 → 关联]]显示正向和反向关系。",
+    illustration: "related-notes",
+    illustrationAlt: "元素菜单打开关联笺记选择器，结构页关联标签显示关联目标、反向关联和重联操作。",
+    illustrationCaption: "文件重命名或移动后仍可保持关联，失效路径可重新绑定。",
+    steps: ["从__元素__选择关联笺记，或输入 `[[` 搜索工作区信笺。", "打开__结构 → 关联__查看本文指向的信笺和指向本文的反向关联。", "目标失效时使用重联选择正确文件，再逐个定位正文中的使用位置。"],
+    tips: ["关联基于 `documentId`，不是只靠文件名或绝对路径。", "检测到重复文档身份时会提示处理，避免链接悄悄指向错误副本。"],
+  },
+  {
+    id: "research-library",
+    categoryId: "research",
+    title: "独立资料目录、资料文件和网页来源",
+    summary: "资料区使用独立于写作工作区的本地目录，并分别管理[[资料文件]]和[[网页来源]]。",
+    illustration: "research-library",
+    illustrationAlt: "资料区显示独立资料目录、资料文件树、网页分组及新增和导入操作。",
+    illustrationCaption: "资料目录可单独选择，网页来源可按全局或当前工作区组织。",
+    steps: ["打开__资料__并选择资料文件夹；可在其中新建目录或导入本地文件。", "在__网页__中新建文件夹和网址来源，填写名称、地址和说明。", "需要项目专属网页时连接当前工作区，并可从全局区域复制已有来源。"],
+    tips: ["资料目录身份和来源索引可同步，但不会把本机绝对路径写入同步数据。", "资料与网页不会自动进入任何 AI 请求。"],
+  },
+  {
+    id: "research-readers",
+    categoryId: "research",
+    title: "右侧资料标签、PDF、网页与多格式阅读",
+    summary: "资料在右编辑组以独立标签打开，可阅读 PDF、网页以及多种常见本地文件。",
+    illustration: "research-readers",
+    illustrationAlt: "右编辑组同时打开 PDF 与网页资料标签，PDF 工具栏显示翻页、搜索、缩放和系统打开。",
+    illustrationCaption: "资料标签与信笺共享右组，但各自保留阅读位置和工具栏状态。",
+    steps: ["在资料树中打开文件或网页，内容会进入右编辑组的新标签。", "PDF 支持页码跳转、方向键和 PageUp/PageDown 翻页、文字搜索、缩放与系统打开。", "网页可后退、前进、刷新或在系统浏览器打开；其他支持格式提供搜索、缩放或表格滚动。"],
+    tips: ["PDF 当前页可作为新建文献引用的默认页码。", "不支持内嵌预览的文件会显示安全信息页，可选择用系统应用打开。"],
+  },
+  {
+    id: "ai-modes",
+    categoryId: "ai",
+    title: "AI 模式选择与模型切换",
+    summary: "点击顶部__AI模式__，在[[AI 优化]]和[[AI 问答]]之间选择当前任务。",
+    illustration: "ai-modes",
+    illustrationAlt: "AI 模式选择窗口显示 AI 优化和 AI 问答两张功能卡片。",
+    illustrationCaption: "先选择任务，再在模式内切换已测试可用的模型。",
+    illustrations: [
+      { type: "ai-model-chooser", alt: "AI 问答的模型选择器完整列出可用供应商和模型。", caption: "进入任务后仍可切换已测试成功的模型。" },
+    ],
+    steps: ["先在设置中配置并测试至少一个可用模型。", "点击__AI模式__，选择 AI 优化或 AI 问答。", "进入模式后可切换模型；退出 AI 模式会返回普通双编辑组布局。"],
+    tips: ["模型不可用时会引导打开 AI 配置，不会静默发送请求。", "优化结果、问答记录和输入草稿都按信笺保存。"],
+  },
+  {
     id: "ai-providers",
     categoryId: "ai",
-    title: "供应商、模型与连接测试",
-    summary: "AI 设置管理内置供应商与自定义的 **OpenAI 兼容**、**Anthropic 原生**接口。",
+    title: "供应商、请求参数与任务模型",
+    summary: "AI 配置管理供应商、基础模型、逐模型[[请求参数]]和只负责特定工作的任务模型。",
     illustration: "ai-providers",
-    illustrationAlt: "AI 设置页面左侧列出多个供应商，右侧显示接口信息、模型列表和连接测试操作。",
-    illustrationCaption: "只有连接测试成功的模型才能用于 AI 功能。",
-    steps: ["打开 AI 设置，选择 Gemini、DeepSeek、Codex CLI 或已有自定义供应商。", "点击添加供应商，填写唯一名称、协议和 Base URL；随后配置 API Key 与模型标识。", "逐个测试模型，选择一个可用模型设为默认。"],
-    tips: ["API Key 只保存在本机配置中，界面和公开配置不会显示完整密钥。", "内置供应商不可删除；自定义供应商可删除，但默认项必须先切换。"],
+    illustrationAlt: "AI 配置页面显示供应商模型、请求参数以及直接应用定位任务模型。",
+    illustrationCaption: "只有测试成功的模型可用于写作任务或设为任务专用模型。",
+    steps: ["从设置进入__AI 配置__，选择 Gemini、DeepSeek、Codex CLI 或自定义供应商。", "为 HTTP 模型填写模型标识和请求参数，测试成功后设为默认。", "打开__任务模型__，为直接应用定位指定专用模型；未指定时跟随默认模型。"],
+    tips: ["直接应用定位模型只判断替换或插入位置，不参与优化内容的生成。", "API Key 仅保存在本机；切换任务供应商时会清空不兼容的任务请求参数。"],
   },
   {
     id: "codex-cli",
@@ -501,19 +725,25 @@ const HELP_TOPICS = [
     illustration: "codex-cli",
     illustrationAlt: "Codex CLI 配置页显示安装、登录和版本状态，以及可用模型和推理强度。",
     illustrationCaption: "重新检查会同步本机状态、模型目录与支持的推理强度。",
+    illustrations: [
+      { type: "codex-cli-models", alt: "Codex CLI 配置页下半部分完整显示模型列表、默认模型和推理强度。", caption: "每个模型都可单独选择推理强度，并设置默认模型。" },
+    ],
     steps: ["先安装 `npm install -g @openai/codex`，再在配置页点击重新检查。", "未登录时点击登录 Codex，在打开的终端中完成授权。", "同步完成后，为模型选择推理强度并设置默认模型。"],
     tips: ["Codex CLI 仅在桌面端可用，调用会消耗当前登录账号的配额。", "笺间不会保存 Codex 登录凭据；模型和推理强度以本机 CLI 返回结果为准。"],
   },
   {
     id: "ai-optimize",
     categoryId: "ai",
-    title: "AI 优化",
-    summary: "AI 优化读取当前信笺，为正文生成[[优化稿]]。",
+    title: "AI 优化、修改对比、直接应用与手动定位",
+    summary: "AI 优化把结果拆成可复制或应用的内容块，应用前必须在原文中显示[[红蓝修改对比]]。",
     illustration: "ai-optimize",
-    illustrationAlt: "AI 优化左右分栏，左侧为原文，右侧为优化结果和模型操作。",
-    illustrationCaption: "定稿线以上作为背景，线以下是本次优化重点。",
-    steps: ["点击 AI 优化进入左右分栏。", "右侧显示模型和优化结果。", "可重新优化、清空优化，或把结果插入__定稿线__。"],
-    tips: ["优化记录跟随当前信笺保存。", "重新优化会覆盖当前信笺已有的优化结果。"],
+    illustrationAlt: "AI 优化的直接应用修改对比完整显示待替换原文、蓝色拟应用内容以及取消和确认应用按钮。",
+    illustrationCaption: "红蓝对比和操作按钮会完整显示在左侧正文中，确认前不会写入。",
+    illustrations: [
+      { type: "ai-optimize-apply", alt: "直接应用无法可靠定位时，左侧顶部显示手动定位提示，要求点选可编辑原文块。", caption: "定位失败会进入手动选择：先在左侧点选原文块，再选择替换或前后插入。" },
+    ],
+    steps: ["进入 AI 优化；定稿线以上作为背景，线以下作为本次优化重点。", "在结果块点击__应用__，定位模型判断替换或插入位置。", "在左侧检查红蓝对比，选择确认应用或取消；无法可靠定位时手动选择原文位置和应用方式。"],
+    tips: ["确认后的修改可用一次 `Ctrl+Z` 完整撤销。", "定稿区、受保护结构或过期目标不会被强行修改；可能影响评注时会明确提示数量。"],
   },
   {
     id: "ai-chat",
@@ -527,36 +757,40 @@ const HELP_TOPICS = [
     tips: ["清空只影响当前信笺的问答，不会清除 AI 优化结果。", "切换信笺或模型不会混用不同信笺的对话上下文。"],
   },
   {
-    id: "codex-scope-images",
+    id: "ai-isolation",
     categoryId: "ai",
-    title: "Codex 信笺隔离与原图",
-    summary: "Codex 问答固定为[[仅当前信笺]]，并可选择附加原图或仅发送 `[图N.标题]`。",
-    illustration: "ai-chat",
-    illustrationAlt: "Codex 问答工具栏显示仅当前信笺隔离，并提供信笺原图开关。",
-    illustrationCaption: "Codex 无法读取信笺目录、工作区或其他本地文件。",
-    steps: ["Codex 工具栏固定显示仅当前信笺（隔离），此范围不可扩大。", "提问时只发送当前信笺正文和本次对话所需内容。", "在设置菜单切换信笺图片：默认附加全部原图，也可改为仅标题。"],
-    tips: ["旧文档保存的目录范围会自动迁移为仅当前信笺。", "原图模式会增加图片 token；图片失效时会明确提示图号，不会静默漏图。"],
+    title: "AI 数据范围、研究资料隔离与信笺原图",
+    summary: "AI 请求只围绕当前信笺；[[资料区、其他信笺和工作区文件]]不会自动进入上下文。",
+    illustration: "ai-isolation",
+    illustrationAlt: "Codex 问答工具栏固定显示仅当前信笺隔离，并展开信笺原图与仅标题选项。",
+    illustrationCaption: "Codex 的读取范围固定为当前信笺，不能扩大到本地目录。",
+    steps: ["进入 AI 模式后确认工具栏显示当前信笺；切换信笺会同时切换对应记录。", "Codex 始终固定为仅当前信笺，不读取信笺目录、工作区或资料区。", "在问答设置中选择附加当前信笺全部原图，或仅发送 `[图N.标题]`。"],
+    tips: ["研究资料即使在右侧打开，也不会进入 AI 请求。", "原图会增加 token；图片失效时会明确报告图号，不会静默跳过。"],
   },
   {
-    id: "split-view",
+    id: "focus-mode",
     categoryId: "view",
-    title: "左右分屏",
-    summary: "非 AI 模式下，可把一个已打开信笺固定到[[右侧分屏]]。",
-    illustration: "split-view",
-    illustrationAlt: "两个信笺在窗口中左右并排显示，右侧面板带有关闭分屏按钮。",
-    illustrationCaption: "左右分屏适合对照资料、整理和改写。",
-    steps: ["右键某个标签页，选择向右分屏。", "左侧继续编辑当前信笺，右侧显示被分屏信笺。", "再次右键该标签，或点击右侧关闭按钮取消。"],
-    tips: ["右分屏只允许一个。", "右键标签仍可进入信笺模板设置，左侧文件栏可继续使用。"],
+    title: "专注模式与精简布局",
+    summary: "按 `F11` 进入[[专注模式]]，隐藏系统标题栏和底部状态栏，并收起右侧编辑组。",
+    illustration: "focus-mode",
+    illustrationAlt: "专注模式下系统标题栏和底部状态栏隐藏，顶部写作工具与左侧栏继续可用。",
+    illustrationCaption: "专注模式精简窗口边框和辅助状态，常用写作工具仍保持可见。",
+    steps: ["点击__专注模式__或按 `F11` 进入全屏写作。", "继续使用顶部写作工具和左侧栏；进入前的右侧编辑组会暂时收起。", "再次按 `F11` 或按层级使用 `Esc`，退出并恢复进入前的布局。"],
+    tips: ["打开的弹窗、菜单和 AI 模式会先按各自层级响应 Esc。", "退出专注模式后，侧栏、双组比例、右组内容和当前标签保持原状。"],
   },
   {
     id: "templates-gallery",
     categoryId: "view",
-    title: "系统模板与切换",
+    title: "系统模板与快速应用",
     summary: "信笺模板统一管理纸张、字体和结构呈现，不改变正文内容。",
     illustration: "templates-gallery",
     illustrationAlt: "信笺模板弹窗左侧为模板分组，右侧为多种系统信纸卡片。",
-    illustrationCaption: "系统模板只读，可直接预览并应用到当前信笺。",
-    steps: ["右键标签页并选择修改信笺模板。", "在左侧系统分组间切换，点击模板卡片查看详情和完整页面预览。", "点击使用模板，把选中的纸张和排版应用到当前信笺。"],
+    illustrationCaption: "系统模板只读；标签页负责快速应用，设置中心负责管理。",
+    illustrations: [
+      { type: "template-quick-menu", alt: "右键信笺标签后出现修改模板、移到右侧和关闭标签菜单。", caption: "先右键信笺标签，再点击“修改模板”。" },
+      { type: "template-quick-picker", alt: "修改模板选择窗口完整显示系统模板分组和可直接应用的模板卡片。", caption: "选择窗口会完整列出系统模板和用户模板，点击卡片即可快速应用。" },
+    ],
+    steps: ["右键信笺标签，点击修改模板，再在弹出的选择窗口中选择要使用的样式。", "打开设置并选择模板配置，在系统分组间切换，点击模板卡片查看详情和完整页面预览。", "创建、编辑、分组和默认模板等管理操作都在模板配置中完成。"],
     tips: ["切换模板不会改变正文文字、图片或评注。", "系统模板不可修改；需要自定义时可基于它创建用户模板。"],
   },
   {
@@ -567,19 +801,25 @@ const HELP_TOPICS = [
     illustration: "template-editor",
     illustrationAlt: "用户模板详情页显示页面预览、字体排版设置、高级选项以及新建默认模板开关。",
     illustrationCaption: "用户模板可编辑，并可加入多个自定义分组。",
-    steps: ["从模板详情点击新建模板，填写唯一名称并选择所属用户分组。", "调整标题、正文、引用等字体字号，并在高级选项中设置段落、标题编号和图片标题。", "保存后可设为新建信笺默认模板，或继续重命名、归类和删除。"],
+    illustrations: [
+      { type: "template-editor-advanced", alt: "模板详情展开高级选项，显示页面结构、正文段落和对齐等设置。", caption: "高级选项较长，可向下滚动继续设置标题编号和图片标题规则。" },
+    ],
+    steps: ["从设置选择模板配置，在模板详情点击新建模板，填写唯一名称并选择所属用户分组。", "调整标题、正文、引用等字体字号，并在高级选项中设置段落、标题编号和图片标题。", "保存后可设为新建信笺默认模板，或继续重命名、归类和删除。"],
     tips: ["所有用户模板始终保留在“我的模板”；删除其他分组只移除归类。", "删除当前新建默认模板时，会恢复到上一个有效默认模板。"],
   },
   {
     id: "status-cache-update",
     categoryId: "view",
-    title: "状态栏、缓存与更新",
-    summary: "底部状态栏显示统计、[[自动保存]]、缓存和版本更新。",
+    title: "状态栏、恢复缓存、版本历史与更新",
+    summary: "底部状态栏集中显示文档统计、[[恢复缓存状态]]、编辑器缓存、版本历史和更新入口。",
     illustration: "statusbar-update",
-    illustrationAlt: "底部状态栏显示字数、段落、页数、图片、引用、自动保存、缓存大小和更新检查。",
-    illustrationCaption: "状态栏集中展示文档状态与应用维护入口。",
-    steps: ["左侧查看字数、段落、页数、图片和引用统计。", "中间查看自动保存时间和当前缓存大小。", "右侧检查更新；可更新时图标显示[[红点]]。"],
-    tips: ["扫把按钮用于清理编辑器结构缓存。", "缓存用于加速已打开信笺之间的切换。"],
+    illustrationAlt: "底部状态栏显示字数、段落、页数、图片、恢复缓存、缓存大小、检查更新和版本号。",
+    illustrationCaption: "状态栏同时反馈当前内容状态和应用维护状态。",
+    illustrations: [
+      { type: "release-notes", alt: "点击版本号后打开完整更新历史，左侧为阶段列表，右侧为版本详情。", caption: "版本历史内置在应用中，无需联网也可查看。" },
+    ],
+    steps: ["左侧查看字数、段落、页数和图片统计。", "中间确认恢复缓存写入状态，并查看或清理信笺切换缓存。", "右侧检查更新；点击版本号可离线查看完整版本历史。"],
+    tips: ["恢复缓存用于意外恢复，编辑器结构缓存只用于加速标签切换。", "浏览器预览不支持真实更新；桌面版发现更新时会显示状态提示。"],
   },
 ];
 
@@ -1197,14 +1437,19 @@ function loadSessionState() {
       ? parsed.tabs
         .map((tab) => ({
           path: typeof tab?.path === "string" ? tab.path : "",
+          recoveryPath: typeof tab?.recoveryPath === "string" ? tab.recoveryPath : "",
+          recoveryId: typeof tab?.recoveryId === "string" ? tab.recoveryId : "",
+          recoverySourcePath: typeof tab?.recoverySourcePath === "string" ? tab.recoverySourcePath : "",
+          recoveryBaseRevision: normalizeSessionDiskRevision(tab?.recoveryBaseRevision),
           temporary: Boolean(tab?.temporary),
         }))
-        .filter((tab) => tab.path)
+        .filter((tab) => tab.path || tab.recoveryPath)
       : [];
     return {
       folderPath: typeof parsed.folderPath === "string" ? parsed.folderPath : "",
       activePath: typeof parsed.activePath === "string" ? parsed.activePath : "",
       tabs,
+      workspaceGroups: parsed.workspaceGroups && typeof parsed.workspaceGroups === "object" ? parsed.workspaceGroups : null,
     };
   } catch {
     return { folderPath: "", activePath: "", tabs: [] };
@@ -1222,12 +1467,42 @@ function saveSessionState(state) {
       ? state.tabs
         .map((tab) => ({
           path: typeof tab?.path === "string" ? tab.path : "",
+          recoveryPath: typeof tab?.recoveryPath === "string" ? tab.recoveryPath : "",
+          recoveryId: typeof tab?.recoveryId === "string" ? tab.recoveryId : "",
+          recoverySourcePath: typeof tab?.recoverySourcePath === "string" ? tab.recoverySourcePath : "",
+          recoveryBaseRevision: normalizeSessionDiskRevision(tab?.recoveryBaseRevision),
           temporary: Boolean(tab?.temporary),
         }))
-        .filter((tab) => tab.path)
+        .filter((tab) => tab.path || tab.recoveryPath)
       : [],
+    workspaceGroups: state.workspaceGroups && typeof state.workspaceGroups === "object" ? state.workspaceGroups : null,
     updatedAt: new Date().toISOString(),
   }));
+}
+
+function normalizeRememberedExportDirectory(value) {
+  const directory = typeof value === "string" ? value.trim() : "";
+  return directory && directory.length <= 32768 && !/[\u0000-\u001f\u007f]/.test(directory) ? directory : "";
+}
+
+function loadRememberedExportDirectory() {
+  if (typeof window === "undefined") return "";
+  try {
+    return normalizeRememberedExportDirectory(window.localStorage.getItem(EXPORT_LAST_DIRECTORY_STORAGE_KEY));
+  } catch {
+    return "";
+  }
+}
+
+function rememberExportDirectory(value) {
+  if (typeof window === "undefined") return;
+  const directory = normalizeRememberedExportDirectory(value);
+  if (!directory) return;
+  try {
+    window.localStorage.setItem(EXPORT_LAST_DIRECTORY_STORAGE_KEY, directory);
+  } catch {
+    // Export still works when local preferences are unavailable.
+  }
 }
 
 function getLastAutoUpdateCheckAt() {
@@ -1285,16 +1560,52 @@ function parseAiModelKey(value = "") {
   };
 }
 
+function normalizePublicAiTaskModelAssignment(value = {}) {
+  const rawProviderId = typeof value?.providerId === "string" ? value.providerId.slice(0, 128).trim() : "";
+  const providerId = /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(rawProviderId)
+    && !["__proto__", "prototype", "constructor", "tostring", "valueof"].includes(rawProviderId.toLowerCase())
+    ? rawProviderId
+    : "";
+  const modelId = typeof value?.modelId === "string" ? value.modelId.slice(0, 256).trim() : "";
+  return providerId && modelId
+    ? { providerId, modelId, requestParams: normalizeUiAiRequestParams(value?.requestParams) }
+    : { providerId: "", modelId: "", requestParams: {} };
+}
+
+function formatAiReasoningEffort(value = "") {
+  return AI_REASONING_EFFORT_OPTIONS.find((option) => option.value === value)?.label || value || "服务商默认";
+}
+
+function getAiReasoningEffortOptions(model = {}, { inherit = false } = {}) {
+  const supported = Array.isArray(model.supportedReasoningEfforts) && model.supportedReasoningEfforts.length
+    ? model.supportedReasoningEfforts.map((option) => ({
+      value: String(option?.reasoningEffort || option || ""),
+      label: formatAiReasoningEffort(String(option?.reasoningEffort || option || "")),
+    })).filter((option) => option.value)
+    : AI_REASONING_EFFORT_OPTIONS.filter((option) => option.value);
+  const current = String(model.reasoningEffort || model.defaultReasoningEffort || "");
+  const choices = current && !supported.some((option) => option.value === current)
+    ? [{ value: current, label: formatAiReasoningEffort(current) }, ...supported]
+    : supported;
+  if (!inherit) {
+    return [{ value: "", label: "服务商默认" }, ...choices];
+  }
+  const modelDefault = formatAiReasoningEffort(current);
+  return [{ value: "", label: `跟随模型设置 · ${modelDefault}` }, ...choices];
+}
+
 function normalizePublicAiModelConfig(provider, config = {}, index = 0) {
   const defaults = getAiProviderDefaults(provider, config);
   const model = String(config.model || defaults.model || "").trim();
+  const isCodex = defaults.transport === "codex-cli";
   return {
     id: config.id || createAiModelId(provider, model || String(index + 1)),
     name: String(config.name || config.modelName || (index === 0 ? "默认模型" : `模型 ${index + 1}`)).trim() || `模型 ${index + 1}`,
     model,
-    reasoningEffort: config.reasoningEffort || config.defaultReasoningEffort || "",
-    defaultReasoningEffort: config.defaultReasoningEffort || "",
-    supportedReasoningEfforts: Array.isArray(config.supportedReasoningEfforts) ? config.supportedReasoningEfforts : [],
+    requestParams: isCodex ? {} : normalizeUiAiRequestParams(config.requestParams),
+    reasoningEffort: isCodex ? (config.reasoningEffort || config.defaultReasoningEffort || "") : "",
+    defaultReasoningEffort: isCodex ? (config.defaultReasoningEffort || "") : "",
+    supportedReasoningEfforts: isCodex && Array.isArray(config.supportedReasoningEfforts) ? config.supportedReasoningEfforts : [],
     description: config.description || "",
     catalogManaged: Boolean(config.catalogManaged),
     testedOk: Boolean(config.testedOk),
@@ -1312,6 +1623,10 @@ function normalizePublicAiProviderConfig(provider, config = {}) {
     testedOk: config.testedOk,
     testedAt: config.testedAt,
     testMessage: config.testMessage,
+    requestParams: config.requestParams,
+    reasoningEffort: config.reasoningEffort,
+    defaultReasoningEffort: config.defaultReasoningEffort,
+    supportedReasoningEfforts: config.supportedReasoningEfforts,
   };
   const isCodex = defaults.transport === "codex-cli";
   let modelsSource = Array.isArray(config.models) ? config.models : ((defaults.builtin && !isCodex) || config.model ? [legacyModel] : []);
@@ -1356,6 +1671,7 @@ function normalizePublicAiConfig(config) {
   const requestedModelId = config?.activeModelId || config?.modelId || activeProviderConfig.activeModelId;
   const activeModel = activeProviderConfig.models.find((model) => model.id === requestedModelId) || activeProviderConfig.models[0] || {};
   const activeModelId = activeModel.id || "";
+  const applyResolver = normalizePublicAiTaskModelAssignment(config?.taskModels?.applyResolver);
   return {
     ...DEFAULT_AI_CONFIG,
     activeProvider,
@@ -1375,6 +1691,9 @@ function normalizePublicAiConfig(config) {
     testedOk: Boolean(activeModel.testedOk),
     testedAt: activeModel.testedAt || "",
     testMessage: activeModel.testMessage || "",
+    taskModels: {
+      applyResolver,
+    },
   };
 }
 
@@ -1398,6 +1717,10 @@ function getTestedAiProviders(config) {
         modelId: model.id,
         modelName: model.name,
         model: model.model,
+        requestParams: model.requestParams || {},
+        reasoningEffort: model.reasoningEffort || model.defaultReasoningEffort || "",
+        defaultReasoningEffort: model.defaultReasoningEffort || "",
+        supportedReasoningEfforts: model.supportedReasoningEfforts || [],
         label: providerConfig.providerLabel,
         baseUrl: providerConfig.baseUrl,
       }));
@@ -1428,6 +1751,10 @@ function getAiProviderRuntimeConfig(config, modelKey) {
     testedOk: Boolean(model.testedOk),
     testedAt: model.testedAt || "",
     testMessage: model.testMessage || "",
+    requestParams: model.requestParams || {},
+    reasoningEffort: model.reasoningEffort || model.defaultReasoningEffort || "",
+    defaultReasoningEffort: model.defaultReasoningEffort || "",
+    supportedReasoningEfforts: model.supportedReasoningEfforts || [],
     activeProvider: normalized.activeProvider,
   };
 }
@@ -1550,6 +1877,10 @@ function extractAiBodyContent(editor, { includeFinalizedBoundary = true, include
     }
 
     if (node.type === "paperTableOfContents") {
+      return;
+    }
+
+    if (node.type === "paperFootnoteList" || node.type === "paperBibliography") {
       return;
     }
 
@@ -1896,6 +2227,27 @@ function parseAiResponseBlocks(text, assets = { images: {} }) {
   flushParagraph();
   flushList();
   return blocks;
+}
+
+function buildAiOptimizationContext(blocks, selectedIndex) {
+  const source = Array.isArray(blocks) ? blocks : [];
+  const index = Math.max(0, Math.min(source.length - 1, Math.floor(Number(selectedIndex) || 0)));
+  return {
+    selectedIndex: index,
+    totalBlocks: source.length,
+    previousBlocks: source.slice(Math.max(0, index - 2), index),
+    nextBlocks: source.slice(index + 1, index + 3),
+  };
+}
+
+function summarizeAiApplyTarget(operation, manifest, maximum = 88) {
+  const blocks = Array.isArray(manifest?.blocks) ? manifest.blocks : [];
+  const selected = operation?.action === "replace"
+    ? blocks.filter((block) => operation.targetBlockIds?.includes(block.id))
+    : blocks.filter((block) => block.id === operation?.anchorBlockId);
+  const text = selected.map((block) => block.text || `[${block.type}]`).filter(Boolean).join(" / ").replace(/\s+/g, " ").trim();
+  if (!text) return "目标位置附近没有可显示的文字";
+  return text.length > maximum ? `${text.slice(0, maximum)}…` : text;
 }
 
 function escapeHtml(value) {
@@ -2297,7 +2649,11 @@ function createBlankDocument(
     || DEFAULT_LETTER_TEMPLATES[0];
   const now = new Date().toISOString();
   return {
-    version: 1,
+    version: 2,
+    documentId: createDocumentId(),
+    derivedFrom: "",
+    footnotes: [],
+    citationSources: [],
     title: "未命名信笺",
     author: "",
     html: "<p></p>",
@@ -2418,12 +2774,20 @@ function normalizeDocument(document, letterTemplates = DEFAULT_LETTER_TEMPLATES)
   const displayDate = typeof document?.displayDate === "string" && document.displayDate.trim()
     ? document.displayDate.trim().slice(0, 40)
     : formatPaperDate(createdAt);
-  return {
+  const compatibility = getDocumentSchemaCompatibility(document || {});
+  const usesV2 = compatibility.version >= 2
+    || Boolean(document?.documentId)
+    || Array.isArray(document?.footnotes)
+    || Array.isArray(document?.citationSources);
+  const schemaDocument = compatibility.readOnly
+    ? document
+    : (usesV2 ? normalizeDocumentSchemaV2(document || {}) : { ...(document || {}), version: 1 });
+  const normalized = {
     ...createBlankDocument(),
-    ...document,
-    title: normalizeDocumentTitle(document?.title),
-    author: typeof document?.author === "string" ? document.author.trim().slice(0, 40) : "",
-    html: document?.html || "<p></p>",
+    ...schemaDocument,
+    title: normalizeDocumentTitle(schemaDocument?.title),
+    author: typeof schemaDocument?.author === "string" ? schemaDocument.author.trim().slice(0, 40) : "",
+    html: schemaDocument?.html || "<p></p>",
     createdAt,
     displayDate,
     letterTemplateId,
@@ -2432,9 +2796,21 @@ function normalizeDocument(document, letterTemplates = DEFAULT_LETTER_TEMPLATES)
     fontSize: letterTemplate.typography.bodySize,
     layoutMode: LAYOUT_MODES.FLOW,
     customBackground,
-    comments: normalizeDocumentComments(document?.comments),
-    aiState: normalizeAiState(document?.aiState),
+    comments: normalizeDocumentComments(schemaDocument?.comments),
+    aiState: normalizeAiState(schemaDocument?.aiState),
+    _readOnlyFutureSchema: compatibility.readOnly || Boolean(schemaDocument?._readOnlyFutureSchema),
   };
+  // Legacy files remain v1 until a v2-only feature is actually used. This
+  // avoids silently discarding compatibility with 0.9.2 merely by opening and
+  // saving an otherwise unchanged document.
+  if (!usesV2 && !compatibility.readOnly) {
+    normalized.version = 1;
+    delete normalized.documentId;
+    delete normalized.derivedFrom;
+    delete normalized.footnotes;
+    delete normalized.citationSources;
+  }
+  return normalized;
 }
 
 function inferTitle(text) {
@@ -2444,6 +2820,54 @@ function inferTitle(text) {
 
 function displayNameFromPath(filePath) {
   return String(filePath || "").replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean).pop() || String(filePath || "");
+}
+
+function normalizeResearchTreeEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry) => ({
+    ...entry,
+    type: entry?.type || entry?.kind || "file",
+    kind: entry?.kind || entry?.type || "file",
+    relativePath: String(entry?.relativePath || "").replace(/\\/g, "/"),
+    children: Array.isArray(entry?.children) ? normalizeResearchTreeEntries(entry.children) : entry?.children,
+  }));
+}
+
+function replaceResearchTreeFolder(entries, folderRelativePath, children, patch = {}) {
+  const target = String(folderRelativePath || "").replace(/\\/g, "/");
+  if (!target) return normalizeResearchTreeEntries(children);
+  return normalizeResearchTreeEntries(entries).map((entry) => {
+    if (entry.relativePath === target) {
+      return { ...entry, ...patch, children: normalizeResearchTreeEntries(children) };
+    }
+    if (Array.isArray(entry.children) && target.startsWith(`${entry.relativePath}/`)) {
+      return { ...entry, children: replaceResearchTreeFolder(entry.children, target, children, patch) };
+    }
+    return entry;
+  });
+}
+
+function sameDiskRevision(left, right) {
+  if (!left || !right) return left === right;
+  return Number(left.size) === Number(right.size)
+    && Number(left.mtimeMs) === Number(right.mtimeMs)
+    && String(left.sha256 || "") === String(right.sha256 || "");
+}
+
+function normalizeSessionDiskRevision(revision) {
+  if (!revision || typeof revision !== "object") return null;
+  const normalized = {
+    size: Number(revision.size),
+    mtimeMs: Number(revision.mtimeMs),
+    sha256: String(revision.sha256 || "").toLowerCase(),
+  };
+  return Number.isSafeInteger(normalized.size)
+    && normalized.size >= 0
+    && Number.isFinite(normalized.mtimeMs)
+    && normalized.mtimeMs >= 0
+    && /^[a-f0-9]{64}$/.test(normalized.sha256)
+    ? normalized
+    : null;
 }
 
 function pathIsSameOrInside(targetPath, parentPath) {
@@ -2491,14 +2915,23 @@ function formatClock(value) {
   return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-function StatusToast({ status }) {
+function StatusToast({ status, onClose }) {
   if (!status) {
     return null;
   }
   return (
-    <div className={`status-toast ${status.tone}`}>
-      <CheckCircle2 size={16} />
+    <div
+      className={`status-toast ${status.tone}`}
+      role={status.tone === "warning" ? "alert" : "status"}
+      aria-live={status.tone === "warning" ? "assertive" : "polite"}
+    >
+      {status.tone === "warning" ? <Info size={16} /> : <CheckCircle2 size={16} />}
       <span>{status.message}</span>
+      {status.dismissible ? (
+        <button type="button" className="status-toast-dismiss" aria-label="关闭提示" onClick={onClose}>
+          <X size={14} aria-hidden="true" />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -2666,16 +3099,8 @@ function normalizeLinkUrl(value) {
   if (!source) {
     return { ok: false, error: "请输入链接地址" };
   }
-  const withProtocol = /^[a-z][a-z0-9+.-]*:/i.test(source) ? source : `https://${source}`;
-  try {
-    const parsed = new URL(withProtocol);
-    if (!ALLOWED_LINK_PROTOCOLS.has(parsed.protocol)) {
-      return { ok: false, error: "仅支持 http、https 和邮箱链接" };
-    }
-    return { ok: true, url: parsed.toString() };
-  } catch {
-    return { ok: false, error: "链接地址格式不正确" };
-  }
+  const url = normalizeExternalLinkUrl(source);
+  return url ? { ok: true, url } : { ok: false, error: "链接地址格式不正确，仅支持 http、https 和邮箱链接" };
 }
 
 function getEditorLinkContext(editor, savedSelectionRef) {
@@ -2690,10 +3115,19 @@ function getEditorLinkContext(editor, savedSelectionRef) {
     from = saved.from;
     to = saved.to;
   }
+  const directNode = editor.state.doc.nodeAt(from);
+  if (directNode?.type?.name === "paperExternalLink" && (from === to || to === from + directNode.nodeSize)) {
+    return {
+      from,
+      to: from + directNode.nodeSize,
+      text: directNode.attrs.label || directNode.attrs.href || "链接",
+      url: directNode.attrs.href || "",
+      editing: true,
+    };
+  }
   const selectedText = editor.state.doc.textBetween(from, to, " ").trim();
-  const selectedHref = editor.getAttributes("link")?.href || "";
   if (from !== to) {
-    return { from, to, text: selectedText, url: selectedHref, editing: Boolean(selectedHref) };
+    return { from, to, text: selectedText, url: "", editing: false };
   }
 
   const resolved = editor.state.doc.resolve(Math.max(1, Math.min(from, editor.state.doc.content.size)));
@@ -2701,21 +3135,15 @@ function getEditorLinkContext(editor, savedSelectionRef) {
   const parentStart = resolved.start();
   let linked = null;
   parent.forEach((child, offset) => {
-    if (linked || !child.isText) {
-      return;
-    }
-    const mark = child.marks.find((item) => item.type.name === "link");
-    if (!mark) {
-      return;
-    }
+    if (linked || child.type.name !== "paperExternalLink") return;
     const childFrom = parentStart + offset;
     const childTo = childFrom + child.nodeSize;
     if (from >= childFrom && from <= childTo) {
       linked = {
         from: childFrom,
         to: childTo,
-        text: child.text || "",
-        url: mark.attrs.href || "",
+        text: child.attrs.label || child.attrs.href || "链接",
+        url: child.attrs.href || "",
         editing: true,
       };
     }
@@ -2729,11 +3157,12 @@ function getClickedLinkContext(editor, anchor) {
   }
   try {
     const from = editor.view.posAtDOM(anchor, 0);
-    const to = editor.view.posAtDOM(anchor, anchor.childNodes.length);
+    const node = editor.state.doc.nodeAt(from);
+    const to = from + (node?.type?.name === "paperExternalLink" ? node.nodeSize : 1);
     return {
       from,
       to,
-      text: anchor.textContent || "",
+      text: node?.attrs?.label || anchor.textContent || "",
       url: anchor.getAttribute("href") || "",
       editing: true,
     };
@@ -2799,16 +3228,8 @@ function createPaperEditorExtensions() {
   return [
     StarterKit.configure({
       underline: false,
-      link: {
-        openOnClick: false,
-        autolink: true,
-        linkOnPaste: true,
-        HTMLAttributes: {
-          rel: "noopener noreferrer nofollow",
-          target: "_blank",
-          title: "单击编辑链接；Ctrl/Command + 单击打开链接",
-        },
-      },
+      trailingNode: { notAfter: ["paragraph", ...KNOWLEDGE_TAIL_NODE_TYPES] },
+      link: false,
     }),
     TextStyle,
     Color.configure({ types: ["textStyle"] }),
@@ -2830,7 +3251,11 @@ function createPaperEditorExtensions() {
     PaperHorizontalRule,
     PaperFinalizedBreak,
     PaperTableOfContents,
+    ...createStructuredInlineExtensions(),
+    ...createKnowledgeExtensions(),
+    DocumentSearchExtension,
     AiChatSelectionDecorations,
+    AiApplyPreviewDecorations,
     DocumentCommentDecorations,
     TextAlign.configure({ types: ["heading", "paragraph"] }),
     Placeholder.configure({ placeholder: "在这里开始写。" }),
@@ -2872,6 +3297,23 @@ function insertFinalizedBreak(editor, savedSelectionRef) {
   runEditorCommand(editor, savedSelectionRef, (chain) => chain.insertContent({ type: "paperFinalizedBreak" }));
 }
 
+function removeFinalizedBreak(editor) {
+  if (!editor) {
+    return;
+  }
+  let finalizedBreakRange = null;
+  editor.state.doc.content.forEach((node, pos) => {
+    if (!finalizedBreakRange && node.type?.name === "paperFinalizedBreak") {
+      finalizedBreakRange = { from: pos, to: pos + node.nodeSize };
+    }
+  });
+  if (!finalizedBreakRange) {
+    return;
+  }
+  editor.view.dispatch(editor.state.tr.delete(finalizedBreakRange.from, finalizedBreakRange.to).scrollIntoView());
+  editor.view.focus();
+}
+
 function insertTableOfContents(editor, savedSelectionRef) {
   if (!editor) {
     return;
@@ -2896,6 +3338,20 @@ function insertTableOfContents(editor, savedSelectionRef) {
   editor.view.dispatch(tr.scrollIntoView());
   editor.view.focus();
   savedSelectionRef.current = null;
+}
+
+function toggleAutomaticBibliography(editor) {
+  if (!editor?.state?.doc || !editor.schema.nodes.paperBibliography) return;
+  const bibliographyPosition = findKnowledgeNodePosition(editor, "paperBibliography");
+  let transaction = editor.state.tr;
+  if (Number.isFinite(bibliographyPosition)) {
+    const bibliographyNode = transaction.doc.nodeAt(bibliographyPosition);
+    transaction = transaction.delete(bibliographyPosition, bibliographyPosition + bibliographyNode.nodeSize);
+  } else {
+    transaction = transaction.insert(transaction.doc.content.size, editor.schema.nodes.paperBibliography.create({ entries: [] }));
+  }
+  editor.view.dispatch(transaction.scrollIntoView());
+  editor.view.focus();
 }
 
 function ColorMenu({ icon: Icon, label, options, value, onSelect }) {
@@ -3056,12 +3512,13 @@ function parsedImageElement(element) {
   return element?.querySelector?.("img") || null;
 }
 
-function PaperImageNodeView({ node, updateAttributes, selected }) {
+function PaperImageNodeView({ node, updateAttributes, selected, editor, getPos }) {
   const width = normalizeEmbedWidth(node.attrs.width);
   const source = normalizeImageSource(node.attrs.src);
   const caption = normalizeImageCaption(node.attrs.caption);
   const alt = normalizeImageText(node.attrs.alt);
   const title = normalizeImageText(node.attrs.title);
+  const imageId = normalizeDocumentId(node.attrs.imageId);
   const captionRef = useRef(null);
 
   useEffect(() => {
@@ -3079,6 +3536,7 @@ function PaperImageNodeView({ node, updateAttributes, selected }) {
       as="figure"
       className={selected ? "paper-image-figure selected" : "paper-image-figure"}
       data-type="paper-image"
+      data-image-id={imageId}
       data-width={width}
       style={{ "--image-width": width }}
     >
@@ -3097,6 +3555,25 @@ function PaperImageNodeView({ node, updateAttributes, selected }) {
               {option.label}
             </button>
           ))}
+          <button
+            type="button"
+            className="image-copy-reference"
+            title="复制图片引用"
+            aria-label="复制图片引用"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              let position = null;
+              try { position = typeof getPos === "function" ? getPos() : null; } catch {}
+              window.dispatchEvent(new CustomEvent("paper-image-reference-copy", { detail: {
+                editorDom: editor?.view?.dom,
+                imageId,
+                position,
+              } }));
+            }}
+          >
+            <Copy size={13} aria-hidden="true" />
+            <span>引用</span>
+          </button>
         </div>
       </div>
       <label className="paper-image-caption-row" contentEditable={false}>
@@ -3145,6 +3622,10 @@ const PaperImage = Image.extend({
         default: "",
         parseHTML: (element) => normalizeImageCaption(element.getAttribute("data-caption") || element.querySelector("figcaption")?.textContent?.trim()),
       },
+      imageId: {
+        default: "",
+        parseHTML: (element) => normalizeDocumentId(element.getAttribute("data-image-id")),
+      },
     };
   },
 
@@ -3164,6 +3645,7 @@ const PaperImage = Image.extend({
             title: normalizeImageText(image.getAttribute("title")),
             width: normalizeEmbedWidth(element.getAttribute("data-width") || element.style.getPropertyValue("--image-width")),
             caption: normalizeImageCaption(element.getAttribute("data-caption") || element.querySelector("figcaption")?.textContent?.trim()),
+            imageId: normalizeDocumentId(element.getAttribute("data-image-id")),
           };
         },
       },
@@ -3177,6 +3659,7 @@ const PaperImage = Image.extend({
             title: normalizeImageText(element.getAttribute("title")),
             width: normalizeEmbedWidth(element.getAttribute("data-width") || element.style.width),
             caption: "",
+            imageId: normalizeDocumentId(element.getAttribute("data-image-id")),
           } : false;
         },
       },
@@ -3184,9 +3667,10 @@ const PaperImage = Image.extend({
   },
 
   renderHTML({ HTMLAttributes }) {
-    const { width = "78%", caption = "", ...imageAttrs } = HTMLAttributes;
+    const { width = "78%", caption = "", imageId = "", ...imageAttrs } = HTMLAttributes;
     const safeWidth = normalizeEmbedWidth(width);
     const safeCaption = normalizeImageCaption(caption);
+    const safeImageId = normalizeDocumentId(imageId);
     const source = normalizeImageSource(imageAttrs.src);
     imageAttrs.alt = normalizeImageText(imageAttrs.alt);
     imageAttrs.title = normalizeImageText(imageAttrs.title);
@@ -3197,6 +3681,7 @@ const PaperImage = Image.extend({
       "figure",
       {
         "data-type": "paper-image",
+        "data-image-id": safeImageId,
         "data-width": safeWidth,
         "data-caption": safeCaption,
         class: "paper-image-figure",
@@ -3685,6 +4170,111 @@ const AiChatSelectionDecorations = Extension.create({
   },
 });
 
+function buildAiApplyPreviewDecorationSet(doc, preview) {
+  const operation = preview?.resolved?.operation;
+  const manifest = preview?.resolved?.manifest;
+  if (!operation || !manifest) return DecorationSet.empty;
+
+  const decorations = [];
+  if (operation.action === "replace") {
+    (operation.targetBlockIds || []).forEach((targetBlockId) => {
+      const target = manifest.blocks?.find((block) => block.id === targetBlockId);
+      if (!target || target.from < 0 || target.to > doc.content.size || target.from >= target.to) return;
+      decorations.push(Decoration.node(target.from, target.to, {
+        class: "ai-apply-preview-original",
+        "data-ai-apply-preview": preview.id,
+      }));
+    });
+  }
+
+  const position = Math.max(0, Math.min(Number(operation.to) || 0, doc.content.size));
+  decorations.push(Decoration.widget(position, () => {
+    const card = window.document.createElement("section");
+    card.className = `ai-apply-preview-card${preview.commentCount ? " has-comment-warning" : ""}`;
+    card.contentEditable = "false";
+    card.setAttribute("role", "group");
+    card.setAttribute("aria-label", "直接应用修改对比");
+    card.dataset.aiApplyPreview = preview.id;
+
+    const heading = window.document.createElement("div");
+    heading.className = "ai-apply-preview-heading";
+    const label = window.document.createElement("strong");
+    label.textContent = operation.action === "replace" ? "蓝色：拟替换内容" : "蓝色：拟插入内容";
+    const action = window.document.createElement("span");
+    action.textContent = preview.actionLabel;
+    heading.append(label, action);
+
+    const body = window.document.createElement("div");
+    body.className = "ai-apply-preview-proposed";
+    // operation.html is assembled locally from an allowlist; no model-provided HTML reaches this sink.
+    body.innerHTML = operation.html || "";
+
+    const details = window.document.createElement("p");
+    details.className = "ai-apply-preview-details";
+    details.textContent = [
+      operation.action === "replace" ? "红色：确认后删除的原文" : "原文保持不变",
+      `目标：${preview.targetSummary}`,
+      preview.commentCount ? `可能影响 ${preview.commentCount} 条评注` : "不会覆盖现有评注",
+    ].join(" · ");
+
+    const actions = window.document.createElement("div");
+    actions.className = "ai-apply-preview-actions";
+    const cancel = window.document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "取消";
+    cancel.addEventListener("mousedown", (event) => event.stopPropagation());
+    cancel.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      preview.onCancel?.();
+    });
+    const confirm = window.document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "primary";
+    confirm.textContent = "确认应用";
+    confirm.addEventListener("mousedown", (event) => event.stopPropagation());
+    confirm.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      preview.onConfirm?.();
+    });
+    actions.append(cancel, confirm);
+    card.append(heading, body, details, actions);
+    return card;
+  }, {
+    side: operation.action === "insert_before" ? -1 : 1,
+    key: `ai-apply-preview-${preview.id}`,
+    stopEvent: (event) => Boolean(event.target?.closest?.(".ai-apply-preview-card")),
+  }));
+  return DecorationSet.create(doc, decorations);
+}
+
+const AiApplyPreviewDecorations = Extension.create({
+  name: "aiApplyPreviewDecorations",
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: AI_APPLY_PREVIEW_PLUGIN_KEY,
+        state: {
+          init: () => DecorationSet.empty,
+          apply(transaction, previousDecorationSet) {
+            const meta = transaction.getMeta(AI_APPLY_PREVIEW_PLUGIN_KEY);
+            if (meta?.type === "show") return buildAiApplyPreviewDecorationSet(transaction.doc, meta.preview);
+            if (meta?.type === "clear" || transaction.docChanged) return DecorationSet.empty;
+            return previousDecorationSet.map(transaction.mapping, transaction.doc);
+          },
+        },
+        props: {
+          decorations(state) {
+            return this.getState(state);
+          },
+        },
+      }),
+    ];
+  },
+});
+
 const PaperDerivedState = Extension.create({
   name: "paperDerivedState",
   priority: 110,
@@ -3826,6 +4416,13 @@ function syncAiChatSelectionDecorations(editor, selections = []) {
   editor.view.dispatch(editor.state.tr.setMeta(AI_CHAT_SELECTION_PLUGIN_KEY, selections));
 }
 
+function syncAiApplyPreviewDecorations(editor, preview = null) {
+  if (!editor?.view || editor.isDestroyed) return;
+  editor.view.dispatch(editor.state.tr.setMeta(AI_APPLY_PREVIEW_PLUGIN_KEY, preview
+    ? { type: "show", preview }
+    : { type: "clear" }));
+}
+
 function syncDocumentCommentDecorations(editor, comments = []) {
   if (!editor?.view) {
     return;
@@ -3893,20 +4490,26 @@ function MenuButton({ icon: Icon, label, menuId, openMenu, onOpenMenu, children,
   );
 }
 
-function MenuItem({ icon: Icon, label, disabled = false, active = false, selection = false, checked, onClick }) {
+function MenuItem({ icon: Icon, label, description = "", shortcut = "", disabled = false, active = false, selection = false, checked, onClick }) {
   const isCheckbox = typeof checked === "boolean";
   const isActive = active || checked === true;
   return (
     <button
       type="button"
-      className={isActive ? "nav-menu-item active" : "nav-menu-item"}
+      className={["nav-menu-item", isActive ? "active" : "", description ? "with-description" : ""].filter(Boolean).join(" ")}
       role={selection ? "menuitemradio" : isCheckbox ? "menuitemcheckbox" : "menuitem"}
       aria-checked={selection ? active : isCheckbox ? checked : undefined}
       disabled={disabled}
       onClick={onClick}
     >
       <Icon size={16} strokeWidth={1.9} />
-      <span>{label}</span>
+      {description ? (
+        <span className="nav-menu-item-copy">
+          <strong>{label}</strong>
+          <small>{description}</small>
+        </span>
+      ) : <span>{label}</span>}
+      {shortcut ? <kbd className="nav-menu-item-shortcut">{shortcut}</kbd> : null}
       {(selection && active) || checked === true ? <Check size={14} className="nav-menu-item-check" aria-hidden="true" /> : null}
     </button>
   );
@@ -4001,22 +4604,31 @@ function TopNav({
   savedSelectionRef,
   onNew,
   onOpen,
+  onImport,
   onSave,
   onOpenExport,
   onInsertImage,
   onInsertAudio,
   onInsertVideo,
   onOpenLinkDialog,
+  onInsertInternalLink,
+  onInsertFootnote,
+  onOpenCitationPicker,
   onOpenHelp,
+  onOpenSettings,
+  settingsTriggerRef,
+  onOpenSearch,
+  workspaceSearchAvailable,
   aiMode,
   aiModeKind,
   aiBusy,
   aiConfigured,
+  aiModeChooserOpen,
+  aiModeTriggerRef,
   editorLocked,
-  onOpenAiSettings,
-  onEnterAiOptimize,
-  onEnterAiChat,
-  onExitAi,
+  onToggleAiModeChooser,
+  immersiveMode,
+  onToggleImmersive,
   leftSidebarCollapsed,
   onToggleLeftSidebar,
 }) {
@@ -4024,7 +4636,7 @@ function TopNav({
     editor,
     selector: ({ editor: activeEditor }) => {
       if (!activeEditor) {
-        return { canUndo: false, canRedo: false, activeHeadingLevel: 0, bulletListActive: false, orderedListActive: false, activeAlignment: "", tableOfContentsInserted: false };
+        return { canUndo: false, canRedo: false, activeHeadingLevel: 0, bulletListActive: false, orderedListActive: false, activeAlignment: "", tableOfContentsInserted: false, bibliographyInserted: false };
       }
       return {
         canUndo: activeEditor.can().undo(),
@@ -4034,13 +4646,17 @@ function TopNav({
         orderedListActive: activeEditor.isActive("orderedList"),
         activeAlignment: ["left", "center", "right"].find((value) => activeEditor.isActive({ textAlign: value })) || "",
         tableOfContentsInserted: getPaperDerivedState(activeEditor).hasTableOfContents,
+        bibliographyInserted: Number.isFinite(findKnowledgeNodePosition(activeEditor, "paperBibliography")),
       };
     },
   }) || {};
   const canEdit = Boolean(editor) && !editorLocked && !aiMode;
   const documentActionsDisabled = Boolean(aiMode);
   const [openMenu, setOpenMenu] = useState("");
-  const exitAiLabel = aiModeKind === "chat" ? "退出 AI问答" : "退出 AI优化";
+  const activeAiModeLabel = aiModeKind === "chat" ? "AI问答" : "AI优化";
+  const aiModeTriggerLabel = aiMode
+    ? `AI模式，当前：${activeAiModeLabel}${aiBusy ? "，正在生成" : ""}`
+    : "选择 AI 模式";
   const leftSidebarToggleLabel = leftSidebarCollapsed ? "展开左侧栏" : "收起左侧栏";
   const LeftSidebarToggleIcon = leftSidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
   const canUndo = canEdit && toolbarState.canUndo;
@@ -4049,6 +4665,7 @@ function TopNav({
   const bulletListActive = Boolean(toolbarState.bulletListActive);
   const orderedListActive = Boolean(toolbarState.orderedListActive);
   const tableOfContentsInserted = Boolean(toolbarState.tableOfContentsInserted);
+  const bibliographyInserted = Boolean(toolbarState.bibliographyInserted);
   const ListStyleIcon = orderedListActive ? ListOrdered : List;
   const activeAlignment = [
     { value: "left", label: "左对齐", icon: AlignLeft },
@@ -4108,6 +4725,42 @@ function TopNav({
         >
           <LeftSidebarToggleIcon size={20} strokeWidth={1.9} aria-hidden="true" />
         </button>
+        <div className={openMenu === "search" ? "nav-menu nav-search-menu open" : "nav-menu nav-search-menu"}>
+          <button
+            type="button"
+            className="nav-sidebar-toggle nav-search-toggle"
+            disabled={documentActionsDisabled}
+            title="搜索"
+            aria-label="选择搜索范围"
+            aria-haspopup="menu"
+            aria-controls="nav-menu-search"
+            aria-expanded={openMenu === "search"}
+            onClick={() => setOpenMenu((current) => current === "search" ? "" : "search")}
+          >
+            <Search size={19} strokeWidth={1.9} aria-hidden="true" />
+          </button>
+          {openMenu === "search" ? (
+            <div className="nav-menu-popover nav-search-popover" id="nav-menu-search" role="menu" aria-label="搜索范围">
+              <button type="button" className="nav-search-option" role="menuitem" onClick={() => runMenuAction(() => onOpenSearch?.("document"))}>
+                <FileSearch size={17} aria-hidden="true" />
+                <span><strong>文档搜索</strong><small>查找文档中的文字</small></span>
+                <kbd>Ctrl+F</kbd>
+              </button>
+              <button
+                type="button"
+                className="nav-search-option"
+                role="menuitem"
+                disabled={!workspaceSearchAvailable}
+                title={workspaceSearchAvailable ? "搜索当前文件夹及全部子文件夹" : "请先打开一个文件夹"}
+                onClick={() => runMenuAction(() => onOpenSearch?.("workspace"))}
+              >
+                <FolderSearch size={17} aria-hidden="true" />
+                <span><strong>文件夹搜索</strong><small>{workspaceSearchAvailable ? "搜索当前文件夹与子文件夹" : "请先打开一个文件夹"}</small></span>
+                <kbd>Ctrl+P</kbd>
+              </button>
+            </div>
+          ) : null}
+        </div>
         <span className="nav-divider nav-primary-divider" />
         <MenuButton
           icon={FileText}
@@ -4118,33 +4771,25 @@ function TopNav({
           disabled={documentActionsDisabled}
           showDisclosure={false}
         >
-          <MenuItem icon={FilePlus} label="新建文件" onClick={() => runMenuAction(onNew)} />
-          <MenuItem icon={FileText} label="打开文件" onClick={() => runMenuAction(onOpen)} />
+          <MenuItem icon={FilePlus} label="新建文件" description="创建空白信笺" shortcut="Ctrl+N" onClick={() => runMenuAction(onNew)} />
+          <MenuItem icon={FileText} label="打开文件" description="打开本地信笺" shortcut="Ctrl+O" onClick={() => runMenuAction(onOpen)} />
           <MenuDivider />
-          <MenuItem icon={SaveAll} label="另存为" onClick={() => runMenuAction(() => onSave(true))} />
+          <MenuItem icon={Save} label="保存" description="写入当前文件" shortcut="Ctrl+S" onClick={() => runMenuAction(() => onSave(false))} />
+          <MenuItem icon={SaveAll} label="另存为" description="保存为新信笺" shortcut="Ctrl+Shift+S" onClick={() => runMenuAction(() => onSave(true))} />
         </MenuButton>
-        <button
-          type="button"
-          className="nav-command"
+        <MenuButton
+          icon={Download}
+          label="导出"
+          menuId="interchange"
+          openMenu={openMenu}
+          onOpenMenu={setOpenMenu}
           disabled={documentActionsDisabled}
-          title="保存"
-          aria-label="保存"
-          onClick={() => runMenuAction(() => onSave(false))}
+          showDisclosure={false}
         >
-          <Save size={19} strokeWidth={1.9} aria-hidden="true" />
-          <span>保存</span>
-        </button>
-        <button
-          type="button"
-          className="nav-command"
-          disabled={documentActionsDisabled}
-          title="导出"
-          aria-label="打开导出设置"
-          onClick={() => runMenuAction(onOpenExport)}
-        >
-          <Download size={19} strokeWidth={1.9} aria-hidden="true" />
-          <span>导出</span>
-        </button>
+          <MenuItem icon={Download} label="导出信笺" description="PDF、图片与可编辑文档" shortcut="Ctrl+Alt+E" onClick={() => runMenuAction(onOpenExport)} />
+          <MenuDivider />
+          <MenuItem icon={FileInput} label="导入文档" description="MD、HTML、TXT、DOCX" shortcut="Ctrl+Alt+I" onClick={() => runMenuAction(onImport)} />
+        </MenuButton>
         <button
           type="button"
           className="nav-menu-trigger"
@@ -4155,40 +4800,57 @@ function TopNav({
           <HelpCircle size={19} strokeWidth={1.9} />
           <span>帮助</span>
         </button>
+        <button
+          ref={settingsTriggerRef}
+          type="button"
+          className="nav-menu-trigger settings-feature-trigger"
+          title="设置"
+          aria-label="打开设置"
+          onClick={() => runMenuAction(() => onOpenSettings?.())}
+        >
+          <Settings size={19} strokeWidth={1.9} aria-hidden="true" />
+          <span>设置</span>
+        </button>
       </div>
 
       <div className="nav-center">
-        {aiMode ? (
-          <button
-            type="button"
-            className={["nav-menu-trigger", "ai-feature-trigger", "active", aiBusy ? "busy" : ""].filter(Boolean).join(" ")}
-            onClick={onExitAi}
-            title={exitAiLabel}
-            aria-label={exitAiLabel}
-          >
-            {aiBusy ? <Bot size={19} strokeWidth={1.9} /> : <Sparkles size={19} strokeWidth={1.9} />}
-            <span>退出 AI</span>
-          </button>
-        ) : (
-          <MenuButton
-            icon={Sparkles}
-            label="AI功能"
-            menuId="ai"
-            openMenu={openMenu}
-            onOpenMenu={setOpenMenu}
-            triggerClassName={[
-              "ai-feature-trigger",
-              aiConfigured ? "configured" : "unconfigured",
-            ].filter(Boolean).join(" ")}
-            showDisclosure={false}
-          >
-            <MenuItem icon={Settings} label="AI配置" onClick={() => runMenuAction(onOpenAiSettings)} />
-            <MenuDivider />
-            <MenuItem icon={Sparkles} label="AI优化" onClick={() => runMenuAction(onEnterAiOptimize)} />
-            <MenuDivider />
-            <MenuItem icon={Bot} label="AI问答" onClick={() => runMenuAction(onEnterAiChat)} />
-          </MenuButton>
-        )}
+        <button
+          ref={aiModeTriggerRef}
+          type="button"
+          className={[
+            "nav-menu-trigger",
+            "ai-feature-trigger",
+            aiMode ? "active" : "",
+            aiBusy ? "busy" : "",
+            aiConfigured ? "configured" : "unconfigured",
+            aiModeChooserOpen ? "chooser-open" : "",
+          ].filter(Boolean).join(" ")}
+          onClick={() => {
+            closeMenus();
+            onToggleAiModeChooser?.();
+          }}
+          title={aiModeTriggerLabel}
+          aria-label={aiModeTriggerLabel}
+          aria-pressed={aiMode}
+          aria-haspopup="dialog"
+          aria-controls="ai-mode-chooser-dialog"
+          aria-expanded={aiModeChooserOpen}
+          aria-busy={aiBusy}
+        >
+          <Sparkles size={19} strokeWidth={1.9} aria-hidden="true" />
+          <span>AI模式</span>
+        </button>
+        <button
+          type="button"
+          className={["nav-menu-trigger", "focus-mode-trigger", immersiveMode ? "active" : ""].filter(Boolean).join(" ")}
+          title={immersiveMode ? "退出专注模式（F11）" : "进入专注模式（F11）"}
+          aria-label={immersiveMode ? "退出专注模式" : "进入专注模式"}
+          aria-pressed={immersiveMode}
+          onClick={() => runMenuAction(onToggleImmersive)}
+        >
+          <Focus size={19} strokeWidth={1.9} aria-hidden="true" />
+          <span>专注模式</span>
+        </button>
       </div>
 
       <div className="nav-tools">
@@ -4222,6 +4884,18 @@ function TopNav({
         >
           <ListTree size={18} strokeWidth={1.9} aria-hidden="true" />
           <span>目录</span>
+        </button>
+        <button
+          type="button"
+          className={bibliographyInserted ? "nav-command tool-command active" : "nav-command tool-command"}
+          disabled={!canEdit}
+          title={bibliographyInserted ? "关闭自动参考文献" : "在文尾生成参考文献"}
+          aria-label={bibliographyInserted ? "关闭自动参考文献" : "在文尾生成参考文献"}
+          aria-pressed={bibliographyInserted}
+          onClick={() => toggleAutomaticBibliography(editor)}
+        >
+          <BookOpen size={18} strokeWidth={1.9} aria-hidden="true" />
+          <span>参考</span>
         </button>
         <MenuButton
           icon={AlignmentIcon}
@@ -4284,11 +4958,15 @@ function TopNav({
           triggerClassName={["tool-menu-trigger", editor?.isActive("blockquote") ? "active" : ""].filter(Boolean).join(" ")}
           showDisclosure={false}
         >
-          <MenuItem icon={Quote} label={editor?.isActive("blockquote") ? "取消引用块" : "引用块"} checked={Boolean(editor?.isActive("blockquote"))} onClick={() => runMenuAction(() => insertStructuredQuote(editor, savedSelectionRef))} />
+          <MenuItem icon={Quote} label={editor?.isActive("blockquote") ? "取消引文" : "引文"} checked={Boolean(editor?.isActive("blockquote"))} onClick={() => runMenuAction(() => insertStructuredQuote(editor, savedSelectionRef))} />
+          <MenuItem icon={Table2} label="表格" onClick={() => runMenuAction(() => insertBasicTable(editor, savedSelectionRef))} />
           <MenuDivider />
           <MenuItem icon={Minus} label="分割线" onClick={() => runMenuAction(() => insertHorizontalRule(editor, savedSelectionRef))} />
           <MenuItem icon={SeparatorHorizontal} label="分页符" onClick={() => runMenuAction(() => insertPageBreak(editor, savedSelectionRef))} />
-          <MenuItem icon={Table2} label="表格" onClick={() => runMenuAction(() => insertBasicTable(editor, savedSelectionRef))} />
+          <MenuDivider />
+          <MenuItem icon={Link2} label="关联信笺" onClick={() => runMenuAction(onInsertInternalLink)} />
+          <MenuItem icon={Hash} label="脚注" onClick={() => runMenuAction(onInsertFootnote)} />
+          <MenuItem icon={BookOpen} label="文献引用" onClick={() => runMenuAction(onOpenCitationPicker)} />
         </MenuButton>
       </div>
     </section>
@@ -4325,6 +5003,7 @@ function HelpCenterDialog({ open, onClose }) {
   const [activeTopicId, setActiveTopicId] = useState(HELP_TOPICS[0]?.id || "");
   const [imagePreview, setImagePreview] = useState(null);
   const activeTopic = HELP_TOPICS.find((topic) => topic.id === activeTopicId) || HELP_TOPICS[0];
+  const activeIllustrations = helpIllustrationsFor(activeTopic);
   const activeCategoryId = activeTopic?.categoryId || HELP_CATEGORIES[0]?.id;
 
   useEffect(() => {
@@ -4362,7 +5041,7 @@ function HelpCenterDialog({ open, onClose }) {
 
   return (
     <>
-      <div className="help-center-overlay" role="presentation" onMouseDown={onClose}>
+      <div className="help-center-overlay dialog-scrim dialog-scrim--large" role="presentation" onMouseDown={onClose}>
       <section
         className="help-center-dialog"
         role="dialog"
@@ -4417,17 +5096,24 @@ function HelpCenterDialog({ open, onClose }) {
               <h3>{activeTopic.title}</h3>
               <p className="help-summary">{renderHelpText(activeTopic.summary)}</p>
             </header>
-            <HelpIllustration
-              type={activeTopic.illustration}
-              alt={activeTopic.illustrationAlt}
-              caption={activeTopic.illustrationCaption}
-              onPreview={(src) => setImagePreview({
-                src,
-                alt: activeTopic.illustrationAlt,
-                caption: activeTopic.illustrationCaption,
-                title: activeTopic.title,
-              })}
-            />
+            <div className="help-illustration-list">
+              {activeIllustrations.map((illustration, index) => (
+                <HelpIllustration
+                  key={illustration.type}
+                  type={illustration.type}
+                  alt={illustration.alt}
+                  caption={illustration.caption}
+                  onPreview={(src) => setImagePreview({
+                    src,
+                    alt: illustration.alt,
+                    caption: illustration.caption,
+                    title: activeIllustrations.length > 1
+                      ? `${activeTopic.title} · ${index + 1}/${activeIllustrations.length}`
+                      : activeTopic.title,
+                  })}
+                />
+              ))}
+            </div>
             <section className="help-topic-section">
               <h4>怎么用</h4>
               <ol>
@@ -4449,7 +5135,7 @@ function HelpCenterDialog({ open, onClose }) {
       </section>
       </div>
       {imagePreview ? createPortal(
-        <div className="help-image-preview-overlay" role="presentation" onMouseDown={() => setImagePreview(null)}>
+        <div className="help-image-preview-overlay dialog-scrim dialog-scrim--large" role="presentation" onMouseDown={() => setImagePreview(null)}>
           <section
             className="help-image-preview-dialog"
             role="dialog"
@@ -4492,7 +5178,7 @@ function HelpCenterDialog({ open, onClose }) {
   );
 }
 
-function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImages }) {
+function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImages, onExportEditable }) {
   const [format, setFormat] = useState("pdf");
   const [targetPath, setTargetPath] = useState("");
   const [status, setStatus] = useState("idle");
@@ -4564,10 +5250,11 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
     setStatus("choosing");
     setError("");
     try {
-      const result = await bridge.pickExportPath?.(format, documentTitle);
+      const result = await bridge.pickExportPath?.(format, documentTitle, loadRememberedExportDirectory());
       if (!result?.canceled && result?.path) {
         setTargetPath(result.path);
-        setProgressMessage(format === "pdf" ? "PDF 将保存到所选位置" : "分页图片将保存到所选文件夹");
+        rememberExportDirectory(result.directory);
+        setProgressMessage(format === "pdf" ? "PDF 将保存到所选位置" : (format === "images" ? "分页图片将保存到所选文件夹" : "可编辑文档将保存到所选位置"));
       }
       setStatus("idle");
     } catch (chooseError) {
@@ -4587,7 +5274,7 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
     try {
       const result = format === "pdf"
         ? await onExportPdf(targetPath)
-        : await onExportImages(targetPath);
+        : (format === "images" ? await onExportImages(targetPath) : await onExportEditable(format, targetPath));
       if (result?.canceled) {
         setStatus("idle");
         setProgress(0);
@@ -4595,7 +5282,7 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
         return;
       }
       setProgress(100);
-      setProgressMessage(format === "pdf" ? "PDF 导出完成" : `已导出 ${result?.count || 0} 张分页图片`);
+      setProgressMessage(format === "pdf" ? "PDF 导出完成" : (format === "images" ? `已导出 ${result?.count || 0} 张分页图片` : `${format.toUpperCase()} 导出完成`));
       setStatus("success");
     } catch (exportError) {
       setStatus("error");
@@ -4605,7 +5292,7 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
   };
 
   const content = (
-    <div className="export-dialog-overlay" role="presentation" onMouseDown={() => { if (!busy) onClose(); }}>
+    <div className="export-dialog-overlay dialog-scrim" role="presentation" onMouseDown={() => { if (!busy) onClose(); }}>
       <section
         className="export-dialog"
         role="dialog"
@@ -4628,7 +5315,7 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
 
         <div className="export-dialog-body">
           <fieldset className="export-format-fieldset" disabled={busy}>
-            <legend>导出格式</legend>
+            <legend>版式输出</legend>
             <div className="export-format-options">
               <label className={format === "pdf" ? "selected" : ""}>
                 <input type="radio" name="export-format" value="pdf" checked={format === "pdf"} onChange={() => updateFormat("pdf")} autoFocus />
@@ -4644,6 +5331,25 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
               </label>
             </div>
           </fieldset>
+          <fieldset className="export-format-fieldset export-editable-fieldset" disabled={busy}>
+            <legend>可编辑交换</legend>
+            <div className="export-format-options export-editable-options">
+              {[
+                { id: "docx", title: "DOCX", detail: "内嵌图片，适合 Word 继续编辑" },
+                { id: "markdown", title: "Markdown", detail: "图片写入同名 .assets 目录" },
+                { id: "html", title: "HTML", detail: "语义化 UTF-8 文档" },
+                { id: "txt", title: "TXT", detail: "仅保留纯文本与脚注引用" },
+              ].map((option) => (
+                <label key={option.id} className={format === option.id ? "selected" : ""}>
+                  <input type="radio" name="export-format" value={option.id} checked={format === option.id} onChange={() => updateFormat(option.id)} />
+                  <span className="export-format-icon"><FileText size={20} strokeWidth={1.8} /></span>
+                  <span><strong>{option.title}</strong><small>{option.detail}</small></span>
+                  <i aria-hidden="true" />
+                </label>
+              ))}
+            </div>
+            <small className="export-format-note">通用导出不包含批注和 AI 记录；脚注与引用会正确输出，参考文献由顶部“参考”开关决定。视觉保真请使用 PDF。</small>
+          </fieldset>
 
           <div className="export-path-field">
             <label htmlFor="export-target-path">导出路径</label>
@@ -4653,7 +5359,7 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
                 type="text"
                 readOnly
                 value={targetPath}
-                placeholder={format === "pdf" ? "请选择 PDF 文件的保存位置" : "请选择分页图片的保存文件夹"}
+                placeholder={format === "pdf" ? "请选择 PDF 文件的保存位置" : (format === "images" ? "请选择分页图片的保存文件夹" : "请选择可编辑文档的保存位置")}
                 title={targetPath}
               />
               <button type="button" onClick={handleChoosePath} disabled={busy}>
@@ -4661,7 +5367,7 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
                 <span>选择位置</span>
               </button>
             </div>
-            <small>{format === "pdf" ? "文件扩展名会自动补全为 .pdf" : "图片将以“信笺名-01.png”的方式连续命名"}</small>
+            <small>{format === "pdf" ? "文件扩展名会自动补全为 .pdf" : (format === "images" ? "图片将以“信笺名-01.png”的方式连续命名" : "文件扩展名会按所选格式自动补全")}；选择位置时会打开上次使用的导出目录</small>
           </div>
 
           <div className={`export-progress ${status}`} aria-live="polite">
@@ -4699,8 +5405,20 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
   return createPortal(content, window.document.body);
 }
 
+function helpIllustrationsFor(topic) {
+  if (!topic) return [];
+  return [
+    {
+      type: topic.illustration,
+      alt: topic.illustrationAlt,
+      caption: topic.illustrationCaption,
+    },
+    ...(Array.isArray(topic.illustrations) ? topic.illustrations : []),
+  ];
+}
+
 function HelpIllustration({ type, alt, caption, onPreview }) {
-  const src = HELP_SCREENSHOTS[type] || HELP_SCREENSHOTS.workspace;
+  const src = HELP_SCREENSHOTS[type] || HELP_SCREENSHOTS["files-sidebar"];
   const openPreview = () => onPreview?.(src);
   return (
     <figure className={`help-illustration ${type || "workspace"}`}>
@@ -4739,33 +5457,34 @@ function FolderEntryRows({
   onConsumeDragClick = () => false,
   dragTargetPath = "",
 }) {
-  const lastFolderClickRef = useRef({ path: "", at: 0 });
-
-  const handleFolderClick = useCallback((event, path) => {
+  const handleFolderClick = useCallback((path) => {
     if (onConsumeDragClick()) {
       return;
     }
-    const now = window.performance?.now?.() || Date.now();
-    const previous = lastFolderClickRef.current;
     onToggleFolder(path);
-    if (previous.path === path && now - previous.at <= FOLDER_DOUBLE_CLICK_MAX_MS) {
-      lastFolderClickRef.current = { path: "", at: 0 };
-      onOpenFolderPath(path);
-      return;
-    }
-    lastFolderClickRef.current = { path, at: now };
-  }, [onConsumeDragClick, onOpenFolderPath, onToggleFolder]);
+  }, [onConsumeDragClick, onToggleFolder]);
 
-  return entries.map((entry) => {
-    if (entry.type === "folder") {
-      const expanded = Boolean(expandedFolders[entry.path]?.expanded);
-      const loading = Boolean(expandedFolders[entry.path]?.loading);
-      const childEntries = expandedFolders[entry.path]?.entries || [];
-      return (
-        <div key={entry.path} className="folder-tree-group">
+  const navigateFolder = useCallback((path) => {
+    if (onConsumeDragClick()) return;
+    onOpenFolderPath(path);
+  }, [onConsumeDragClick, onOpenFolderPath]);
+
+  return (
+    <HierarchicalTreeRows
+      entries={entries}
+      depth={depth}
+      getKey={(entry) => entry.path}
+      isBranch={(entry) => entry.type === "folder"}
+      isExpanded={(entry) => Boolean(expandedFolders[entry.path]?.expanded)}
+      getBranchState={(entry) => expandedFolders[entry.path] || { expanded: false, loading: false, entries: [] }}
+      getChildren={(_entry, state) => state.entries || []}
+      getGroupLabel={({ entry }) => `${entry.name} 的内容`}
+      wrapperClassName={({ branch }) => branch ? "folder-tree-group" : "folder-tree-leaf"}
+      childrenClassName="folder-tree-children"
+      renderRow={({ entry, depth: rowDepth, branch, expanded }) => branch ? (
           <div
             className={dragTargetPath === entry.path ? "folder-tree-row folder-entry drag-target" : "folder-tree-row folder-entry"}
-            style={{ "--tree-depth": depth }}
+            style={{ "--tree-depth": rowDepth }}
             data-drop-folder-path={entry.path}
           >
             <button
@@ -4777,14 +5496,20 @@ function FolderEntryRows({
             >
               <ChevronRight size={14} />
             </button>
-            <button
-              type="button"
+            <TreeItemButton
               className={dragTargetPath === entry.path ? "folder-entry-main drag-target" : "folder-entry-main"}
+              branch
+              expanded={expanded}
+              depth={rowDepth}
               data-drop-folder-path={entry.path}
-              onClick={(event) => handleFolderClick(event, entry.path)}
+              onActivate={() => handleFolderClick(entry.path)}
+              onToggle={(nextExpanded) => {
+                if (nextExpanded !== expanded) onToggleFolder(entry.path);
+              }}
+              onNavigate={() => navigateFolder(entry.path)}
               onContextMenu={(event) => onContextMenu(event, entry)}
               onPointerDown={(event) => onDragPointerDown(event, entry)}
-              title={`${entry.name}（单击展开/收起，双击进入）`}
+              title={`${entry.name}（单击展开/收起，双击或按 Enter 进入）`}
             >
               <img
                 className="asset-icon folder-asset-icon"
@@ -4793,42 +5518,16 @@ function FolderEntryRows({
                 aria-hidden="true"
               />
               <span>{entry.name}</span>
-            </button>
+            </TreeItemButton>
           </div>
-          {expanded ? (
-            <div className="folder-tree-children">
-              {loading ? (
-                <p className="folder-tree-hint" style={{ "--tree-depth": depth + 1 }}>读取中...</p>
-              ) : childEntries.length ? (
-                <FolderEntryRows
-                  entries={childEntries}
-                  currentPath={currentPath}
-                  expandedFolders={expandedFolders}
-                  depth={depth + 1}
-                  onOpenFile={onOpenFile}
-                  onOpenFolderPath={onOpenFolderPath}
-                  onToggleFolder={onToggleFolder}
-                  onContextMenu={onContextMenu}
-                  onDragPointerDown={onDragPointerDown}
-                  onConsumeDragClick={onConsumeDragClick}
-                  dragTargetPath={dragTargetPath}
-                />
-              ) : (
-                <p className="folder-tree-hint" style={{ "--tree-depth": depth + 1 }}>空文件夹</p>
-              )}
-            </div>
-          ) : null}
-        </div>
-      );
-    }
-
-    return (
-      <button
-        key={entry.path}
+      ) : (
+      <TreeItemButton
         type="button"
         className={entry.path === currentPath ? "folder-tree-row file-entry active" : "folder-tree-row file-entry"}
-        style={{ "--tree-depth": depth }}
-        onClick={() => {
+        style={{ "--tree-depth": rowDepth }}
+        depth={rowDepth}
+        selected={entry.path === currentPath}
+        onActivate={() => {
           if (onConsumeDragClick()) {
             return;
           }
@@ -4841,17 +5540,30 @@ function FolderEntryRows({
         {entry.path === currentPath ? <span className="document-dot" /> : <span className="folder-disclosure-spacer" />}
         <img className="asset-icon pen-asset-icon" src={ICON_ASSETS.brandMark} alt="" aria-hidden="true" />
         <span>{entry.displayName || entry.name}</span>
-      </button>
-    );
-  });
+      </TreeItemButton>
+      )}
+      renderBranchState={(status, { depth: branchDepth, state }) => (
+        <p
+          className="folder-tree-hint"
+          style={{ "--tree-depth": branchDepth + 1 }}
+          role={status === "loading" ? "status" : status === "error" ? "alert" : undefined}
+        >
+          {status === "loading" ? "读取中..." : status === "error" ? (state.error || "文件夹读取失败") : "空文件夹"}
+        </p>
+      )}
+    />
+  );
 }
 
-function LiveOutlineSidebar({ editor, ...props }) {
+function LiveOutlineSidebar({ editor, renderStructurePanel, ...props }) {
   const outlineItems = useEditorState({
     editor,
     selector: ({ editor: activeEditor }) => getPaperDerivedState(activeEditor).outlineItems,
   }) || [];
-  return <LeftSidebar {...props} outlineItems={outlineItems} />;
+  const structurePanel = typeof renderStructurePanel === "function"
+    ? renderStructurePanel(outlineItems)
+    : props.structurePanel;
+  return <LeftSidebar {...props} structurePanel={structurePanel} outlineItems={outlineItems} />;
 }
 
 function LeftSidebar({
@@ -4872,6 +5584,8 @@ function LeftSidebar({
   onMoveEntry,
   onModeChange,
   onOutlineItemClick,
+  researchPanel,
+  structurePanel,
 }) {
   const [contextMenu, setContextMenu] = useState(null);
   const [dragState, setDragState] = useState(null);
@@ -4880,6 +5594,10 @@ function LeftSidebar({
     ...(folderState.folders || []),
     ...(folderState.files || []),
   ];
+  const visibleParentPath = folderState.parentPath
+    && (!folderState.rootPath || pathIsSameOrInside(folderState.parentPath, folderState.rootPath))
+    ? folderState.parentPath
+    : "";
 
   const consumeDragClick = useCallback(() => {
     if (!dragSuppressClickRef.current) {
@@ -5031,6 +5749,8 @@ function LeftSidebar({
               type="button"
               className={mode === "folder" ? "active" : ""}
               onClick={() => onModeChange("folder")}
+              role="tab"
+              aria-selected={mode === "folder"}
             >
               <img
                 className="sidebar-mode-icon"
@@ -5038,12 +5758,24 @@ function LeftSidebar({
                 alt=""
                 aria-hidden="true"
               />
-              <span>文件树</span>
+              <span>文件</span>
             </button>
             <button
               type="button"
-              className={mode === "outline" ? "active" : ""}
-              onClick={() => onModeChange("outline")}
+              className={mode === "research" ? "active" : ""}
+              onClick={() => onModeChange("research")}
+              role="tab"
+              aria-selected={mode === "research"}
+            >
+              <BookOpen className="sidebar-mode-lucide" size={17} strokeWidth={1.8} aria-hidden="true" />
+              <span>资料</span>
+            </button>
+            <button
+              type="button"
+              className={mode === "structure" ? "active" : ""}
+              onClick={() => onModeChange("structure")}
+              role="tab"
+              aria-selected={mode === "structure"}
             >
               <img
                 className="sidebar-mode-icon"
@@ -5051,7 +5783,7 @@ function LeftSidebar({
                 alt=""
                 aria-hidden="true"
               />
-              <span>大纲</span>
+              <span>结构</span>
             </button>
           </div>
         </div>
@@ -5088,7 +5820,7 @@ function LeftSidebar({
                       <i>{folderEntries.length} 项</i>
                     </span>
                     <strong>{displayNameFromPath(folderState.path)}</strong>
-                    <small>{folderState.parentPath || folderState.path}</small>
+                    <small>{folderState.path}</small>
                   </div>
                   <button
                     type="button"
@@ -5101,12 +5833,12 @@ function LeftSidebar({
                     <span>更换</span>
                   </button>
                 </div>
-                {folderState.parentPath ? (
+                {visibleParentPath ? (
                   <button
                     type="button"
                     className="folder-tree-row parent-entry"
                     style={{ "--tree-depth": 0 }}
-                    onClick={() => onOpenFolderPath(folderState.parentPath)}
+                    onClick={() => onOpenFolderPath(visibleParentPath)}
                     title="返回上级文件夹"
                   >
                     <span className="folder-disclosure-spacer" />
@@ -5114,7 +5846,7 @@ function LeftSidebar({
                     <span>...</span>
                   </button>
                 ) : null}
-                <div className="folder-entry-scroll">
+                <div className="folder-entry-scroll" role="tree" aria-label="当前文件夹的信笺树">
                   {folderState.loading ? (
                     <p className="empty-folder">正在读取文件树...</p>
                   ) : folderState.error ? (
@@ -5154,7 +5886,9 @@ function LeftSidebar({
               onDelete={onDeleteEntry}
             />
           </>
-        ) : (
+        ) : mode === "research" ? (
+          researchPanel
+        ) : structurePanel || (
           <div className="outline-list" aria-label="当前文档目录">
             {outlineItems.length ? (
               outlineItems.map((item) => (
@@ -5198,7 +5932,7 @@ function LeftSidebar({
   );
 }
 
-function TemplateSelect({ ariaLabel, value, options, onChange, disabled = false, className = "" }) {
+function TemplateSelect({ ariaLabel, value, options, onChange, disabled = false, invalid = false, className = "" }) {
   const [open, setOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState(null);
   const rootRef = useRef(null);
@@ -5307,7 +6041,7 @@ function TemplateSelect({ ariaLabel, value, options, onChange, disabled = false,
   ) : null;
 
   return (
-    <div ref={rootRef} className={["template-select", open ? "open" : "", className].filter(Boolean).join(" ")}>
+    <div ref={rootRef} className={["template-select", open ? "open" : "", invalid ? "invalid" : "", className].filter(Boolean).join(" ")}>
       <button
         ref={triggerRef}
         type="button"
@@ -5316,6 +6050,7 @@ function TemplateSelect({ ariaLabel, value, options, onChange, disabled = false,
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-invalid={invalid || undefined}
         onClick={() => {
           if (!disabled) {
             setOpen((current) => !current);
@@ -5335,6 +6070,195 @@ function TemplateSelect({ ariaLabel, value, options, onChange, disabled = false,
       </button>
       {menu}
     </div>
+  );
+}
+
+function AppInfoTooltip({ id, label, text, className = "" }) {
+  return (
+    <button
+      type="button"
+      className={["app-info-tooltip-trigger", className].filter(Boolean).join(" ")}
+      aria-label={label}
+      aria-describedby={id}
+    >
+      <Info size={15} aria-hidden="true" />
+      <span id={id} className="app-info-tooltip-bubble" role="tooltip">{text}</span>
+    </button>
+  );
+}
+
+function AiRequestParamsEditor({
+  rows = [],
+  onChange,
+  providerId = "",
+  disabled = false,
+  compact = false,
+  flat = false,
+  title = "请求参数",
+  description = "以 Key-Value 形式附加到模型请求体。",
+}) {
+  const parsed = useMemo(() => parseAiRequestParamRows(rows, { providerId }), [providerId, rows]);
+  const [expandedJsonRows, setExpandedJsonRows] = useState(() => new Set());
+
+  const updateRow = useCallback((rowId, patch) => {
+    onChange(rows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
+  }, [onChange, rows]);
+
+  const addRow = useCallback(() => {
+    onChange([...rows, createAiRequestParamRow()]);
+  }, [onChange, rows]);
+
+  const toggleJsonRow = useCallback((row) => {
+    const expanded = expandedJsonRows.has(row.id);
+    let valueText = row.valueText;
+    try {
+      valueText = JSON.stringify(JSON.parse(row.valueText), null, expanded ? 0 : 2);
+    } catch {
+      // Keep malformed drafts untouched so users can repair them in the expanded editor.
+    }
+    updateRow(row.id, { valueText });
+    setExpandedJsonRows((current) => {
+      const next = new Set(current);
+      if (expanded) next.delete(row.id);
+      else next.add(row.id);
+      return next;
+    });
+  }, [expandedJsonRows, updateRow]);
+
+  return (
+    <section className={["ai-request-params-editor", compact ? "compact" : "", flat ? "flat" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")}>
+      <header className="ai-request-params-head">
+        <div>
+          <strong>{title}</strong>
+          {description ? <span>{description}</span> : null}
+        </div>
+        <button
+          type="button"
+          className="ai-request-param-add-button"
+          disabled={disabled || rows.length >= 64}
+          aria-label={`为${title}添加参数`}
+          onClick={addRow}
+        >
+          <Plus size={14} aria-hidden="true" />
+          <span>添加参数</span>
+        </button>
+      </header>
+      {rows.length ? (
+        <div className="ai-request-param-list">
+          <div className="ai-request-param-columns" aria-hidden="true">
+            <span>参数名</span><span>类型</span><span>参数值</span><span />
+          </div>
+          {rows.map((row, index) => {
+            const rowError = parsed.errors[row.id];
+            const rowHint = row.hint || aiRequestParamPreset(providerId, row.key)?.hint || "";
+            return (
+              <div key={row.id} className={rowError ? "ai-request-param-row invalid" : "ai-request-param-row"}>
+                <div className="ai-request-param-key-field">
+                  {rowHint ? (
+                    <AppInfoTooltip
+                      id={`ai-request-param-tip-${row.id}`}
+                      className="ai-request-param-info"
+                      label={`查看 ${row.key || `参数 ${index + 1}`} 的说明`}
+                      text={rowHint}
+                    />
+                  ) : <span className="ai-request-param-info-spacer" aria-hidden="true" />}
+                  <input
+                    value={row.key}
+                    disabled={disabled}
+                    aria-label={`${title}参数 ${index + 1} 名称`}
+                    aria-invalid={Boolean(rowError) || undefined}
+                    placeholder="例如：temperature"
+                    spellCheck={false}
+                    onChange={(event) => updateRow(row.id, { key: event.target.value, hint: "" })}
+                  />
+                  {rowError ? <small className="ai-request-param-error" role="alert">{rowError}</small> : null}
+                </div>
+                <TemplateSelect
+                  ariaLabel={`${row.key || `参数 ${index + 1}`}类型`}
+                  value={row.type}
+                  options={AI_REQUEST_PARAM_TYPE_OPTIONS}
+                  disabled={disabled}
+                  className="ai-request-param-type-select"
+                  onChange={(type) => updateRow(row.id, {
+                    type,
+                    valueText: type === "boolean" && !["true", "false"].includes(row.valueText) ? "true" : row.valueText,
+                  })}
+                />
+                {row.type === "boolean" ? (
+                  <TemplateSelect
+                    ariaLabel={`${row.key || `参数 ${index + 1}`}值`}
+                    value={["true", "false"].includes(row.valueText) ? row.valueText : "true"}
+                    options={AI_REQUEST_PARAM_BOOLEAN_OPTIONS}
+                    disabled={disabled}
+                    className="ai-request-param-value-select"
+                    onChange={(valueText) => updateRow(row.id, { valueText })}
+                  />
+                ) : row.type === "json" ? (
+                  <div className={`ai-request-param-json-field${expandedJsonRows.has(row.id) ? " expanded" : ""}`}>
+                    {expandedJsonRows.has(row.id) ? (
+                      <textarea
+                        value={row.valueText}
+                        disabled={disabled}
+                        aria-label={`${row.key || `参数 ${index + 1}`}JSON 值`}
+                        aria-invalid={Boolean(rowError) || undefined}
+                        placeholder='例如：{"type":"enabled"}'
+                        spellCheck={false}
+                        rows={compact ? 4 : 5}
+                        onChange={(event) => updateRow(row.id, { valueText: event.target.value })}
+                      />
+                    ) : (
+                      <input
+                        value={row.valueText}
+                        disabled={disabled}
+                        aria-label={`${row.key || `参数 ${index + 1}`}JSON 值`}
+                        aria-invalid={Boolean(rowError) || undefined}
+                        placeholder='例如：{"type":"enabled"}'
+                        spellCheck={false}
+                        onChange={(event) => updateRow(row.id, { valueText: event.target.value })}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      className="ai-request-param-json-toggle"
+                      disabled={disabled}
+                      aria-label={`${expandedJsonRows.has(row.id) ? "收起" : "展开"} ${row.key || `参数 ${index + 1}`} JSON 编辑器`}
+                      onClick={() => toggleJsonRow(row)}
+                    >
+                      {expandedJsonRows.has(row.id) ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                    </button>
+                  </div>
+                ) : (
+                  <input
+                    className="ai-request-param-value-input"
+                    value={row.valueText}
+                    disabled={disabled}
+                    aria-label={`${row.key || `参数 ${index + 1}`}值`}
+                    aria-invalid={Boolean(rowError) || undefined}
+                    inputMode={row.type === "number" ? "decimal" : undefined}
+                    placeholder={row.type === "number" ? "例如：1" : "参数值"}
+                    spellCheck={false}
+                    onChange={(event) => updateRow(row.id, { valueText: event.target.value })}
+                  />
+                )}
+                <button
+                  type="button"
+                  className="ai-request-param-remove"
+                  disabled={disabled}
+                  aria-label={`删除参数 ${row.key || index + 1}`}
+                  title="删除参数"
+                  onClick={() => onChange(rows.filter((item) => item.id !== row.id))}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="ai-request-params-empty">尚未添加请求参数，将使用服务商默认行为。</div>
+      )}
+      {parsed.error ? <p className="ai-request-params-message error" role="alert">{parsed.error}</p> : null}
+    </section>
   );
 }
 
@@ -5653,6 +6577,13 @@ function TemplateHeadingColorPicker({ value, onChange, label, disabled = false }
   );
 }
 
+function dialogFocusableElements(container) {
+  if (!container) return [];
+  return [...container.querySelectorAll(
+    'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+  )].filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
+}
+
 function LetterTemplateDialog({
   document,
   letterTemplates,
@@ -5660,6 +6591,9 @@ function LetterTemplateDialog({
   userTemplates,
   userTemplateGroups,
   newDocumentTemplateId,
+  embedded = false,
+  mode = "apply",
+  returnFocusRef,
   onClose,
   onLetterTemplateChange,
   onNewDocumentTemplateChange,
@@ -5672,11 +6606,15 @@ function LetterTemplateDialog({
   onReorderUserTemplateGroups,
   onMoveUserTemplate,
 }) {
+  const manageOnly = mode === "manage";
+  const selectionOnly = mode === "select";
   const selectedLetterTemplate = getLetterTemplate(document, letterTemplates);
-  const [detailTemplateId, setDetailTemplateId] = useState(() => selectedLetterTemplate.id);
+  const [detailTemplateId, setDetailTemplateId] = useState(() => (selectionOnly || manageOnly ? "" : selectedLetterTemplate.id));
   const [pendingDeleteTemplateId, setPendingDeleteTemplateId] = useState("");
   const [pendingDeleteGroupId, setPendingDeleteGroupId] = useState("");
-  const [selectedGroupId, setSelectedGroupId] = useState(() => getLetterTemplateGroupId(selectedLetterTemplate));
+  const [selectedGroupId, setSelectedGroupId] = useState(() => (
+    manageOnly ? SYSTEM_TEMPLATE_GROUPS[0].id : getLetterTemplateGroupId(selectedLetterTemplate)
+  ));
   const [editingGroupId, setEditingGroupId] = useState("");
   const [groupNameDraft, setGroupNameDraft] = useState("");
   const [groupNameError, setGroupNameError] = useState("");
@@ -5693,9 +6631,12 @@ function LetterTemplateDialog({
   const pendingGroupRectsRef = useRef(null);
   const suppressGroupClickRef = useRef(false);
   const groupPickerRef = useRef(null);
+  const dialogRef = useRef(null);
+  const closeButtonRef = useRef(null);
   const detailTemplate = draftTemplate || letterTemplates.find((template) => template.id === detailTemplateId);
   const detailIsDraft = Boolean(draftTemplate);
-  const detailIsActive = !detailIsDraft && detailTemplate?.id === selectedLetterTemplate.id;
+  const detailEditable = Boolean(detailTemplate?.userTemplate && !selectionOnly);
+  const detailIsActive = !manageOnly && !detailIsDraft && detailTemplate?.id === selectedLetterTemplate.id;
   const newDocumentTemplate = letterTemplates.find((template) => template.id === newDocumentTemplateId)
     || defaultTemplates[0];
   const detailIsNewDocumentDefault = !detailIsDraft && detailTemplate?.id === newDocumentTemplate.id;
@@ -5730,6 +6671,21 @@ function LetterTemplateDialog({
 
   userTemplateGroupsRef.current = userTemplateGroups;
   reorderUserTemplateGroupsRef.current = onReorderUserTemplateGroups;
+
+  useEffect(() => {
+    if (embedded) return undefined;
+    const previouslyFocused = window.document.activeElement;
+    const frame = window.requestAnimationFrame(() => {
+      closeButtonRef.current?.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      const focusTarget = returnFocusRef?.current || previouslyFocused;
+      if (focusTarget instanceof HTMLElement && focusTarget.isConnected) {
+        focusTarget.focus({ preventScroll: true });
+      }
+    };
+  }, [embedded, returnFocusRef]);
 
   useEffect(() => {
     const availableGroupIds = new Set([
@@ -5864,7 +6820,7 @@ function LetterTemplateDialog({
   };
 
   const renderTemplateDeleteDialog = () => pendingDeleteTemplate ? (
-    <div className="template-group-dialog-backdrop" role="presentation">
+    <div className="template-group-dialog-backdrop dialog-scrim" role="presentation">
       <section
         className="template-group-dialog delete-mode"
         role="alertdialog"
@@ -5962,7 +6918,7 @@ function LetterTemplateDialog({
   };
 
   const renderGroupDialog = () => (editingGroupId || pendingDeleteGroup) ? (
-    <div className="template-group-dialog-backdrop" role="presentation">
+    <div className="template-group-dialog-backdrop dialog-scrim" role="presentation">
       <section
         className={`template-group-dialog${pendingDeleteGroup ? " delete-mode" : ""}`}
         role={pendingDeleteGroup ? "alertdialog" : "dialog"}
@@ -6152,7 +7108,7 @@ function LetterTemplateDialog({
       ? userTemplates.filter((template) => template.groupIds?.includes(group.id)).length
       : group.templateIds.length;
     const isSelected = selectedGroupId === group.id;
-    const isReorderable = isUserGroup && group.id !== BASE_USER_TEMPLATE_GROUP_ID;
+    const isReorderable = !selectionOnly && isUserGroup && group.id !== BASE_USER_TEMPLATE_GROUP_ID;
     const isDragging = groupDragState?.id === group.id;
     return (
       <div
@@ -6206,7 +7162,7 @@ function LetterTemplateDialog({
         >
           <span>{group.label}<b>({count})</b></span>
         </button>
-        {isUserGroup && group.id !== BASE_USER_TEMPLATE_GROUP_ID ? (
+        {!selectionOnly && isUserGroup && group.id !== BASE_USER_TEMPLATE_GROUP_ID ? (
           <div className="template-group-actions">
             <button
               type="button"
@@ -6237,7 +7193,7 @@ function LetterTemplateDialog({
 
   const renderTemplateCard = (letterTemplate) => {
     const paper = TEMPLATES.find((template) => template.id === letterTemplate.paperId) || TEMPLATES[0];
-    const isActive = selectedLetterTemplate.id === letterTemplate.id;
+    const isActive = !manageOnly && selectedLetterTemplate.id === letterTemplate.id;
     const isNewDocumentDefault = newDocumentTemplate.id === letterTemplate.id;
     return (
       <article
@@ -6265,7 +7221,7 @@ function LetterTemplateDialog({
         {isNewDocumentDefault ? (
           <span className="letter-template-default-badge" title="新建信笺默认模板">默认</span>
         ) : null}
-        {letterTemplate.userTemplate ? (
+        {!selectionOnly && letterTemplate.userTemplate ? (
           <button
             type="button"
             className="letter-template-delete"
@@ -6281,7 +7237,7 @@ function LetterTemplateDialog({
   };
 
   const updateDetailTemplate = (patch) => {
-    if (!detailTemplate?.userTemplate) {
+    if (!detailTemplate?.userTemplate || selectionOnly) {
       return false;
     }
     let normalizedPatch = patch;
@@ -6307,14 +7263,14 @@ function LetterTemplateDialog({
   };
 
   const updateTypography = (patch) => {
-    if (!detailTemplate?.userTemplate) {
+    if (!detailTemplate?.userTemplate || selectionOnly) {
       return;
     }
     updateDetailTemplate({ typography: { ...detailTemplate.typography, ...patch } });
   };
 
   const updatePresentation = (patch) => {
-    if (!detailTemplate?.userTemplate) {
+    if (!detailTemplate?.userTemplate || selectionOnly) {
       return;
     }
     updateDetailTemplate({
@@ -6323,7 +7279,7 @@ function LetterTemplateDialog({
   };
 
   const changeDetailTemplateGroup = (groupId, shouldInclude) => {
-    if (!detailTemplate?.userTemplate || groupId === BASE_USER_TEMPLATE_GROUP_ID) {
+    if (!detailTemplate?.userTemplate || selectionOnly || groupId === BASE_USER_TEMPLATE_GROUP_ID) {
       return;
     }
     if (detailIsDraft) {
@@ -6343,12 +7299,28 @@ function LetterTemplateDialog({
 
   useEffect(() => {
     const handleKeyDown = (event) => {
-      if (event.key === "Escape" && !window.document.querySelector(".template-select.open")) {
-        if (editingGroupId) {
+      if (!embedded && event.key === "Tab") {
+        const elements = dialogFocusableElements(dialogRef.current);
+        if (!elements.length) return;
+        const first = elements[0];
+        const last = elements[elements.length - 1];
+        if (event.shiftKey && window.document.activeElement === first) {
           event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && window.document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        } else if (!dialogRef.current?.contains(window.document.activeElement)) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
+      if (event.key === "Escape" && !window.document.querySelector(".template-select.open")) {
+        let handled = true;
+        if (editingGroupId) {
           cancelGroupEditing();
         } else if (groupPickerOpen) {
-          event.preventDefault();
           setGroupPickerOpen(false);
         } else if (pendingDeleteGroupId) {
           setPendingDeleteGroupId("");
@@ -6356,22 +7328,49 @@ function LetterTemplateDialog({
           setPendingDeleteTemplateId("");
         } else if (detailTemplateId) {
           setDetailTemplateId("");
+        } else if (!embedded) {
+          onClose?.();
+        } else {
+          handled = false;
+        }
+        if (handled) {
+          event.preventDefault();
+          event.stopPropagation();
         }
       }
     };
     window.document.addEventListener("keydown", handleKeyDown, true);
     return () => window.document.removeEventListener("keydown", handleKeyDown, true);
-  }, [detailTemplateId, editingGroupId, groupPickerOpen, onClose, pendingDeleteGroupId, pendingDeleteTemplateId]);
+  }, [detailTemplateId, editingGroupId, embedded, groupPickerOpen, onClose, pendingDeleteGroupId, pendingDeleteTemplateId]);
 
   const content = (
-    <div className="template-dialog-overlay" role="presentation">
+    <div
+      className={embedded ? "template-dialog-embed" : "template-dialog-overlay dialog-scrim dialog-scrim--large"}
+      role="presentation"
+      onPointerDown={embedded ? undefined : (event) => {
+        if (event.target === event.currentTarget) onClose?.();
+      }}
+    >
       <section
-        className="template-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="信笺模板"
+        ref={dialogRef}
+        className={embedded ? "template-dialog settings-embedded" : "template-dialog"}
+        role={embedded ? "region" : "dialog"}
+        aria-modal={embedded ? undefined : "true"}
+        aria-label={selectionOnly ? "选择模板" : manageOnly ? "模板设置" : "信笺模板"}
         onPointerDown={(event) => event.stopPropagation()}
       >
+        {!embedded ? (
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="template-dialog-global-close"
+            onClick={onClose}
+            aria-label={selectionOnly ? "关闭模板选择" : manageOnly ? "关闭模板配置" : "关闭信笺模板"}
+            title="关闭"
+          >
+            <X size={20} strokeWidth={2.2} />
+          </button>
+        ) : null}
         <div className={`template-dialog-heading${detailTemplate ? " detail-heading" : ""}`}>
           {detailTemplate && !detailIsDraft ? (
             <button
@@ -6388,16 +7387,7 @@ function LetterTemplateDialog({
             <h2>新建模板</h2>
           ) : (
             <>
-              <h2>信笺模板</h2>
-              <button
-                type="button"
-                className="template-heading-close"
-                onClick={onClose}
-                aria-label="关闭信笺模板"
-                title="关闭信笺模板"
-              >
-                <X size={18} />
-              </button>
+              <h2>{selectionOnly ? "选择模板" : manageOnly ? "模板设置" : "信笺模板"}</h2>
             </>
           )}
         </div>
@@ -6412,7 +7402,7 @@ function LetterTemplateDialog({
                   aria-label={`${detailTemplate.label}信纸预览`}
                   style={{ "--template-bg": `url("${detailPaper.background}")`, "--swatch": detailPaper.swatch }}
                 />
-                {!detailIsDraft ? (
+                {!selectionOnly && !detailIsDraft ? (
                   <>
                     <div className="template-default-setting">
                       <span>设为新建默认模板</span>
@@ -6439,7 +7429,7 @@ function LetterTemplateDialog({
 
               <div className="template-detail-settings">
                 <div className="template-detail-header">
-                  {detailTemplate.userTemplate ? (
+                  {detailEditable ? (
                     <TemplateNameInput
                       value={detailTemplate.label}
                       onChange={(label) => updateDetailTemplate({ label })}
@@ -6448,12 +7438,15 @@ function LetterTemplateDialog({
                   ) : (
                     <strong>{detailTemplate.label}</strong>
                   )}
-                  <div className="template-detail-badges" aria-label={detailTemplate.userTemplate ? "用户模板，可编辑" : "系统模板，不可修改"}>
+                  <div
+                    className="template-detail-badges"
+                    aria-label={`${detailTemplate.userTemplate ? "用户模板" : "系统模板"}，${detailEditable ? "可编辑" : "不可修改"}`}
+                  >
                     <span className={detailTemplate.userTemplate ? "user" : "system"}>
                       {detailTemplate.userTemplate ? "用户模板" : "系统模板"}
                     </span>
-                    <span className={detailTemplate.userTemplate ? "editable" : "readonly"}>
-                      {detailTemplate.userTemplate ? "可编辑" : "不可修改"}
+                    <span className={detailEditable ? "editable" : "readonly"}>
+                      {detailEditable ? "可编辑" : "不可修改"}
                     </span>
                     {detailIsActive ? <span className="current">当前使用</span> : null}
                   </div>
@@ -6461,7 +7454,7 @@ function LetterTemplateDialog({
 
                 <div className="template-edit-row template-paper-row">
                   <span>信纸背景</span>
-                  {detailTemplate.userTemplate ? (
+                  {detailEditable ? (
                     <TemplatePaperPicker
                       value={detailTemplate.paperId}
                       groups={paperPickerGroups}
@@ -6472,7 +7465,7 @@ function LetterTemplateDialog({
                   )}
                 </div>
 
-                {detailTemplate.userTemplate ? (
+                {detailEditable ? (
                   <div className="template-edit-row template-group-select-row">
                     <span>所属分组</span>
                     <div ref={groupPickerRef} className={`template-group-chip-editor${groupPickerOpen ? " open" : ""}`}>
@@ -6535,7 +7528,7 @@ function LetterTemplateDialog({
                   </div>
                 ) : null}
 
-                {detailTemplate.userTemplate ? (
+                {detailEditable ? (
                   <div className="template-edit-row template-description-row">
                     <span>封面简介</span>
                     <label className="template-description-control">
@@ -6565,7 +7558,7 @@ function LetterTemplateDialog({
                   {TYPOGRAPHY_FIELDS.map((field) => (
                     <div key={field.key} className="template-typography-row">
                       <span>{field.label}</span>
-                      {detailTemplate.userTemplate ? (
+                      {detailEditable ? (
                         <>
                           <TemplateSelect
                             ariaLabel={`${field.label}字体`}
@@ -6623,7 +7616,7 @@ function LetterTemplateDialog({
                           <TemplateSettingSwitch
                             checked={detailPresentation.showDocumentTitle}
                             label="显示文章标题"
-                            disabled={!detailTemplate.userTemplate}
+                            disabled={!detailEditable}
                             onChange={(showDocumentTitle) => updatePresentation({ showDocumentTitle })}
                           />
                         </div>
@@ -6632,7 +7625,7 @@ function LetterTemplateDialog({
                           <TemplateSettingSwitch
                             checked={detailPresentation.showSignatureDate}
                             label="显示署名与日期"
-                            disabled={!detailTemplate.userTemplate}
+                            disabled={!detailEditable}
                             onChange={(showSignatureDate) => updatePresentation({ showSignatureDate })}
                           />
                         </div>
@@ -6645,7 +7638,7 @@ function LetterTemplateDialog({
                           <TemplateSettingSwitch
                             checked={detailPresentation.indentParagraphs}
                             label="正文段落首行缩进两个字"
-                            disabled={!detailTemplate.userTemplate}
+                            disabled={!detailEditable}
                             onChange={(indentParagraphs) => updatePresentation({ indentParagraphs })}
                           />
                         </div>
@@ -6662,7 +7655,7 @@ function LetterTemplateDialog({
                                 type="button"
                                 className={detailPresentation.paragraphAlign === option.value ? "active" : ""}
                                 aria-pressed={detailPresentation.paragraphAlign === option.value}
-                                disabled={!detailTemplate.userTemplate}
+                                disabled={!detailEditable}
                                 onClick={() => updatePresentation({ paragraphAlign: option.value })}
                               >
                                 <option.icon size={13} aria-hidden="true" />
@@ -6681,7 +7674,7 @@ function LetterTemplateDialog({
                             <TemplateHeadingColorPicker
                               value={detailPresentation.headingColors[level]}
                               label={`${level}级标题颜色`}
-                              disabled={!detailTemplate.userTemplate}
+                              disabled={!detailEditable}
                               onChange={(color) => updatePresentation({
                                 headingColors: { ...detailPresentation.headingColors, [level]: color },
                               })}
@@ -6690,7 +7683,7 @@ function LetterTemplateDialog({
                             <TemplateSettingSwitch
                               checked={detailPresentation.headingNumbering[level]}
                               label={`${level}级标题默认编号`}
-                              disabled={!detailTemplate.userTemplate}
+                              disabled={!detailEditable}
                               onChange={(checked) => updatePresentation({
                                 headingNumbering: { ...detailPresentation.headingNumbering, [level]: checked },
                               })}
@@ -6706,7 +7699,7 @@ function LetterTemplateDialog({
                           <TemplateSettingSwitch
                             checked={detailPresentation.showImageCaptions}
                             label="显示图片标题"
-                            disabled={!detailTemplate.userTemplate}
+                            disabled={!detailEditable}
                             onChange={(showImageCaptions) => updatePresentation({ showImageCaptions })}
                           />
                         </div>
@@ -6715,7 +7708,7 @@ function LetterTemplateDialog({
                           <TemplateSettingSwitch
                             checked={detailPresentation.numberImageCaptions}
                             label="显示图片标题编号"
-                            disabled={!detailTemplate.userTemplate || !detailPresentation.showImageCaptions}
+                            disabled={!detailEditable || !detailPresentation.showImageCaptions}
                             onChange={(numberImageCaptions) => updatePresentation({ numberImageCaptions })}
                           />
                         </div>
@@ -6734,33 +7727,39 @@ function LetterTemplateDialog({
                     </>
                   ) : (
                     <>
-                      <button
-                        type="button"
-                        className="template-use-button"
-                        onClick={() => {
-                          onLetterTemplateChange(detailTemplate.id);
-                          onClose?.();
-                        }}
-                      >
-                        使用模板
-                      </button>
-                      <button
-                        type="button"
-                        className="template-create-from-button"
-                        onClick={() => beginCreateTemplate(detailTemplate)}
-                      >
-                        <Copy size={15} />
-                        <span>基于此新建</span>
-                      </button>
-                      {detailTemplate.userTemplate ? (
+                      {!manageOnly ? (
                         <button
                           type="button"
-                          className="template-delete-button"
-                          onClick={() => beginDeleteTemplate(detailTemplate.id)}
+                          className="template-use-button"
+                          onClick={() => {
+                            onLetterTemplateChange(detailTemplate.id);
+                            onClose?.();
+                          }}
                         >
-                          <Trash2 size={14} />
-                          <span>删除模板</span>
+                          使用模板
                         </button>
+                      ) : null}
+                      {!selectionOnly ? (
+                        <>
+                          <button
+                            type="button"
+                            className="template-create-from-button"
+                            onClick={() => beginCreateTemplate(detailTemplate)}
+                          >
+                            <Copy size={15} />
+                            <span>基于此新建</span>
+                          </button>
+                          {detailTemplate.userTemplate ? (
+                            <button
+                              type="button"
+                              className="template-delete-button"
+                              onClick={() => beginDeleteTemplate(detailTemplate.id)}
+                            >
+                              <Trash2 size={14} />
+                              <span>删除模板</span>
+                            </button>
+                          ) : null}
+                        </>
                       ) : null}
                     </>
                   )}
@@ -6784,14 +7783,16 @@ function LetterTemplateDialog({
               <section className="template-group-section" aria-labelledby="user-template-groups-title">
                 <div className="template-group-section-heading">
                   <span id="user-template-groups-title">用户模板</span>
-                  <button
-                    type="button"
-                    onClick={beginCreateGroup}
-                    aria-label="新建用户分组"
-                    title="新建分组"
-                  >
-                    <Plus size={16} />
-                  </button>
+                  {!selectionOnly ? (
+                    <button
+                      type="button"
+                      onClick={beginCreateGroup}
+                      aria-label="新建用户分组"
+                      title="新建分组"
+                    >
+                      <Plus size={16} />
+                    </button>
+                  ) : null}
                 </div>
                 <div className="template-group-list">
                   {userTemplateGroups.map((group) => renderGroupItem(group, true))}
@@ -6805,7 +7806,7 @@ function LetterTemplateDialog({
                   <h3 id="selected-template-group-title">{selectedGroup.label}</h3>
                   <p>{selectedGroupTemplates.length} 个模板</p>
                 </div>
-                {selectedUserGroup && selectedGroupTemplates.length ? (
+                {!selectionOnly && selectedUserGroup && selectedGroupTemplates.length ? (
                   <button
                     type="button"
                     className="template-create-button"
@@ -6825,25 +7826,27 @@ function LetterTemplateDialog({
                 <div className="empty-template-list template-group-empty-state">
                   <FolderOpen size={28} aria-hidden="true" />
                   <strong>这个分组还没有模板</strong>
-                  <span>可以从当前信笺模板创建一个可编辑副本。</span>
-                  <button
-                    type="button"
-                    className="template-create-button"
-                    onClick={() => beginCreateTemplate(selectedLetterTemplate, selectedGroup.id)}
-                  >
-                    <Plus size={15} />
-                    <span>在此新建模板</span>
-                  </button>
+                  <span>{selectionOnly ? "请选择其他分组。" : "可以从当前信笺模板创建一个可编辑副本。"}</span>
+                  {!selectionOnly ? (
+                    <button
+                      type="button"
+                      className="template-create-button"
+                      onClick={() => beginCreateTemplate(selectedLetterTemplate, selectedGroup.id)}
+                    >
+                      <Plus size={15} />
+                      <span>在此新建模板</span>
+                    </button>
+                  ) : null}
                 </div>
               )}
             </section>
           </div>
         )}
         </section>
-        {renderTemplateDeleteDialog()}
-        {renderGroupDialog()}
+        {!selectionOnly ? renderTemplateDeleteDialog() : null}
+        {!selectionOnly ? renderGroupDialog() : null}
       </section>
-      {groupDragState ? (
+      {!selectionOnly && groupDragState ? (
         <div
           className="template-group-drag-ghost"
           style={{
@@ -6861,7 +7864,7 @@ function LetterTemplateDialog({
     </div>
   );
 
-  return createPortal(content, window.document.body);
+  return embedded ? content : createPortal(content, window.document.body);
 }
 
 function estimateAuthorWidth(author) {
@@ -6872,7 +7875,7 @@ function estimateAuthorWidth(author) {
   return `${Math.max(0.76, Math.min(12, width + 0.2))}em`;
 }
 
-function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLATE_PRESENTATION, paperStyle, children, className = "", showHeader = false, onTitleChange, onAuthorChange, onDateChange }) {
+function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLATE_PRESENTATION, paperStyle, children, className = "", showHeader = false, customHeaderLayout = false, onTitleChange, onAuthorChange, onDateChange }) {
   const authorText = document.author?.trim() || "";
   const authorWidth = estimateAuthorWidth(authorText);
   const displayDate = document.displayDate || formatPaperDate(document.createdAt);
@@ -6880,8 +7883,9 @@ function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLA
   const showDocumentTitle = showHeader && normalizedPresentation.showDocumentTitle;
   const showSignatureDate = showHeader && normalizedPresentation.showSignatureDate;
   const hasVisibleHeader = showDocumentTitle || showSignatureDate;
+  const usesHeaderLayout = hasVisibleHeader || customHeaderLayout;
   const presentationClasses = [
-    hasVisibleHeader ? "has-paper-header" : "without-paper-header",
+    usesHeaderLayout ? "has-paper-header" : "without-paper-header",
     showDocumentTitle ? "shows-document-title" : "hides-document-title",
     showSignatureDate ? "shows-signature-date" : "hides-signature-date",
     normalizedPresentation.indentParagraphs ? "indents-paragraphs" : "flush-paragraphs",
@@ -6890,7 +7894,11 @@ function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLA
   ];
 
   return (
-    <article className={`paper-sheet template-${document.customBackground ? "custom" : document.templateId} ${presentationClasses.join(" ")} ${className}`} style={paperStyle}>
+    <article
+      className={`paper-sheet template-${document.customBackground ? "custom" : document.templateId} ${presentationClasses.join(" ")} ${className}`}
+      data-paper-document-id={normalizeDocumentId(document.documentId)}
+      style={paperStyle}
+    >
       {hasVisibleHeader ? (
         <header className="paper-header">
           {showDocumentTitle ? (
@@ -7715,7 +8723,8 @@ function formatAiProviderUpdatedAt(providerConfig) {
   });
 }
 
-function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onDeleteProvider, onTest, onClear, onRefreshCodex, onLoginCodex }) {
+function AiSettingsDialog({ open, embedded = false, returnFocusRef, config, onClose, onSave, onCreateProvider, onDeleteProvider, onTest, onClear, onRefreshCodex, onLoginCodex }) {
+  const [activePanel, setActivePanel] = useState("provider");
   const [selectedProvider, setSelectedProvider] = useState("gemini");
   const [selectedModelId, setSelectedModelId] = useState("gemini-default");
   const [drafts, setDrafts] = useState(() => normalizePublicAiConfig(config).providers);
@@ -7726,8 +8735,12 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
   const [providerCreator, setProviderCreator] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [modelEditor, setModelEditor] = useState(null);
+  const [taskParamDrafts, setTaskParamDrafts] = useState({});
+  const [taskProviderConfirm, setTaskProviderConfirm] = useState(null);
   const initializedOpenRef = useRef(false);
   const codexAutoCheckRef = useRef(false);
+  const dialogRef = useRef(null);
+  const closeButtonRef = useRef(null);
   const normalizedConfig = useMemo(() => normalizePublicAiConfig(config), [config]);
   const providerOptions = useMemo(() => Object.values(drafts).map((provider) => ({
     id: provider.provider,
@@ -7745,6 +8758,27 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
   const selectedConnection = getAiProviderConnectionMeta(selectedDraft);
   const selectedLastUpdated = formatAiProviderUpdatedAt(selectedDraft);
   const selectedIsCodex = selectedDraft.transport === "codex-cli";
+  const modelEditorCapabilities = modelEditor ? aiModelCapabilities(selectedProvider, modelEditor.model) : null;
+  const resolverModels = useMemo(() => getTestedAiProviders({
+    ...normalizedConfig,
+    providers: drafts,
+  }), [drafts, normalizedConfig]);
+  const resolverProviderGroups = useMemo(() => groupTestedAiProviders(resolverModels, AI_PROVIDER_OPTIONS), [resolverModels]);
+  const resolverAssignment = normalizedConfig.taskModels?.applyResolver || { providerId: "", modelId: "", requestParams: {} };
+  const resolverModelKey = createAiModelKey(resolverAssignment.providerId, resolverAssignment.modelId);
+  const resolverModelConfigured = Boolean(resolverAssignment.providerId && resolverAssignment.modelId);
+  const defaultResolverModelKey = createAiModelKey(normalizedConfig.activeProvider, normalizedConfig.activeModelId);
+  const resolverModelAvailable = resolverModelConfigured
+    ? resolverModels.some((model) => model.id === resolverModelKey)
+    : resolverModels.some((model) => model.id === defaultResolverModelKey);
+  const resolverModelInvalid = resolverModelConfigured && !resolverModelAvailable;
+  const taskModelNavTone = resolverModelAvailable ? "connected" : (resolverModelInvalid ? "failed" : "idle");
+  const taskModelNavLabel = resolverModelInvalid
+    ? "需重选"
+    : (resolverModelConfigured ? "已配置" : (resolverModelAvailable ? "跟随默认" : "待配置"));
+  const selectedProviderTaskLabels = useMemo(() => AI_TASK_MODEL_DEFINITIONS
+    .filter((task) => normalizedConfig.taskModels?.[task.id]?.providerId === selectedProvider)
+    .map((task) => task.label), [normalizedConfig.taskModels, selectedProvider]);
 
   useEffect(() => {
     if (!open) {
@@ -7756,6 +8790,7 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
     }
     initializedOpenRef.current = true;
     const normalized = normalizePublicAiConfig(config);
+    setActivePanel("provider");
     setSelectedProvider(normalized.activeProvider);
     setSelectedModelId(normalized.activeModelId);
     setDrafts(normalized.providers);
@@ -7766,8 +8801,46 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
     setProviderCreator(null);
     setDeleteConfirm(false);
     setModelEditor(null);
+    const availableModels = getTestedAiProviders(normalized);
+    setTaskParamDrafts(Object.fromEntries(AI_TASK_MODEL_DEFINITIONS.map((task) => {
+      const assignment = normalized.taskModels?.[task.id] || {};
+      const modelConfigured = Boolean(assignment.providerId && assignment.modelId);
+      const assignedModel = availableModels.find((model) => model.id === (
+        modelConfigured
+          ? createAiModelKey(assignment.providerId, assignment.modelId)
+          : createAiModelKey(normalized.activeProvider, normalized.activeModelId)
+      ));
+      const requestParams = assignedModel
+        ? aiTaskRequestParamsForEditor(
+          assignedModel.provider,
+          assignedModel.requestParams,
+          assignment.requestParams,
+          assignedModel.model,
+        )
+        : assignment.requestParams;
+      const editableRequestParams = task.id === "applyResolver"
+        ? aiApplyResolverEditableRequestParams(assignedModel?.provider, requestParams)
+        : requestParams;
+      return [task.id, requestParamsToRows(editableRequestParams || {})];
+    })));
+    setTaskProviderConfirm(null);
     codexAutoCheckRef.current = false;
   }, [config, open]);
+
+  useEffect(() => {
+    if (!open || embedded) return undefined;
+    const previouslyFocused = window.document.activeElement;
+    const frame = window.requestAnimationFrame(() => {
+      closeButtonRef.current?.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      const focusTarget = returnFocusRef?.current || previouslyFocused;
+      if (focusTarget instanceof HTMLElement && focusTarget.isConnected) {
+        focusTarget.focus({ preventScroll: true });
+      }
+    };
+  }, [embedded, open, returnFocusRef]);
 
   useEffect(() => {
     if (!open) return;
@@ -7781,13 +8854,44 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
       return undefined;
     }
     const handleKeyDown = (event) => {
+      if (!embedded && event.key === "Tab") {
+        const elements = dialogFocusableElements(dialogRef.current);
+        if (!elements.length) return;
+        const first = elements[0];
+        const last = elements[elements.length - 1];
+        if (event.shiftKey && window.document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && window.document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        } else if (!dialogRef.current?.contains(window.document.activeElement)) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
       if (event.key === "Escape") {
-        onClose();
+        event.preventDefault();
+        event.stopPropagation();
+        if (taskProviderConfirm) {
+          setTaskProviderConfirm(null);
+        } else if (modelEditor) {
+          setModelEditor(null);
+        } else if (deleteConfirm) {
+          setDeleteConfirm(false);
+        } else if (providerEditor) {
+          setProviderEditor(null);
+        } else if (providerCreator) {
+          setProviderCreator(null);
+        } else {
+          onClose?.();
+        }
       }
     };
     window.document.addEventListener("keydown", handleKeyDown, true);
     return () => window.document.removeEventListener("keydown", handleKeyDown, true);
-  }, [onClose, open]);
+  }, [deleteConfirm, embedded, modelEditor, onClose, open, providerCreator, providerEditor, taskProviderConfirm]);
 
   useEffect(() => {
     if (!open) {
@@ -7838,6 +8942,88 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
     }
   }, [apiKeys, selectedDraft.baseUrl, selectedDraft.models, selectedModel?.id, selectedModel?.model, selectedModel?.name, selectedModel?.testedAt, selectedModel?.testedOk, selectedProvider]);
 
+  const saveTaskModelAssignment = useCallback(async (taskId, modelKey, requestParamsOverride) => {
+    const model = resolverModels.find((item) => item.id === modelKey);
+    if (!model) return;
+    const task = AI_TASK_MODEL_DEFINITIONS.find((item) => item.id === taskId);
+    const currentAssignment = normalizedConfig.taskModels?.[taskId] || {};
+    const requestParams = model.transport === "codex-cli"
+      ? {}
+      : normalizeUiAiRequestParams(requestParamsOverride ?? currentAssignment.requestParams);
+    setBusy(true);
+    setStatus(null);
+    try {
+      const result = await onSave({
+        taskModels: {
+          [taskId]: { providerId: model.provider, modelId: model.modelId, requestParams },
+        },
+      });
+      const normalized = normalizePublicAiConfig(result);
+      setDrafts(normalized.providers);
+      const effectiveTaskParams = aiTaskRequestParamsForEditor(
+        model.provider,
+        model.requestParams,
+        normalized.taskModels?.[taskId]?.requestParams || {},
+        model.model,
+      );
+      const editableTaskParams = taskId === "applyResolver"
+        ? aiApplyResolverEditableRequestParams(model.provider, effectiveTaskParams)
+        : effectiveTaskParams;
+      setTaskParamDrafts((current) => ({
+        ...current,
+        [taskId]: requestParamsToRows(editableTaskParams),
+      }));
+      setStatus({ tone: "success", message: `${task?.label || "任务"}模型已更新` });
+    } catch (error) {
+      setStatus({ tone: "warning", message: error?.message || "任务模型保存失败" });
+    } finally {
+      setBusy(false);
+    }
+  }, [normalizedConfig.taskModels, onSave, resolverModels]);
+
+  const requestTaskProviderChange = useCallback((taskId, providerId) => {
+    const provider = resolverProviderGroups.find((item) => item.id === providerId);
+    const model = provider?.models[0];
+    if (!model) return;
+    const assignment = normalizedConfig.taskModels?.[taskId] || {};
+    const hasTaskOverrides = Object.keys(normalizeUiAiRequestParams(assignment.requestParams)).length > 0;
+    if (assignment.providerId && assignment.providerId !== providerId && hasTaskOverrides) {
+      setTaskProviderConfirm({ taskId, modelKey: model.id, providerLabel: provider.label });
+      return;
+    }
+    saveTaskModelAssignment(taskId, model.id, assignment.providerId === providerId ? assignment.requestParams : {});
+  }, [normalizedConfig.taskModels, resolverProviderGroups, saveTaskModelAssignment]);
+
+  const confirmTaskProviderChange = useCallback(async () => {
+    if (!taskProviderConfirm) return;
+    const { taskId, modelKey } = taskProviderConfirm;
+    setTaskProviderConfirm(null);
+    setTaskParamDrafts((current) => ({ ...current, [taskId]: [] }));
+    await saveTaskModelAssignment(taskId, modelKey, {});
+  }, [saveTaskModelAssignment, taskProviderConfirm]);
+
+  const saveTaskRequestParams = useCallback(async (taskId, assignedModel) => {
+    if (!assignedModel || assignedModel.transport === "codex-cli") return;
+    const rows = taskParamDrafts[taskId] || [];
+    const parsed = parseAiRequestParamRows(rows, { providerId: assignedModel.provider });
+    if (!parsed.valid) {
+      setStatus({ tone: "warning", message: parsed.error || "请先修正请求参数" });
+      return;
+    }
+    await saveTaskModelAssignment(taskId, assignedModel.id, parsed.requestParams);
+  }, [saveTaskModelAssignment, taskParamDrafts]);
+
+  const openBaseModelSettings = useCallback(() => {
+    const provider = drafts[normalizedConfig.activeProvider]
+      ? normalizedConfig.activeProvider
+      : (Object.keys(drafts)[0] || "gemini");
+    const providerDraft = drafts[provider] || normalizePublicAiProviderConfig(provider);
+    setSelectedProvider(provider);
+    setSelectedModelId(providerDraft.activeModelId || providerDraft.models[0]?.id || "");
+    setActivePanel("provider");
+    setStatus(null);
+  }, [drafts, normalizedConfig.activeProvider]);
+
   const refreshCodex = useCallback(async () => {
     setBusy(true);
     setStatus(null);
@@ -7875,7 +9061,7 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
     }
   }, [onLoginCodex]);
 
-  const saveCodexEffort = useCallback(async (model, reasoningEffort) => {
+  const saveModelReasoningEffort = useCallback(async (model, reasoningEffort) => {
     const models = selectedDraft.models.map((item) => item.id === model.id ? { ...item, reasoningEffort } : item);
     await runAction(onSave, { modelId: model.id, modelName: model.name, model: model.model, models, resetTest: false });
   }, [onSave, runAction, selectedDraft.models]);
@@ -7928,6 +9114,7 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
       setDrafts(normalized.providers);
       const createdProvider = result?.createdProvider;
       if (createdProvider && normalized.providers[createdProvider]) {
+        setActivePanel("provider");
         setSelectedProvider(createdProvider);
         setSelectedModelId("");
       }
@@ -7942,6 +9129,7 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
 
   const deleteSelectedProvider = useCallback(async () => {
     if (selectedDraft.builtin || normalizedConfig.activeProvider === selectedProvider) return;
+    const affectedTasks = selectedProviderTaskLabels.join("、");
     setBusy(true);
     try {
       const result = await onDeleteProvider(selectedProvider);
@@ -7949,14 +9137,16 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
       setDrafts(normalized.providers);
       setSelectedProvider(normalized.activeProvider);
       setSelectedModelId(normalized.activeModelId);
-      setStatus({ tone: "success", message: result?.message || "供应商已删除" });
+      setStatus(affectedTasks
+        ? { tone: "warning", message: `${affectedTasks}的任务模型已失效，请重新选择` }
+        : { tone: "success", message: result?.message || "供应商已删除" });
       setDeleteConfirm(false);
     } catch (error) {
       setStatus({ tone: "warning", message: error?.message || "删除供应商失败" });
     } finally {
       setBusy(false);
     }
-  }, [normalizedConfig.activeProvider, onDeleteProvider, selectedDraft.builtin, selectedProvider]);
+  }, [normalizedConfig.activeProvider, onDeleteProvider, selectedDraft.builtin, selectedProvider, selectedProviderTaskLabels]);
 
   const openAddModelEditor = useCallback(() => {
     const providerDraft = drafts[selectedProvider] || normalizePublicAiProviderConfig(selectedProvider);
@@ -7967,6 +9157,7 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
       modelId: "",
       name: `模型 ${nextIndex}`,
       model: defaults.model,
+      requestParamRows: requestParamsToRows(aiRequestParamsWithProviderDefaults(selectedProvider, {}, defaults.model)),
     });
   }, [drafts, selectedProvider]);
 
@@ -7977,8 +9168,9 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
       modelId: model.id,
       name: model.name,
       model: model.model,
+      requestParamRows: requestParamsToRows(aiRequestParamsWithProviderDefaults(selectedProvider, model.requestParams || {}, model.model)),
     });
-  }, []);
+  }, [selectedProvider]);
 
   const saveModelEditor = useCallback(async () => {
     if (!modelEditor) {
@@ -7991,15 +9183,28 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
       setStatus({ tone: "warning", message: "请填写模型名称和模型" });
       return;
     }
+    const parsedParams = parseAiRequestParamRows(modelEditor.requestParamRows || [], { providerId: selectedProvider });
+    if (!parsedParams.valid) {
+      setStatus({ tone: "warning", message: parsedParams.error || "请先修正请求参数" });
+      return;
+    }
     const existingModel = modelEditor.mode === "edit"
       ? providerDraft.models.find((model) => model.id === modelEditor.modelId)
       : null;
-    const modelChanged = !existingModel || existingModel.model !== modelValue;
+    const requestParamsChanged = !existingModel || !aiRequestParamsEqual(existingModel.requestParams, parsedParams.requestParams);
+    const modelChanged = !existingModel || existingModel.model !== modelValue || requestParamsChanged;
+    const affectedTasks = modelChanged && existingModel
+      ? AI_TASK_MODEL_DEFINITIONS.filter((task) => {
+        const assignment = normalizedConfig.taskModels?.[task.id];
+        return assignment?.providerId === selectedProvider && assignment?.modelId === existingModel.id;
+      }).map((task) => task.label)
+      : [];
     const nextModel = normalizePublicAiModelConfig(selectedProvider, {
       ...(existingModel || {}),
       id: existingModel?.id || `${selectedProvider}-custom-${Date.now().toString(36)}`,
       name,
       model: modelValue,
+      requestParams: parsedParams.requestParams,
       testedOk: modelChanged ? false : existingModel?.testedOk,
       testedAt: modelChanged ? "" : existingModel?.testedAt,
       testMessage: modelChanged ? "" : existingModel?.testMessage,
@@ -8017,8 +9222,11 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
     if (result) {
       setSelectedModelId(nextModel.id);
       setModelEditor(null);
+      if (affectedTasks.length) {
+        setStatus({ tone: "warning", message: `${affectedTasks.join("、")}的任务模型已失效，请重新测试或选择其他模型` });
+      }
     }
-  }, [drafts, modelEditor, onSave, runAction, selectedProvider]);
+  }, [drafts, modelEditor, normalizedConfig.taskModels, onSave, runAction, selectedProvider]);
 
   const removeModelDraft = useCallback(async (modelId) => {
     const providerDraft = drafts[selectedProvider] || normalizePublicAiProviderConfig(selectedProvider);
@@ -8031,6 +9239,10 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
       ? (nextModels[0]?.id || "")
       : providerDraft.activeModelId;
     const nextSelectedModel = nextModels.find((model) => model.id === nextActiveModelId) || nextModels[0];
+    const affectedTasks = AI_TASK_MODEL_DEFINITIONS.filter((task) => {
+      const assignment = normalizedConfig.taskModels?.[task.id];
+      return assignment?.providerId === selectedProvider && assignment?.modelId === modelId;
+    }).map((task) => task.label);
     setDrafts((previous) => ({
       ...previous,
       [selectedProvider]: {
@@ -8040,7 +9252,7 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
       },
     }));
     setSelectedModelId(nextSelectedModel?.id || "");
-    await runAction(onSave, {
+    const result = await runAction(onSave, {
       modelId: nextSelectedModel?.id || "",
       modelName: nextSelectedModel?.name || "",
       model: nextSelectedModel?.model || "",
@@ -8048,7 +9260,10 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
       resetTest: false,
       activate: normalizedConfig.activeProvider === selectedProvider && providerDraft.activeModelId === modelId,
     });
-  }, [drafts, normalizedConfig.activeProvider, onSave, runAction, selectedProvider]);
+    if (result && affectedTasks.length) {
+      setStatus({ tone: "warning", message: `${affectedTasks.join("、")}的任务模型已失效，请在“任务模型”中重新选择` });
+    }
+  }, [drafts, normalizedConfig.activeProvider, normalizedConfig.taskModels, onSave, runAction, selectedProvider]);
 
   const setDefaultModel = useCallback(async (model) => {
     setSelectedModelId(model.id);
@@ -8075,20 +9290,23 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
   }
 
   return (
-    <div className="ai-settings-overlay" role="presentation" onMouseDown={onClose}>
+    <div className={embedded ? "ai-settings-embed" : "ai-settings-overlay dialog-scrim dialog-scrim--large"} role="presentation" onMouseDown={embedded ? undefined : onClose}>
       <section
-        className="ai-settings-dialog"
-        role="dialog"
-        aria-modal="true"
+        ref={dialogRef}
+        className={embedded ? "ai-settings-dialog settings-embedded" : "ai-settings-dialog"}
+        role={embedded ? "region" : "dialog"}
+        aria-modal={embedded ? undefined : "true"}
         aria-labelledby="ai-settings-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <button type="button" className="ai-settings-close" onClick={onClose} aria-label="关闭 AI 设置" title="关闭">
-          <X size={24} strokeWidth={2.6} />
-        </button>
+        {!embedded ? (
+          <button ref={closeButtonRef} type="button" className="ai-settings-close" onClick={onClose} aria-label="关闭 AI 设置" title="关闭">
+            <X size={24} strokeWidth={2.6} />
+          </button>
+        ) : null}
         <aside className="ai-settings-sidebar">
           <div className="ai-provider-list-head">
-            <strong>供应商</strong>
+            <strong>基础模型</strong>
             <button type="button" onClick={openProviderCreator} disabled={busy} title="添加供应商">
               <Plus size={15} />
               <span>添加供应商</span>
@@ -8106,10 +9324,12 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
                   type="button"
                   className={[
                     "ai-provider-card",
-                    isSelected ? "selected" : "",
+                    activePanel === "provider" && isSelected ? "selected" : "",
                     meta.tone,
                   ].filter(Boolean).join(" ")}
                   onClick={() => {
+                    setActivePanel("provider");
+                    setStatus(null);
                     setSelectedProvider(option.id);
                     setSelectedModelId((drafts[option.id] || normalizePublicAiProviderConfig(option.id)).activeModelId);
                   }}
@@ -8127,7 +9347,169 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
               );
             })}
           </div>
+          <div className="ai-task-model-nav-wrap">
+            <button
+              type="button"
+              className={activePanel === "tasks" ? "ai-task-model-nav selected" : "ai-task-model-nav"}
+              aria-current={activePanel === "tasks" ? "page" : undefined}
+              onClick={() => {
+                setActivePanel("tasks");
+                setStatus(null);
+              }}
+            >
+              <span className="ai-task-model-nav-icon"><Bot size={21} aria-hidden="true" /></span>
+              <span className="ai-task-model-nav-copy">
+                <strong>任务模型</strong>
+                <em>为内置任务指定模型</em>
+              </span>
+              <span className={`ai-status-pill ${taskModelNavTone}`}>{taskModelNavLabel}</span>
+            </button>
+          </div>
         </aside>
+        {activePanel === "tasks" ? (
+          <main className="ai-settings-main ai-task-model-main">
+            <header className="ai-settings-main-head ai-task-model-main-head">
+              <div className="ai-provider-hero ai-task-model-hero">
+                <span className="ai-provider-hero-icon"><Bot size={30} aria-hidden="true" /></span>
+                <div>
+                  <h2 id="ai-settings-title">任务模型</h2>
+                  <p>未单独指定时跟随默认模型，也可为内置任务设置专用模型。</p>
+                </div>
+              </div>
+            </header>
+            <section className="ai-settings-section ai-task-model-section" aria-label="任务模型列表">
+              <div className="ai-settings-section-head">
+                <div>
+                  <h3>内置任务</h3>
+                  <p className="ai-settings-muted">选择范围仅包含已连接供应商中已测试可用的模型。</p>
+                </div>
+              </div>
+              <div className="ai-task-model-list">
+                {AI_TASK_MODEL_DEFINITIONS.map((task) => {
+                  const assignment = normalizedConfig.taskModels?.[task.id] || { providerId: "", modelId: "", requestParams: {} };
+                  const modelKey = createAiModelKey(assignment.providerId, assignment.modelId);
+                  const modelConfigured = Boolean(assignment.providerId && assignment.modelId);
+                  const effectiveModelKey = modelConfigured ? modelKey : defaultResolverModelKey;
+                  const assignedModel = resolverModels.find((model) => model.id === effectiveModelKey);
+                  const assignedProvider = resolverProviderGroups.find((provider) => provider.id === assignedModel?.provider);
+                  const modelAvailable = Boolean(assignedModel);
+                  const modelInvalid = modelConfigured && !modelAvailable;
+                  const providerValue = assignedProvider ? assignedProvider.id : "";
+                  const modelOptions = assignedProvider?.models || [];
+                  const effectiveTaskParams = assignedModel
+                    ? aiTaskRequestParamsForEditor(
+                      assignedModel.provider,
+                      assignedModel.requestParams,
+                      assignment.requestParams,
+                      assignedModel.model,
+                    )
+                    : normalizeUiAiRequestParams(assignment.requestParams);
+                  const editableEffectiveTaskParams = task.id === "applyResolver"
+                    ? aiApplyResolverEditableRequestParams(assignedModel?.provider, effectiveTaskParams)
+                    : effectiveTaskParams;
+                  const taskRows = taskParamDrafts[task.id] || requestParamsToRows(editableEffectiveTaskParams);
+                  const taskParamsResult = parseAiRequestParamRows(taskRows, { providerId: assignedModel?.provider || "" });
+                  const taskParamsDirty = taskParamsResult.valid
+                    && !aiRequestParamsEqual(taskParamsResult.requestParams, editableEffectiveTaskParams);
+                  return (
+                    <article key={task.id} className={modelInvalid ? "ai-task-model-card invalid" : "ai-task-model-card"}>
+                      <div className="ai-task-model-copy">
+                        <span className="ai-task-model-card-icon"><Sparkles size={19} aria-hidden="true" /></span>
+                        <div>
+                          <strong>{task.label}</strong>
+                          <p>{task.description}</p>
+                        </div>
+                      </div>
+                      <div className="ai-task-model-control">
+                        <div className="ai-task-model-selectors" aria-label={task.selectLabel}>
+                          <label>
+                            <span>供应商</span>
+                            <TemplateSelect
+                              ariaLabel={`${task.label}供应商`}
+                              value={providerValue}
+                              options={[
+                                { value: "", label: resolverModels.length ? "请选择供应商" : "暂无已连接供应商" },
+                                ...resolverProviderGroups.map((provider) => ({ value: provider.id, label: provider.label })),
+                              ]}
+                              disabled={busy || !resolverModels.length}
+                              invalid={modelInvalid && !assignedProvider}
+                              className="ai-task-model-select"
+                              onChange={(providerId) => requestTaskProviderChange(task.id, providerId)}
+                            />
+                          </label>
+                          <label>
+                            <span>模型</span>
+                            <TemplateSelect
+                              ariaLabel={`${task.label}模型`}
+                              value={modelAvailable ? effectiveModelKey : ""}
+                              options={[
+                                { value: "", label: modelInvalid ? "原模型已失效，请重新选择" : (assignedProvider ? "请选择模型" : "请先选择供应商") },
+                                ...modelOptions.map((model) => ({ value: model.id, label: model.modelName || model.model })),
+                              ]}
+                              disabled={busy || !assignedProvider}
+                              invalid={modelInvalid}
+                              className="ai-task-model-select"
+                              onChange={(value) => {
+                                const model = resolverModels.find((item) => item.id === value);
+                                if (model) saveTaskModelAssignment(task.id, model.id, assignment.requestParams || {});
+                              }}
+                            />
+                          </label>
+                        </div>
+                        {!modelConfigured && assignedModel ? (
+                          <span className="ai-task-model-follow-default">
+                            未单独指定，当前跟随默认模型「{assignedModel.modelName || assignedModel.model}」。
+                          </span>
+                        ) : null}
+                        {modelInvalid ? <span className="ai-task-model-warning" role="alert">原任务模型已失效，请重新选择。</span> : null}
+                        {assignedModel?.transport === "codex-cli" ? (
+                          <div className="ai-task-codex-inherit-note">
+                            <SquareTerminal size={17} aria-hidden="true" />
+                            <span>任务将继承基础模型中的 Codex 推理强度；Codex CLI 不使用 HTTP 请求参数。</span>
+                          </div>
+                        ) : assignedModel ? (
+                          <div className="ai-task-request-params">
+                            <AiRequestParamsEditor
+                              rows={taskRows}
+                              providerId={assignedModel.provider}
+                              disabled={busy}
+                              compact
+                              flat
+                              title="任务请求参数"
+                              description="已显示所选模型参数；修改或新增字段仅用于当前任务。"
+                              onChange={(rows) => setTaskParamDrafts((current) => ({ ...current, [task.id]: rows }))}
+                            />
+                            <div className="ai-task-request-params-actions">
+                              <span>{taskParamsDirty ? "有尚未保存的修改" : "参数已同步"}</span>
+                              <button
+                                type="button"
+                                disabled={busy || !taskParamsResult.valid || !taskParamsDirty}
+                                onClick={() => saveTaskRequestParams(task.id, assignedModel)}
+                              >
+                                保存参数
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              {!resolverModels.length ? (
+                <div className="ai-task-model-empty">
+                  <Wifi size={22} aria-hidden="true" />
+                  <div>
+                    <strong>暂无已连接模型</strong>
+                    <span>请先完成供应商连接并测试至少一个模型。</span>
+                  </div>
+                  <button type="button" onClick={openBaseModelSettings}>配置基础模型</button>
+                </div>
+              ) : null}
+              {status ? <p className={`ai-task-model-feedback ${status.tone}`} aria-live="polite">{status.message}</p> : null}
+            </section>
+          </main>
+        ) : (
         <main className="ai-settings-main">
           <header className="ai-settings-main-head">
             <div className="ai-provider-hero">
@@ -8210,9 +9592,9 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
                           <TemplateSelect
                             ariaLabel={`${model.name} 推理强度`}
                             value={model.reasoningEffort || model.defaultReasoningEffort || ""}
-                            options={(model.supportedReasoningEfforts || []).map((option) => ({ value: option.reasoningEffort, label: option.reasoningEffort }))}
+                            options={getAiReasoningEffortOptions(model).filter((option) => option.value)}
                             disabled={busy || !model.supportedReasoningEfforts?.length}
-                            onChange={(value) => saveCodexEffort(model, value)}
+                            onChange={(value) => saveModelReasoningEffort(model, value)}
                           />
                         </div>
                         <button type="button" className={isModelDefault ? "ai-model-default-control selected" : "ai-model-default-control"} disabled={busy || isModelDefault || !model.testedOk} onClick={(event) => { event.stopPropagation(); setDefaultModel(model); }}><span className="ai-model-default-indicator" aria-hidden="true" /><span>{isModelDefault ? "默认" : "设为默认"}</span></button>
@@ -8284,9 +9666,10 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
                 <span>添加模型</span>
               </button>
             </div>
-            <div className="ai-model-table" aria-label={`${selectedDraft.providerLabel} 模型`}>
+            <div className="ai-model-table ai-http-model-table" aria-label={`${selectedDraft.providerLabel} 模型`}>
               <div className="ai-model-table-head">
                 <span>模型名称</span>
+                <span>请求参数</span>
                 <span>状态</span>
                 <span>是否默认</span>
                 <span>操作</span>
@@ -8301,6 +9684,7 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
               ) : selectedDraft.models.map((model) => {
                 const isModelDefault = normalizedConfig.activeProvider === selectedProvider && selectedDraft.activeModelId === model.id;
                 const modelTone = model.testedOk ? "connected" : (model.testedAt ? "failed" : "idle");
+                const visibleRequestParams = aiRequestParamsWithProviderDefaults(selectedProvider, model.requestParams || {}, model.model);
                 return (
                   <div
                     key={model.id}
@@ -8318,6 +9702,18 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
                         <em>{model.model}</em>
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      className="ai-model-params-control"
+                      disabled={busy}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedModelId(model.id);
+                        openEditModelEditor(model);
+                      }}
+                    >
+                      {Object.keys(visibleRequestParams).length ? `${Object.keys(visibleRequestParams).length} 项` : "未设置"}
+                    </button>
                     <span className={`ai-status-pill ${modelTone}`}>{model.testedOk ? "可用" : (model.testedAt ? "不可用" : "未测试")}</span>
                     <button
                       type="button"
@@ -8361,7 +9757,11 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
                         className="danger"
                         aria-label={`删除模型：${model.name}`}
                         disabled={selectedDraft.models.length <= 1 && (selectedDraft.builtin || normalizedConfig.activeProvider === selectedProvider)}
-                        title={selectedDraft.models.length <= 1 && (selectedDraft.builtin || normalizedConfig.activeProvider === selectedProvider) ? "至少保留一个模型" : "删除模型"}
+                        title={selectedDraft.models.length <= 1 && (selectedDraft.builtin || normalizedConfig.activeProvider === selectedProvider)
+                          ? "至少保留一个模型"
+                          : (AI_TASK_MODEL_DEFINITIONS.some((task) => normalizedConfig.taskModels?.[task.id]?.providerId === selectedProvider && normalizedConfig.taskModels?.[task.id]?.modelId === model.id)
+                            ? "删除模型；关联任务将需要重新选择"
+                            : "删除模型")}
                         onClick={(event) => {
                           event.stopPropagation();
                           removeModelDraft(model.id);
@@ -8382,8 +9782,9 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
             </>
           )}
         </main>
+        )}
         {providerCreator ? (
-          <div className="ai-settings-subdialog-backdrop" role="presentation" onMouseDown={() => setProviderCreator(null)}>
+          <div className="ai-settings-subdialog-backdrop dialog-scrim" role="presentation" onMouseDown={() => setProviderCreator(null)}>
             <section className="ai-settings-subdialog" role="dialog" aria-modal="true" aria-label="添加供应商" onMouseDown={(event) => event.stopPropagation()}>
               <header>
                 <h3>添加供应商</h3>
@@ -8426,7 +9827,7 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
           </div>
         ) : null}
         {providerEditor ? (
-          <div className="ai-settings-subdialog-backdrop" role="presentation" onMouseDown={() => setProviderEditor(null)}>
+          <div className="ai-settings-subdialog-backdrop dialog-scrim" role="presentation" onMouseDown={() => setProviderEditor(null)}>
             <section className="ai-settings-subdialog" role="dialog" aria-modal="true" aria-label="编辑供应商" onMouseDown={(event) => event.stopPropagation()}>
               <header>
                 <h3>编辑供应商</h3>
@@ -8480,17 +9881,29 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
           </div>
         ) : null}
         {deleteConfirm ? (
-          <div className="ai-settings-subdialog-backdrop" role="presentation" onMouseDown={() => setDeleteConfirm(false)}>
+          <div className="ai-settings-subdialog-backdrop dialog-scrim" role="presentation" onMouseDown={() => setDeleteConfirm(false)}>
             <section className="ai-settings-subdialog ai-provider-delete-dialog" role="alertdialog" aria-modal="true" aria-label="删除供应商" onMouseDown={(event) => event.stopPropagation()}>
               <header><h3>删除供应商</h3><button type="button" onClick={() => setDeleteConfirm(false)} aria-label="关闭"><X size={16} /></button></header>
-              <p>确定删除“{selectedDraft.providerLabel}”吗？保存的 API Key 和模型配置也会一并删除，此操作无法撤销。</p>
+              <p>
+                确定删除“{selectedDraft.providerLabel}”吗？保存的 API Key 和模型配置也会一并删除，此操作无法撤销。
+                {selectedProviderTaskLabels.length ? ` 删除后，“${selectedProviderTaskLabels.join("、")}”需要重新选择任务模型。` : ""}
+              </p>
               <footer><span /><div><button type="button" onClick={() => setDeleteConfirm(false)}>取消</button><button type="button" className="danger-solid" disabled={busy} onClick={deleteSelectedProvider}>{busy ? "删除中…" : "删除"}</button></div></footer>
             </section>
           </div>
         ) : null}
+        {taskProviderConfirm ? (
+          <div className="ai-settings-subdialog-backdrop dialog-scrim" role="presentation" onMouseDown={() => setTaskProviderConfirm(null)}>
+            <section className="ai-settings-subdialog ai-provider-delete-dialog" role="alertdialog" aria-modal="true" aria-label="切换任务供应商" onMouseDown={(event) => event.stopPropagation()}>
+              <header><h3>切换任务供应商</h3><button type="button" onClick={() => setTaskProviderConfirm(null)} aria-label="关闭"><X size={16} /></button></header>
+              <p>任务请求参数通常与供应商协议绑定。切换到“{taskProviderConfirm.providerLabel}”后，当前任务参数将被清空。</p>
+              <footer><span /><div><button type="button" onClick={() => setTaskProviderConfirm(null)}>取消</button><button type="button" className="primary" disabled={busy} onClick={confirmTaskProviderChange}>清空并切换</button></div></footer>
+            </section>
+          </div>
+        ) : null}
         {modelEditor ? (
-          <div className="ai-settings-subdialog-backdrop" role="presentation" onMouseDown={() => setModelEditor(null)}>
-            <section className="ai-settings-subdialog" role="dialog" aria-modal="true" aria-label={modelEditor.mode === "add" ? "添加模型" : "编辑模型"} onMouseDown={(event) => event.stopPropagation()}>
+          <div className="ai-settings-subdialog-backdrop dialog-scrim" role="presentation" onMouseDown={() => setModelEditor(null)}>
+            <section className="ai-settings-subdialog ai-model-editor-dialog" role="dialog" aria-modal="true" aria-label={modelEditor.mode === "add" ? "添加模型" : "编辑模型"} onMouseDown={(event) => event.stopPropagation()}>
               <header>
                 <h3>{modelEditor.mode === "add" ? "添加模型" : "编辑模型"}</h3>
                 <button type="button" onClick={() => setModelEditor(null)} aria-label="关闭">
@@ -8505,9 +9918,43 @@ function AiSettingsDialog({ open, config, onClose, onSave, onCreateProvider, onD
                 <span>模型</span>
                 <input value={modelEditor.model} onChange={(event) => setModelEditor((current) => ({ ...current, model: event.target.value }))} spellCheck={false} />
               </label>
+              {modelEditorCapabilities ? (
+                <div className="ai-model-capabilities">
+                  <div className="ai-model-capabilities-title">
+                    <strong>模型能力</strong>
+                    <AppInfoTooltip
+                      id="ai-model-capabilities-tip"
+                      label="查看模型能力说明"
+                      text="这些是只读模型能力，只用于帮助判断模型容量，不会作为请求参数发送。"
+                    />
+                  </div>
+                  <div className="ai-model-capabilities-fields">
+                    <label>
+                      <span>context_window</span>
+                      <input value={modelEditorCapabilities.contextWindow.toLocaleString("en-US")} readOnly />
+                    </label>
+                    <label>
+                      <span>max_output_tokens</span>
+                      <input value={modelEditorCapabilities.maxOutputTokens.toLocaleString("en-US")} readOnly />
+                    </label>
+                  </div>
+                </div>
+              ) : null}
+              <AiRequestParamsEditor
+                rows={modelEditor.requestParamRows || []}
+                providerId={selectedProvider}
+                disabled={busy}
+                flat
+                title="请求参数"
+                description=""
+                onChange={(requestParamRows) => setModelEditor((current) => ({ ...current, requestParamRows }))}
+              />
               <footer>
-                <button type="button" onClick={() => setModelEditor(null)}>取消</button>
-                <button type="button" className="primary" disabled={busy} onClick={saveModelEditor}>保存</button>
+                <span />
+                <div>
+                  <button type="button" onClick={() => setModelEditor(null)}>取消</button>
+                  <button type="button" className="primary" disabled={busy} onClick={saveModelEditor}>保存</button>
+                </div>
               </footer>
             </section>
           </div>
@@ -8529,18 +9976,28 @@ function InlineAiText({ text }) {
   });
 }
 
-function AiResultBlock({ block, onCopy }) {
-  const handleCopy = useCallback(() => onCopy(block), [block, onCopy]);
+function AiResultBlockActions({ block, onCopy, onApply, applying, previewing = false, manualFallback = false, resolverLabel = "直接应用定位模型" }) {
+  const applyLabel = previewing ? "正文中确认" : (manualFallback ? "选择位置应用" : "应用");
+  return (
+    <span className="ai-block-actions" contentEditable={false}>
+      <button type="button" onClick={() => onCopy(block)} title="复制这一块" aria-label="复制这一块"><Copy size={14} /></button>
+      <button type="button" className="apply" disabled={applying || previewing} onClick={() => onApply(block)} title={previewing ? "请在左侧正文中确认或取消" : (manualFallback ? "在左侧选择原文位置后应用" : `由${resolverLabel}定位并显示正文对比`)} aria-label={applyLabel}>
+        {applying ? <RefreshCw className="spin" size={14} /> : null}
+        <span>{applying ? "定位中" : applyLabel}</span>
+      </button>
+    </span>
+  );
+}
+
+function AiResultBlock({ block, onCopy, onApply, applying, previewing, manualFallback, resolverLabel }) {
   if (block.type === "divider") {
-    return <hr className="ai-result-divider" />;
+    return <div className="ai-result-block ai-result-divider-block"><AiResultBlockActions block={block} onCopy={onCopy} onApply={onApply} applying={applying} previewing={previewing} manualFallback={manualFallback} resolverLabel={resolverLabel} /><hr className="ai-result-divider" /></div>;
   }
   if (block.type === "orderedList" || block.type === "bulletList") {
     const ListTag = block.type === "orderedList" ? "ol" : "ul";
     return (
       <div className="ai-result-block ai-result-list-block">
-        <button type="button" className="ai-copy-block" onClick={handleCopy} title="复制这一块" aria-label="复制这一块">
-          <Copy size={14} />
-        </button>
+        <AiResultBlockActions block={block} onCopy={onCopy} onApply={onApply} applying={applying} previewing={previewing} manualFallback={manualFallback} resolverLabel={resolverLabel} />
         <ListTag className="ai-result-list">
           {block.items.map((item, index) => (
             <li key={`${block.type}-${index}-${item.text}`} value={block.type === "orderedList" ? item.number || index + 1 : undefined}>
@@ -8554,9 +10011,7 @@ function AiResultBlock({ block, onCopy }) {
   if (block.type === "table") {
     return (
       <div className="ai-result-block ai-result-table-wrap">
-        <button type="button" className="ai-copy-block" onClick={handleCopy} title="复制这一块" aria-label="复制这一块">
-          <Copy size={14} />
-        </button>
+        <AiResultBlockActions block={block} onCopy={onCopy} onApply={onApply} applying={applying} previewing={previewing} manualFallback={manualFallback} resolverLabel={resolverLabel} />
         <table className="ai-md-table">
           <thead>
             <tr>
@@ -8587,9 +10042,7 @@ function AiResultBlock({ block, onCopy }) {
     const width = normalizeEmbedWidth(block.asset?.width);
     return (
       <figure className="ai-result-block ai-result-image" style={{ "--image-width": width }}>
-        <button type="button" className="ai-copy-block" onClick={handleCopy} title="复制这一块" aria-label="复制这一块">
-          <Copy size={14} />
-        </button>
+        <AiResultBlockActions block={block} onCopy={onCopy} onApply={onApply} applying={applying} previewing={previewing} manualFallback={manualFallback} resolverLabel={resolverLabel} />
         {source ? (
           <img src={source} alt={block.asset?.alt || block.caption} />
         ) : (
@@ -8603,9 +10056,7 @@ function AiResultBlock({ block, onCopy }) {
     const { bodyParts, source } = splitQuoteForDisplay(block.text);
     return (
       <blockquote className="ai-result-block">
-        <button type="button" className="ai-copy-block" onClick={handleCopy} title="复制这一块" aria-label="复制这一块">
-          <Copy size={14} />
-        </button>
+        <AiResultBlockActions block={block} onCopy={onCopy} onApply={onApply} applying={applying} previewing={previewing} manualFallback={manualFallback} resolverLabel={resolverLabel} />
         {bodyParts.map((part, index) => (
           <p key={`quote-body-${index}-${part}`}>
             <InlineAiText text={part} />
@@ -8619,18 +10070,14 @@ function AiResultBlock({ block, onCopy }) {
     const HeadingTag = `h${Math.max(1, Math.min(3, block.level || 2))}`;
     return (
       <HeadingTag className="ai-result-block">
-        <button type="button" className="ai-copy-block" onClick={handleCopy} title="复制这一块" aria-label="复制这一块">
-          <Copy size={14} />
-        </button>
+        <AiResultBlockActions block={block} onCopy={onCopy} onApply={onApply} applying={applying} previewing={previewing} manualFallback={manualFallback} resolverLabel={resolverLabel} />
         <InlineAiText text={block.text} />
       </HeadingTag>
     );
   }
   return (
     <p className="ai-result-block">
-      <button type="button" className="ai-copy-block" onClick={handleCopy} title="复制这一块" aria-label="复制这一块">
-        <Copy size={14} />
-      </button>
+      <AiResultBlockActions block={block} onCopy={onCopy} onApply={onApply} applying={applying} previewing={previewing} manualFallback={manualFallback} resolverLabel={resolverLabel} />
       <InlineAiText text={block.text} />
     </p>
   );
@@ -8762,7 +10209,7 @@ function AiProviderRunSelector({ providers, value, disabled = false, onChange })
   const selectedProviderGroup = groupedProviders.find((provider) => provider.id === (activeProviderId || current?.provider)) || groupedProviders[0];
   const modelSwitchModal = open
     ? createPortal(
-        <div className="ai-provider-switch-modal-backdrop" role="presentation" onMouseDown={() => setOpen(false)}>
+        <div className="ai-provider-switch-modal-backdrop dialog-scrim" role="presentation" onMouseDown={() => setOpen(false)}>
           <section className="ai-provider-switch-modal" role="dialog" aria-modal="true" aria-label="选择模型" onMouseDown={(event) => event.stopPropagation()}>
             <header>
               <strong>选择模型</strong>
@@ -8956,12 +10403,13 @@ function AiOptimizeToolbar({
           <>
             <button
               type="button"
-              disabled={finalizedBreakInserted}
-              title={finalizedBreakInserted ? "已经插入一根定稿线，删除后可重新插入" : "插入定稿线"}
-              onClick={() => insertFinalizedBreak(editor, savedSelectionRef)}
+              title={finalizedBreakInserted ? "清空定稿线" : "插入定稿线"}
+              onClick={() => finalizedBreakInserted
+                ? removeFinalizedBreak(editor)
+                : insertFinalizedBreak(editor, savedSelectionRef)}
             >
               <SeparatorHorizontal size={13} />
-              <span>{finalizedBreakInserted ? "已插入定稿线" : "插入定稿线"}</span>
+              <span>{finalizedBreakInserted ? "清空定稿线" : "插入定稿线"}</span>
             </button>
             <button
               type="button"
@@ -9054,6 +10502,11 @@ function AiResultPane({
   elapsedSeconds,
   tokenStats,
   onCopyBlock,
+  onApplyBlock,
+  applyingBlockIndex,
+  previewingBlockIndex = -1,
+  manualFallbackBlockIndexes = [],
+  resolverLabel,
 }) {
   const { selectedTemplate, paperStyle } = useMemo(() => getAiPaperPresentation(), []);
   const blocks = useMemo(() => parseAiResponseBlocks(output, assets), [assets, output]);
@@ -9071,21 +10524,32 @@ function AiResultPane({
           selectedTemplate={selectedTemplate}
           paperStyle={paperStyle}
           className="ai-result-sheet"
+          customHeaderLayout
         >
           <header className="paper-header ai-result-header">
             <h1>AI优化结果</h1>
             <p className="ai-result-subtitle">耗时：{formatElapsedSeconds(elapsedSeconds)} ；Token消耗：{tokenValue}</p>
           </header>
           <div className="paper-editor ai-result-body">
+            {isStreaming && !blocks.length && !error ? <p className="ai-result-loading">AI优化中…</p> : null}
             {error ? <p className="ai-result-error">{error}</p> : null}
             {isPreparing && !error ? (
               <p className="ai-result-placeholder">在左侧原文插入一根“定稿线”，线以上全部作为已定稿背景，不会要求 AI 改写；线以下是本次优化重点。准备好后点击“开始优化”。</p>
             ) : null}
             {!error && !blocks.length && !isPreparing ? (
-              <p className="ai-result-placeholder">{isStreaming ? "AI 正在阅读这篇信笺..." : "AI 优化结果会显示在这里。"}</p>
+              isStreaming ? null : <p className="ai-result-placeholder">AI 优化结果会显示在这里。</p>
             ) : null}
             {blocks.map((block, index) => (
-              <AiResultBlock key={`${block.type}-${index}-${block.text || block.caption || block.number}`} block={block} onCopy={onCopyBlock} />
+              <AiResultBlock
+                key={`${block.type}-${index}-${block.text || block.caption || block.number}`}
+                block={block}
+                onCopy={onCopyBlock}
+                onApply={(selectedBlock) => onApplyBlock(selectedBlock, index, blocks)}
+                applying={applyingBlockIndex === index}
+                previewing={previewingBlockIndex === index}
+                manualFallback={manualFallbackBlockIndexes.includes(index)}
+                resolverLabel={resolverLabel}
+              />
             ))}
           </div>
         </PageArticle>
@@ -9354,6 +10818,7 @@ function PaperCanvas({
 
 function DocumentTabs({
   tabs,
+  capacityTabCount = tabs.length,
   activeTabId,
   rightSplitTabId = "",
   onSelectTab,
@@ -9365,6 +10830,8 @@ function DocumentTabs({
   closeDisabled = disabled,
   newDisabled = disabled,
   showNew = true,
+  compact = false,
+  secondaryOccupied = false,
   onCapacityChange,
 }) {
   const stripRef = useRef(null);
@@ -9388,14 +10855,14 @@ function DocumentTabs({
       return undefined;
     }
     const measureCapacity = () => {
-      const isAiStrip = Boolean(strip.closest(".ai-mode-top-strip"));
+      const isCompactStrip = compact || Boolean(strip.closest(".ai-mode-top-strip, .secondary-pane-top-strip"));
       const stripStyle = window.getComputedStyle(strip);
       const listStyle = window.getComputedStyle(list);
       const stripGap = Number.parseFloat(stripStyle.columnGap || stripStyle.gap || "0") || 0;
       const listGap = Number.parseFloat(listStyle.columnGap || listStyle.gap || "0") || 0;
-      const addWidth = add.getBoundingClientRect().width || (isAiStrip ? 38 : 48);
-      const minTabWidth = isAiStrip ? 112 : 120;
-      const nextTabCount = tabs.length + 1;
+      const addWidth = add.getBoundingClientRect().width || (isCompactStrip ? 38 : 48);
+      const minTabWidth = isCompactStrip ? 112 : 120;
+      const nextTabCount = Math.max(tabs.length, Number(capacityTabCount) || 0) + 1;
       const nextMinWidth = (nextTabCount * minTabWidth) + (Math.max(0, nextTabCount - 1) * listGap);
       const availableWidth = strip.clientWidth - addWidth - stripGap;
       const nextAtCapacity = nextMinWidth > availableWidth + 0.5;
@@ -9410,7 +10877,7 @@ function DocumentTabs({
       resizeObserver?.disconnect();
       window.removeEventListener("resize", measureCapacity);
     };
-  }, [onCapacityChange, showNew, tabs.length]);
+  }, [capacityTabCount, compact, onCapacityChange, showNew, tabs.length]);
 
   const resolvedNewDisabled = newDisabled || atCapacity;
   const addTitle = atCapacity ? "标签栏已满，关闭一个信笺后再新建" : "新建文件";
@@ -9436,7 +10903,7 @@ function DocumentTabs({
   const contextTab = contextMenu ? tabs.find((tab) => tab.id === contextMenu.tabId) : null;
   const splitActionLabel = contextTab?.id === rightSplitTabId
     ? "取消向右分屏"
-    : (rightSplitTabId ? "替换右分屏" : "向右分屏");
+    : (rightSplitTabId || secondaryOccupied ? "替换右侧内容" : "向右分屏");
 
   return (
     <div className={tabsClassName} aria-label="打开的文件">
@@ -9531,6 +10998,23 @@ function DocumentTabs({
   );
 }
 
+function SecondaryDocumentTab({ tab, active = false, onActivate, onClose }) {
+  if (!tab) return null;
+  return (
+    <div className={active ? "secondary-document-tab is-active" : "secondary-document-tab"} role="tablist" aria-label="文档右分屏标签">
+      <button type="button" className="secondary-document-tab-main" role="tab" aria-selected={active} onClick={onActivate} title={tab.path || tab.title}>
+        <FileText size={15} aria-hidden="true" />
+        {tab.dirty ? <span className="document-tab-dot" aria-label="尚未保存" /> : null}
+        <strong>{tab.title || "未命名信笺"}</strong>
+        <img className="document-tab-split-mark" src={ICON_ASSETS.rightSplit} alt="" aria-hidden="true" />
+      </button>
+      <button type="button" className="secondary-document-tab-close" onClick={onClose} aria-label="取消右分屏" title="取消右分屏">
+        <PanelRightClose size={16} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
 function AppConfirmDialog({ dialog, onResolve }) {
   useEffect(() => {
     if (!dialog) {
@@ -9552,7 +11036,7 @@ function AppConfirmDialog({ dialog, onResolve }) {
 
   const Icon = dialog.icon || HelpCircle;
   const content = (
-    <div className="app-confirm-overlay" role="presentation" onMouseDown={() => onResolve(dialog.cancelValue)}>
+    <div className="app-confirm-overlay dialog-scrim" role="presentation" onMouseDown={() => onResolve(dialog.cancelValue)}>
       <section
         className={`app-confirm-dialog ${dialog.tone || "default"}`}
         role="dialog"
@@ -9626,7 +11110,7 @@ function AppPromptDialog({ dialog, onResolve }) {
 
   const Icon = dialog.icon || Pencil;
   const content = (
-    <div className="app-confirm-overlay" role="presentation" onMouseDown={() => onResolve(null)}>
+    <div className="app-confirm-overlay dialog-scrim" role="presentation" onMouseDown={() => onResolve(null)}>
       <form
         className="app-confirm-dialog app-prompt-dialog"
         role="dialog"
@@ -9673,6 +11157,398 @@ function AppPromptDialog({ dialog, onResolve }) {
   );
 
   return createPortal(content, window.document.body);
+}
+
+function WebSourceDialog({ dialog, onClose, onSubmit }) {
+  const urlRef = useRef(null);
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [excerpt, setExcerpt] = useState("");
+  const [titleTouched, setTitleTouched] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!dialog?.open) return undefined;
+    setUrl(dialog.source?.url || "https://");
+    setTitle(dialog.source?.title || "");
+    setExcerpt(dialog.source?.excerpt || dialog.source?.notes || "");
+    setTitleTouched(Boolean(dialog.source?.title));
+    setError("");
+    setBusy(false);
+    const frame = window.requestAnimationFrame(() => {
+      urlRef.current?.focus();
+      urlRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [dialog?.open, dialog?.source]);
+
+  useEffect(() => {
+    if (!dialog?.open) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        onClose?.();
+      }
+    };
+    window.document.addEventListener("keydown", handleKeyDown, true);
+    return () => window.document.removeEventListener("keydown", handleKeyDown, true);
+  }, [busy, dialog?.open, onClose]);
+
+  if (!dialog?.open) return null;
+
+  const parseUrl = () => {
+    let parsed;
+    try {
+      parsed = new URL(url.trim());
+    } catch {
+      throw new Error("请输入有效的网页地址");
+    }
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+      throw new Error("网页仅支持不含账号信息的 HTTP 或 HTTPS 地址");
+    }
+    return parsed;
+  };
+
+  const content = (
+    <div className="app-confirm-overlay dialog-scrim" role="presentation" onMouseDown={() => { if (!busy) onClose?.(); }}>
+      <form
+        className="app-confirm-dialog web-source-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="web-source-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setError("");
+          let parsed;
+          try {
+            parsed = parseUrl();
+            if (!title.trim()) throw new Error("请输入网页标题");
+          } catch (validationError) {
+            setError(validationError?.message || "网页信息无效");
+            return;
+          }
+          setBusy(true);
+          try {
+            await onSubmit?.({ url: parsed.toString(), title: title.trim(), excerpt });
+            onClose?.();
+          } catch (submitError) {
+            setError(submitError?.message || "网页资料保存失败");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <button type="button" className="app-confirm-close" disabled={busy} onClick={onClose} aria-label="关闭网页资料窗口" title="关闭">
+          <X size={17} />
+        </button>
+        <div className="app-confirm-icon" aria-hidden="true"><Globe2 size={24} /></div>
+        <div className="app-confirm-copy web-source-dialog-copy">
+          <span>资料区 · 网页</span>
+          <h2 id="web-source-dialog-title">{dialog.source ? "编辑网页" : "新增网页"}</h2>
+          <label className="app-prompt-field">
+            <span>网址</span>
+            <input
+              ref={urlRef}
+              type="url"
+              value={url}
+              maxLength={4096}
+              spellCheck={false}
+              onChange={(event) => setUrl(event.target.value)}
+              onBlur={() => {
+                if (titleTouched || title.trim()) return;
+                try { setTitle(parseUrl().hostname); } catch { /* Validation is shown on submit. */ }
+              }}
+            />
+          </label>
+          <label className="app-prompt-field">
+            <span>标题</span>
+            <input type="text" value={title} maxLength={500} onChange={(event) => { setTitle(event.target.value); setTitleTouched(true); }} />
+          </label>
+          <label className="app-prompt-field web-source-excerpt-field">
+            <span>摘录（可留空）</span>
+            <textarea value={excerpt} maxLength={200000} rows={6} onChange={(event) => setExcerpt(event.target.value)} />
+          </label>
+          {error ? <p className="web-source-dialog-error" role="alert">{error}</p> : null}
+        </div>
+        <footer className="app-confirm-actions">
+          <button type="button" className="ghost" disabled={busy} onClick={onClose}><span>取消</span></button>
+          <button type="submit" className="primary" disabled={busy}><Check size={15} /><span>{busy ? "保存中…" : "保存网页"}</span></button>
+        </footer>
+      </form>
+    </div>
+  );
+  return createPortal(content, window.document.body);
+}
+
+function WebCopyDialog({ dialog, sources = [], folders = [], placements = {}, onClose, onSubmit }) {
+  const dialogRef = useRef(null);
+  const openerRef = useRef(null);
+  const busyRef = useRef(false);
+  const [expandedFolders, setExpandedFolders] = useState(() => new Set());
+  const [selectedSourceIds, setSelectedSourceIds] = useState(() => new Set());
+  const [selectedEmptyFolderIds, setSelectedEmptyFolderIds] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  busyRef.current = busy;
+
+  const globalFolders = useMemo(() => folders.filter((folder) => folder.scopeKey === "global"), [folders]);
+  const globalFolderMap = useMemo(() => new Map(globalFolders.map((folder) => [folder.id, folder])), [globalFolders]);
+  const globalSources = useMemo(() => sources.filter((source) => (
+    source.type === "web" && (placements[source.id]?.scopeKey || "global") === "global"
+  )), [placements, sources]);
+  const childFoldersByParent = useMemo(() => {
+    const result = new Map();
+    globalFolders.forEach((folder) => {
+      const parentId = folder.parentId || "";
+      if (!result.has(parentId)) result.set(parentId, []);
+      result.get(parentId).push(folder);
+    });
+    result.forEach((items) => items.sort((left, right) => left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" })));
+    return result;
+  }, [globalFolders]);
+  const sourcesByFolder = useMemo(() => {
+    const result = new Map();
+    globalSources.forEach((source) => {
+      const folderId = placements[source.id]?.folderId || "";
+      if (!result.has(folderId)) result.set(folderId, []);
+      result.get(folderId).push(source);
+    });
+    result.forEach((items) => items.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))));
+    return result;
+  }, [globalSources, placements]);
+  const childrenFor = useCallback((parentId = "") => [
+    ...(childFoldersByParent.get(parentId) || []).map((folder) => ({ kind: "folder", value: folder })),
+    ...(sourcesByFolder.get(parentId) || []).map((source) => ({ kind: "source", value: source })),
+  ], [childFoldersByParent, sourcesByFolder]);
+  const rootNodes = useMemo(() => childrenFor(""), [childrenFor]);
+  const selectionUnitsByFolder = useMemo(() => {
+    const memo = new Map();
+    const collect = (folderId, visiting = new Set()) => {
+      if (memo.has(folderId)) return memo.get(folderId);
+      if (visiting.has(folderId)) return { sourceIds: new Set(), emptyFolderIds: new Set() };
+      const nextVisiting = new Set(visiting).add(folderId);
+      const directSources = sourcesByFolder.get(folderId) || [];
+      const childFolders = childFoldersByParent.get(folderId) || [];
+      const sourceIds = new Set(directSources.map((source) => source.id));
+      const emptyFolderIds = new Set();
+      childFolders.forEach((folder) => {
+        const childUnits = collect(folder.id, nextVisiting);
+        childUnits.sourceIds.forEach((id) => sourceIds.add(id));
+        childUnits.emptyFolderIds.forEach((id) => emptyFolderIds.add(id));
+      });
+      if (!directSources.length && !childFolders.length) emptyFolderIds.add(folderId);
+      const units = { sourceIds, emptyFolderIds };
+      memo.set(folderId, units);
+      return units;
+    };
+    globalFolders.forEach((folder) => collect(folder.id));
+    return memo;
+  }, [childFoldersByParent, globalFolders, sourcesByFolder]);
+
+  useEffect(() => {
+    if (!dialog?.open) return undefined;
+    setExpandedFolders(new Set(globalFolders.map((folder) => folder.id)));
+    setSelectedSourceIds(new Set());
+    setSelectedEmptyFolderIds(new Set());
+    setBusy(false);
+    setError("");
+    openerRef.current = window.document.activeElement;
+    const frame = window.requestAnimationFrame(() => dialogRef.current?.querySelector('[role="treeitem"]')?.focus());
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape" && !busyRef.current) {
+        event.preventDefault();
+        onClose?.();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll('button:not(:disabled), [tabindex="0"]')];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && window.document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && window.document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.document.removeEventListener("keydown", handleKeyDown, true);
+      openerRef.current?.focus?.();
+    };
+  }, [dialog?.open, onClose]);
+
+  useEffect(() => {
+    if (!dialog?.open) return;
+    const validSourceIds = new Set(globalSources.map((source) => source.id));
+    const validFolderIds = new Set(globalFolders.map((folder) => folder.id));
+    setSelectedSourceIds((current) => {
+      const next = new Set([...current].filter((id) => validSourceIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+    setSelectedEmptyFolderIds((current) => {
+      const next = new Set([...current].filter((id) => validFolderIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [dialog?.open, globalFolders, globalSources]);
+
+  if (!dialog?.open) return null;
+
+  const folderSelectionState = (folderId) => {
+    const units = selectionUnitsByFolder.get(folderId) || { sourceIds: new Set(), emptyFolderIds: new Set([folderId]) };
+    const total = units.sourceIds.size + units.emptyFolderIds.size;
+    const selected = [...units.sourceIds].filter((id) => selectedSourceIds.has(id)).length
+      + [...units.emptyFolderIds].filter((id) => selectedEmptyFolderIds.has(id)).length;
+    return { checked: total > 0 && selected === total, mixed: selected > 0 && selected < total, units };
+  };
+  const toggleFolderSelection = (folderId) => {
+    const state = folderSelectionState(folderId);
+    const nextChecked = !state.checked;
+    setSelectedSourceIds((current) => {
+      const next = new Set(current);
+      state.units.sourceIds.forEach((id) => nextChecked ? next.add(id) : next.delete(id));
+      return next;
+    });
+    setSelectedEmptyFolderIds((current) => {
+      const next = new Set(current);
+      state.units.emptyFolderIds.forEach((id) => nextChecked ? next.add(id) : next.delete(id));
+      return next;
+    });
+  };
+  const toggleSourceSelection = (sourceId) => setSelectedSourceIds((current) => {
+    const next = new Set(current);
+    if (next.has(sourceId)) next.delete(sourceId); else next.add(sourceId);
+    return next;
+  });
+  const selectedFolderPathIds = new Set(selectedEmptyFolderIds);
+  const includeAncestors = (folderId) => {
+    let currentId = folderId;
+    const visiting = new Set();
+    while (currentId && !visiting.has(currentId)) {
+      visiting.add(currentId);
+      selectedFolderPathIds.add(currentId);
+      currentId = globalFolderMap.get(currentId)?.parentId || "";
+    }
+  };
+  selectedEmptyFolderIds.forEach(includeAncestors);
+  selectedSourceIds.forEach((sourceId) => includeAncestors(placements[sourceId]?.folderId || ""));
+  const selectedCount = selectedSourceIds.size + selectedEmptyFolderIds.size;
+  const nodeKey = (node) => `${node.kind}:${node.value.id}`;
+  const renderCopyRow = ({ entry: node, depth, expanded }) => {
+    const folder = node.kind === "folder";
+    const folderState = folder ? folderSelectionState(node.value.id) : null;
+    const checked = folder ? folderState.checked : selectedSourceIds.has(node.value.id);
+    const mixed = folder ? folderState.mixed : false;
+    const toggle = () => folder ? toggleFolderSelection(node.value.id) : toggleSourceSelection(node.value.id);
+    return (
+      <div className={`web-copy-tree-row${folder ? " is-folder" : " is-source"}`}>
+        {folder ? (
+          <button
+            type="button"
+            className="web-copy-tree-disclosure"
+            tabIndex={-1}
+            onClick={() => setExpandedFolders((current) => {
+              const next = new Set(current);
+              if (next.has(node.value.id)) next.delete(node.value.id); else next.add(node.value.id);
+              return next;
+            })}
+            aria-label={expanded ? `折叠 ${node.value.name}` : `展开 ${node.value.name}`}
+          >{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>
+        ) : <span className="web-copy-tree-disclosure-spacer" aria-hidden="true" />}
+        <TreeItemButton
+          className="web-copy-tree-item"
+          branch={folder}
+          expanded={expanded}
+          depth={depth}
+          aria-checked={mixed ? "mixed" : checked}
+          onActivate={toggle}
+          onToggle={() => setExpandedFolders((current) => {
+            const next = new Set(current);
+            if (next.has(node.value.id)) next.delete(node.value.id); else next.add(node.value.id);
+            return next;
+          })}
+          onKeyDown={(event) => {
+            if (event.key === " ") {
+              event.preventDefault();
+              toggle();
+            }
+          }}
+        >
+          <span className={`web-copy-checkbox${checked || mixed ? " is-checked" : ""}${mixed ? " is-mixed" : ""}`} aria-hidden="true">
+            {mixed ? <Minus size={12} /> : checked ? <Check size={12} /> : null}
+          </span>
+          {folder ? <FolderOpen size={16} aria-hidden="true" /> : <Globe2 size={15} aria-hidden="true" />}
+          <span className="web-copy-tree-label"><strong>{folder ? node.value.name : (node.value.title || node.value.url)}</strong>{folder ? null : <small>{node.value.url}</small>}</span>
+        </TreeItemButton>
+      </div>
+    );
+  };
+
+  return createPortal(
+    <div className="web-copy-overlay dialog-scrim" role="presentation" onMouseDown={() => { if (!busy) onClose?.(); }}>
+      <form
+        ref={dialogRef}
+        className="web-copy-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="web-copy-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!selectedCount || busy) return;
+          setBusy(true);
+          setError("");
+          try {
+            await onSubmit?.({ folderIds: [...selectedEmptyFolderIds], sourceIds: [...selectedSourceIds] });
+            onClose?.();
+          } catch (submitError) {
+            setError(submitError?.message || "公区内容复制失败");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <header>
+          <span className="web-copy-dialog-icon" aria-hidden="true"><Copy size={20} /></span>
+          <div><small>工作区私区</small><h2 id="web-copy-dialog-title">从公区复制</h2></div>
+          <button type="button" disabled={busy} onClick={onClose} aria-label="关闭公区复制窗口"><X size={17} /></button>
+        </header>
+        <p className="web-copy-dialog-intro">选择要复制的文件夹或网址；目录层级会保留，私区已有的相同网址会跳过。</p>
+        <div className="web-copy-tree-scroll">
+          {rootNodes.length ? (
+            <div className="web-copy-tree" role="tree" aria-label="公区网页选择树">
+              <HierarchicalTreeRows
+                entries={rootNodes}
+                getKey={nodeKey}
+                isBranch={(node) => node.kind === "folder"}
+                isExpanded={(node) => node.kind === "folder" && expandedFolders.has(node.value.id)}
+                getChildren={(node) => node.kind === "folder" ? childrenFor(node.value.id) : []}
+                getGroupLabel={({ entry }) => `${entry.value.name} 的内容`}
+                wrapperClassName="web-copy-tree-branch"
+                childrenClassName="web-copy-tree-children"
+                renderRow={renderCopyRow}
+                renderBranchState={(status) => status === "empty" ? <p className="web-copy-tree-empty">空文件夹</p> : null}
+              />
+            </div>
+          ) : <p className="web-copy-dialog-empty">公区暂无可复制内容。</p>}
+        </div>
+        {error ? <p className="web-copy-dialog-error" role="alert">{error}</p> : null}
+        <footer>
+          <span>已选 {selectedSourceIds.size} 个网址 · 涉及 {selectedFolderPathIds.size} 个文件夹</span>
+          <div>
+            <button type="button" className="ghost" disabled={busy} onClick={onClose}>取消</button>
+            <button type="submit" className="primary" disabled={!selectedCount || busy}><Copy size={14} />{busy ? "复制中…" : "复制到私区"}</button>
+          </div>
+        </footer>
+      </form>
+    </div>,
+    window.document.body,
+  );
 }
 
 function LinkDialog({ dialog, onClose, onSubmit, onRemove }) {
@@ -9723,7 +11599,7 @@ function LinkDialog({ dialog, onClose, onSubmit, onRemove }) {
   };
 
   return createPortal(
-    <div className="app-confirm-overlay" role="presentation" onMouseDown={onClose}>
+    <div className="app-confirm-overlay dialog-scrim" role="presentation" onMouseDown={onClose}>
       <form className="app-confirm-dialog app-link-dialog" role="dialog" aria-modal="true" aria-labelledby="app-link-title" onMouseDown={(event) => event.stopPropagation()} onSubmit={submit}>
         <button type="button" className="app-confirm-close" onClick={onClose} aria-label="关闭链接窗口" title="关闭">
           <X size={17} />
@@ -9764,6 +11640,107 @@ function LinkDialog({ dialog, onClose, onSubmit, onRemove }) {
   );
 }
 
+function InternalLinkPicker({ picker, documents = [], onSelect, onClose }) {
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const inputRef = useRef(null);
+  const resultRefs = useRef([]);
+  const matchingDocuments = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase("en-US");
+    const ordered = [...documents].sort((left, right) => String(left.relativePath || left.path || left.title || "")
+      .localeCompare(String(right.relativePath || right.path || right.title || ""), "zh-CN"));
+    if (!needle) return ordered;
+    return ordered.filter((item) => `${item.title || ""}\n${item.relativePath || item.path || ""}`
+      .toLocaleLowerCase("en-US").includes(needle));
+  }, [documents, query]);
+  const filtered = matchingDocuments.slice(0, 500);
+
+  useEffect(() => {
+    if (!picker) return undefined;
+    setQuery("");
+    setActiveIndex(0);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+    return undefined;
+  }, [onClose, picker]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query, filtered.length]);
+
+  useEffect(() => {
+    resultRefs.current[activeIndex]?.scrollIntoView?.({ block: "nearest" });
+  }, [activeIndex]);
+
+  const handleKeyDown = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose?.();
+      return;
+    }
+    if (event.key === "ArrowDown" && filtered.length) {
+      event.preventDefault();
+      setActiveIndex((index) => (index + 1) % filtered.length);
+      return;
+    }
+    if (event.key === "ArrowUp" && filtered.length) {
+      event.preventDefault();
+      setActiveIndex((index) => (index - 1 + filtered.length) % filtered.length);
+      return;
+    }
+    if (event.key === "Enter" && filtered[activeIndex]) {
+      event.preventDefault();
+      onSelect?.(filtered[activeIndex]);
+    }
+  };
+
+  if (!picker) return null;
+  return createPortal(
+    <div className="internal-link-picker-overlay dialog-scrim" role="presentation" onPointerDown={(event) => event.target === event.currentTarget && onClose?.()}>
+      <section className="internal-link-picker" role="dialog" aria-modal="true" aria-label="插入关联信笺" onKeyDown={handleKeyDown}>
+        <header className="internal-link-picker-heading">
+          <span><Link2 size={16} aria-hidden="true" /><strong>插入关联信笺</strong><small>当前工作区及全部子文件夹</small></span>
+          <button type="button" onClick={onClose} aria-label="关闭关联信笺选择器" title="关闭（Esc）"><X size={16} aria-hidden="true" /></button>
+        </header>
+        <label className="internal-link-picker-input">
+          <Search size={19} aria-hidden="true" />
+          <input
+            ref={inputRef}
+            role="combobox"
+            aria-expanded={Boolean(filtered.length)}
+            aria-controls="internal-link-picker-results"
+            aria-activedescendant={filtered[activeIndex] ? `internal-link-picker-result-${activeIndex}` : undefined}
+            value={query}
+            placeholder="搜索当前工作区信笺"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <small>{matchingDocuments.length > filtered.length ? `显示 ${filtered.length} / ${matchingDocuments.length}` : `${filtered.length} 个结果`}</small>
+        </label>
+        <div id="internal-link-picker-results" className="internal-link-picker-results" role="listbox" aria-live="polite">
+          {filtered.length ? filtered.map((item, index) => (
+            <button
+              ref={(element) => { resultRefs.current[index] = element; }}
+              id={`internal-link-picker-result-${index}`}
+              key={`${item.documentId}-${item.path}`}
+              type="button"
+              role="option"
+              aria-selected={index === activeIndex}
+              className={index === activeIndex ? "active" : ""}
+              onPointerMove={() => setActiveIndex(index)}
+              onClick={() => onSelect?.(item)}
+              title={item.relativePath || item.path || item.title}
+            >
+              <span className="internal-link-picker-result-icon"><NotebookPen size={16} aria-hidden="true" /></span>
+              <span className="internal-link-picker-result-copy"><strong>{item.title || "未命名信笺"}</strong><small>{item.relativePath || item.path}</small></span>
+            </button>
+          )) : <p>{documents.length ? "没有匹配的信笺" : "当前工作区还没有可关联的其他信笺"}</p>}
+        </div>
+        <footer className="internal-link-picker-footer"><span>↑↓ 选择 · Enter 插入 · Esc 关闭</span><span>范围：当前工作区及全部子文件夹</span></footer>
+      </section>
+    </div>,
+    window.document.body,
+  );
+}
+
 function LiveStatusMetric({ editor, field, label }) {
   const value = useEditorState({
     editor,
@@ -9778,10 +11755,19 @@ function LiveStatusMetric({ editor, field, label }) {
   );
 }
 
-function StatusBar({ editor, updatedAt, dirty, version, cacheSummary, updateState, onRunUpdate, onClearCache }) {
+function StatusBar({ editor, updatedAt, dirty, version, cacheSummary, updateState, onRunUpdate, onClearCache, onOpenReleaseNotes, persistenceState = "workspace", externalVersion = false, readOnly = false }) {
   const cacheBytes = cacheSummary?.bytes || 0;
   const cacheCount = cacheSummary?.count || 0;
   const updateMeta = getUpdateStatusMeta(updateState);
+  const persistenceLabel = readOnly
+    ? "未来格式 · 只读"
+    : (externalVersion || persistenceState === "external")
+      ? "检测到外部版本"
+      : persistenceState === "recovery"
+        ? "已写入恢复缓存"
+        : persistenceState === "workspace"
+          ? "已写入工作区"
+          : "等待写入恢复缓存";
   return (
     <footer className="statusbar">
       <div className="statusbar-counts">
@@ -9792,11 +11778,9 @@ function StatusBar({ editor, updatedAt, dirty, version, cacheSummary, updateStat
         <LiveStatusMetric editor={editor} field="pages" label="页" />
         <i />
         <LiveStatusMetric editor={editor} field="images" label="图" />
-        <i />
-        <LiveStatusMetric editor={editor} field="quotes" label="引用" />
       </div>
-      <div className={dirty ? "statusbar-save dirty" : "statusbar-save saved"}>
-        <span>自动保存于 {formatClock(updatedAt)}{dirty ? " · 未保存" : ""}</span>
+      <div className={externalVersion ? "statusbar-save external" : (dirty ? "statusbar-save dirty" : "statusbar-save saved")}>
+        <span>{persistenceLabel} · {formatClock(updatedAt)}</span>
         <i />
         <div className="statusbar-cache" title={`已缓存 ${cacheCount} 篇信笺的编辑器结构，用于加速已打开信笺切换`}>
           <span>缓存 {formatCacheBytes(cacheBytes)}</span>
@@ -9819,14 +11803,24 @@ function StatusBar({ editor, updatedAt, dirty, version, cacheSummary, updateStat
         </button>
         <i />
         {version ? (
-          <span className="status-version-label">
+          <button
+            type="button"
+            className="status-version-button"
+            onClick={onOpenReleaseNotes}
+            aria-label={'查看版本 ' + version + ' 的更新历史'}
+            title="查看更新历史"
+          >
             <span className="status-version-v">V</span>
             <span className="status-version-number">{version}</span>
-          </span>
+          </button>
         ) : ""}
       </div>
     </footer>
   );
+}
+
+function normalizeWorkspaceCitationSources(sources) {
+  return normalizeCitationSources(Array.isArray(sources) ? sources : []);
 }
 
 function createTabId() {
@@ -9904,12 +11898,16 @@ function summarizeSessionTabs(tabs = []) {
       const logicalPath = typeof tab?.path === "string" ? tab.path : "";
       const recoveryPath = typeof tab?.recoveryPath === "string" ? tab.recoveryPath : "";
       return {
-        path: logicalPath || recoveryPath,
+        path: logicalPath,
+        recoveryPath,
+        recoveryId: typeof tab?.recoveryId === "string" ? tab.recoveryId : "",
+        recoverySourcePath: typeof tab?.recoverySourcePath === "string" ? tab.recoverySourcePath : logicalPath,
+        recoveryBaseRevision: normalizeSessionDiskRevision(tab?.recoveryBaseRevision || tab?.diskRevision),
         temporary: Boolean(tab?.temporary || (!logicalPath && recoveryPath)),
       };
     })
     .filter((tab) => {
-      const pathKey = String(tab.path || "").replace(/\//g, "\\").toLocaleLowerCase("en-US");
+      const pathKey = String(tab.path || tab.recoveryPath || "").replace(/\//g, "\\").toLocaleLowerCase("en-US");
       if (!pathKey || seen.has(pathKey)) {
         return false;
       }
@@ -9929,9 +11927,48 @@ function createDocumentTab(document, path = "", dirty = false, options = {}) {
     scrollState: { top: 0, left: 0 },
     recoveryPath: options.recoveryPath || "",
     recoveryId: options.recoveryId || "",
+    recoverySourcePath: options.recoverySourcePath || "",
+    recoveryBaseRevision: normalizeSessionDiskRevision(options.recoveryBaseRevision),
     recoveredTemporary: Boolean(options.recoveredTemporary),
+    diskRevision: options.diskRevision || null,
+    readOnly: Boolean(options.readOnly || document?._readOnlyFutureSchema),
+    externalChanged: Boolean(options.externalChanged),
     dirty,
   };
+}
+
+function documentTabResourceKey(tab) {
+  const path = String(tab?.path || "").trim();
+  if (path) return `path:${path.replace(/\//g, "\\").toLocaleLowerCase("en-US")}`;
+  const recoveryId = String(tab?.recoveryId || "").trim();
+  if (recoveryId) return `recovery:${recoveryId}`;
+  return tab?.id ? `temporary:${tab.id}` : "";
+}
+
+function workspaceDocumentView(tab) {
+  return tab?.id ? { tabId: tab.id, resourceKey: documentTabResourceKey(tab) } : null;
+}
+
+function summarizeWorkspaceGroups(groups, tabs = []) {
+  const tabById = new Map(tabs.map((tab) => [tab.id, tab]));
+  return createWorkspaceGroupsSnapshot(groups, {
+    getDocumentResourceKey: (tabId) => documentTabResourceKey(tabById.get(tabId)),
+  });
+}
+
+function activeSecondaryDocumentTabId(groups) {
+  const view = getActiveWorkspaceView(groups, WORKSPACE_GROUP_ID.SECONDARY);
+  return view?.kind === WORKSPACE_VIEW_KIND.DOCUMENT ? view.tabId : "";
+}
+
+function findKnowledgeNodePosition(editor, typeName, attributeName = "", attributeValue = "") {
+  let found = null;
+  editor?.state?.doc?.descendants?.((node, position) => {
+    if (found !== null || node.type.name !== typeName) return;
+    if (attributeName && node.attrs?.[attributeName] !== attributeValue) return;
+    found = position;
+  });
+  return found;
 }
 
 function recoveryTabId(tab) {
@@ -9940,6 +11977,7 @@ function recoveryTabId(tab) {
 
 function paperCanvasViewModel(document = {}) {
   return {
+    documentId: normalizeDocumentId(document.documentId),
     title: normalizeDocumentTitle(document.title),
     author: document.author || "",
     displayDate: document.displayDate || "",
@@ -9970,6 +12008,53 @@ function restoreCanvasScrollState(canvas, scrollState) {
 
 function cleanupImageExportStage() {
   window.document.getElementById(IMAGE_EXPORT_STAGE_ID)?.remove();
+}
+
+function applyPrintPaperBackground(sheet) {
+  if (!sheet) {
+    return () => {};
+  }
+  const rootStyle = window.document.documentElement.style;
+  const computedStyle = window.getComputedStyle(sheet);
+  const sheetStyle = sheet.style;
+  const previousMinimumHeight = {
+    value: sheetStyle.getPropertyValue("--print-sheet-min-height"),
+    priority: sheetStyle.getPropertyPriority("--print-sheet-min-height"),
+  };
+  const variables = [
+    ["--print-paper-repeat-bg", "--paper-repeat-bg"],
+    ["--print-paper-base", "--paper-base"],
+  ];
+  const previous = variables.map(([target]) => ({
+    target,
+    value: rootStyle.getPropertyValue(target),
+    priority: rootStyle.getPropertyPriority(target),
+  }));
+  variables.forEach(([target, source]) => {
+    const value = sheet.style.getPropertyValue(source) || computedStyle.getPropertyValue(source);
+    if (value) {
+      rootStyle.setProperty(target, value.trim());
+    }
+  });
+  const sheetWidth = sheet.getBoundingClientRect().width || 794;
+  const pageHeight = sheetWidth * (297 / 210);
+  const segments = getFlowExportSegments(sheet);
+  const pageCount = Math.max(1, segments.reduce(
+    (total, segment) => total + Math.max(1, Math.ceil((segment.bottom - segment.top) / pageHeight)),
+    0,
+  ));
+  sheetStyle.setProperty("--print-sheet-min-height", `${Math.ceil(pageCount * pageHeight)}px`);
+  return () => {
+    previous.forEach(({ target, value, priority }) => {
+      if (value) rootStyle.setProperty(target, value, priority);
+      else rootStyle.removeProperty(target);
+    });
+    if (previousMinimumHeight.value) {
+      sheetStyle.setProperty("--print-sheet-min-height", previousMinimumHeight.value, previousMinimumHeight.priority);
+    } else {
+      sheetStyle.removeProperty("--print-sheet-min-height");
+    }
+  };
 }
 
 function syncClonedFormValues(source, clone) {
@@ -10050,11 +12135,6 @@ function prepareImageExportRects() {
   }
 
   const sheetRect = sheet.getBoundingClientRect();
-  const segments = getFlowExportSegments(sheet);
-  if (!segments.length) {
-    return [];
-  }
-
   const stage = window.document.createElement("div");
   stage.id = IMAGE_EXPORT_STAGE_ID;
   stage.className = "image-export-stage";
@@ -10070,6 +12150,11 @@ function prepareImageExportRects() {
   stage.append(clone);
 
   const cloneRect = clone.getBoundingClientRect();
+  const segments = getFlowExportSegments(clone);
+  if (!segments.length) {
+    cleanupImageExportStage();
+    return [];
+  }
   const maximumCaptureHeight = 8000;
   return segments.flatMap((segment) => {
     const pieces = [];
@@ -10103,9 +12188,28 @@ export default function App() {
     return [tab];
   });
   const [activeTabId, setActiveTabId] = useState(() => openTabs[0]?.id || "");
-  const [rightSplitTabId, setRightSplitTabId] = useState("");
+  const [workspaceGroups, setWorkspaceGroups] = useState(() => createWorkspaceGroupsState(
+    workspaceDocumentView(openTabs[0]),
+    { splitRatio: Number(window.localStorage.getItem("paperwriter.workspaceSplitRatio")) || 0.5 },
+  ));
+  const rightSplitTabId = activeSecondaryDocumentTabId(workspaceGroups);
+  const setRightSplitTabId = useCallback((value) => {
+    setWorkspaceGroups((previous) => {
+      const activeSecondary = getActiveWorkspaceView(previous, WORKSPACE_GROUP_ID.SECONDARY);
+      const currentTabId = activeSecondary?.kind === WORKSPACE_VIEW_KIND.DOCUMENT ? activeSecondary.tabId : "";
+      const nextTabId = typeof value === "function" ? value(currentTabId) : value;
+      if (nextTabId) {
+        return openWorkspaceDocument(previous, WORKSPACE_GROUP_ID.SECONDARY, { tabId: nextTabId });
+      }
+      if (activeSecondary?.kind === WORKSPACE_VIEW_KIND.DOCUMENT) {
+        return moveWorkspaceDocument(previous, activeSecondary.viewId, WORKSPACE_GROUP_ID.PRIMARY, previous.primary.views.length);
+      }
+      return previous;
+    });
+  }, []);
   const [activePane, setActivePane] = useState("main");
   const [folderState, setFolderState] = useState(() => ({
+    rootPath: initialSession.folderPath || "",
     path: initialSession.folderPath || "",
     parentPath: "",
     folders: [],
@@ -10113,28 +12217,95 @@ export default function App() {
     entries: [],
     loading: Boolean(initialSession.folderPath),
   }));
+  const writingWorkspaceRoot = folderState.rootPath || folderState.path;
   const [expandedFolders, setExpandedFolders] = useState({});
   const [leftSidebarMode, setLeftSidebarMode] = useState("folder");
+  const [structureMode, setStructureMode] = useState("outline");
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false);
-  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const [searchMode, setSearchMode] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
+  const [documentReplaceVisible, setDocumentReplaceVisible] = useState(false);
+  const [documentReplaceValue, setDocumentReplaceValue] = useState("");
+  const [documentSearchState, setDocumentSearchState] = useState(() => searchDocumentText({ type: "doc", content: [] }, ""));
+  const [workspaceSearchState, setWorkspaceSearchState] = useState({ loading: false, results: [], error: "", requestId: "" });
+  const setDocumentPaneRatio = useCallback((value) => {
+    setWorkspaceGroups((previous) => ({ ...previous, splitRatio: normalizeWorkspaceSplitRatio(typeof value === "function" ? value(previous.splitRatio) : value) }));
+  }, []);
+  const [workSurfaceWidth, setWorkSurfaceWidth] = useState(0);
+  const [researchRoot, setResearchRoot] = useState(null);
+  const [researchCurrentRelativePath, setResearchCurrentRelativePath] = useState("");
+  const [researchEntries, setResearchEntries] = useState([]);
+  const [researchExpandedFolders, setResearchExpandedFolders] = useState({});
+  const [researchTreeLoading, setResearchTreeLoading] = useState(false);
+  const [researchTreeError, setResearchTreeError] = useState("");
+  const [researchBusyKeys, setResearchBusyKeys] = useState([]);
+  const researchRootRef = useRef(null);
+  const researchCurrentRelativePathRef = useRef("");
+  const [librarySources, setLibrarySources] = useState([]);
+  const [librarySourcesReady, setLibrarySourcesReady] = useState(false);
+  const [webTreeState, setWebTreeState] = useState(() => ({ folders: [], placements: {}, diskRevision: null, warnings: [], readOnly: false }));
+  const [webWorkspaceMode, setWebWorkspaceMode] = useState(() => {
+    try { return window.localStorage.getItem("paperwriter.research.web-scope-mode") === "workspace" ? "workspace" : "global"; } catch { return "global"; }
+  });
+  const [writingWorkspaceIdentity, setWritingWorkspaceIdentity] = useState(null);
+  const webWorkspaceConnected = webWorkspaceMode === "workspace" && Boolean(writingWorkspaceIdentity?.workspaceId);
+  const webWorkspaceIdentityPending = webWorkspaceMode === "workspace" && Boolean(writingWorkspaceRoot) && !writingWorkspaceIdentity?.workspaceId;
+  const webScopeKey = webWorkspaceConnected ? `workspace:${writingWorkspaceIdentity.workspaceId}` : "global";
+  const [activeLibraryItem, setActiveLibraryItem] = useState(null);
+  const [researchItemsByViewId, setResearchItemsByViewId] = useState({});
+  const librarySourcesRef = useRef(librarySources);
+  const researchItemsByViewIdRef = useRef(researchItemsByViewId);
+  librarySourcesRef.current = librarySources;
+  researchItemsByViewIdRef.current = researchItemsByViewId;
+  const [activeResearchLoading, setActiveResearchLoading] = useState(false);
+  const [activeResearchError, setActiveResearchError] = useState("");
+  const [workspaceCitationSources, setWorkspaceCitationSources] = useState([]);
+  const [citationLibraryLoading, setCitationLibraryLoading] = useState(false);
+  const [pendingCitationPage, setPendingCitationPage] = useState("");
+  const [workspaceRelationships, setWorkspaceRelationships] = useState({ documents: [], links: [], backlinks: [], duplicates: [] });
+  const workspaceRelationshipRequestRef = useRef(0);
+  const [internalLinkPicker, setInternalLinkPicker] = useState(null);
+  const [citationPicker, setCitationPicker] = useState(null);
+  const [footnoteDialog, setFootnoteDialog] = useState({ open: false, footnote: null, insertTarget: null });
+  const [citationSourceDialog, setCitationSourceDialog] = useState({ open: false, source: null, insertTarget: null, citationPage: "", returnToPicker: false });
+  const [knowledgeReferencePopover, setKnowledgeReferencePopover] = useState(null);
+  const [immersiveMode, setImmersiveMode] = useState(false);
+  const [persistenceState, setPersistenceState] = useState("workspace");
+  const [externalVersionDetected, setExternalVersionDetected] = useState(false);
+  const [applyingAiBlockIndex, setApplyingAiBlockIndex] = useState(-1);
+  const [manualFallbackAiBlockIndexes, setManualFallbackAiBlockIndexes] = useState([]);
+  const [manualAiApply, setManualAiApply] = useState(null);
+  const [aiApplyPreview, setAiApplyPreview] = useState(null);
+  const [settingsDialog, setSettingsDialog] = useState({ open: false, section: "", targetTabId: "" });
+  const [tabTemplateDialog, setTabTemplateDialog] = useState({ open: false, targetTabId: "" });
   const [helpOpen, setHelpOpen] = useState(false);
+  const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [status, setStatus] = useState(null);
   const [printMode, setPrintMode] = useState(false);
   const [imageExportMode, setImageExportMode] = useState(false);
-  const [tabCapacityFull, setTabCapacityFull] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [promptDialog, setPromptDialog] = useState(null);
+  const [webSourceDialog, setWebSourceDialog] = useState({ open: false, source: null, folderId: "", scopeKey: "global" });
+  const [webCopyDialog, setWebCopyDialog] = useState({ open: false });
   const [linkDialog, setLinkDialog] = useState(null);
   const [commentPanel, setCommentPanel] = useState(null);
   const [updateState, setUpdateState] = useState({ status: "idle", message: "尚未检查更新" });
+  const appVersion = updateState?.version || CURRENT_RELEASE_VERSION;
   const [aiConfig, setAiConfig] = useState(DEFAULT_AI_CONFIG);
   const [aiSelectedProvider, setAiSelectedProvider] = useState(DEFAULT_AI_CONFIG.activeProvider);
-  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [aiModeChooserOpen, setAiModeChooserOpen] = useState(false);
   const [aiModeKind, setAiModeKind] = useState("none");
+  const [aiPageTransition, setAiPageTransition] = useState("");
   const aiMode = aiModeKind !== "none";
   const aiOptimizeMode = aiModeKind === "optimize";
   const aiChatMode = aiModeKind === "chat";
+  useEffect(() => {
+    if (!aiPageTransition) return undefined;
+    const timer = window.setTimeout(() => setAiPageTransition(""), 560);
+    return () => window.clearTimeout(timer);
+  }, [aiPageTransition]);
   const activeAiState = useMemo(() => normalizeAiState(documentState.aiState), [documentState.aiState]);
   const activeOptimizeState = activeAiState.optimize;
   const activeChatState = activeAiState.chat;
@@ -10148,7 +12319,28 @@ export default function App() {
   const aiChatInput = activeChatState.input;
   const aiChatSelections = activeChatState.selectedTexts;
   const aiChatCodexImageMode = activeChatState.codexImageMode;
+  useEffect(() => {
+    let canceled = false;
+    if (!writingWorkspaceRoot) {
+      setWritingWorkspaceIdentity(null);
+      return undefined;
+    }
+    setWritingWorkspaceIdentity(null);
+    void bridge.getWorkspaceIdentity?.(writingWorkspaceRoot).then((identity) => {
+      if (canceled || !identity?.workspaceId) return;
+      setWritingWorkspaceIdentity({
+        workspaceId: String(identity.workspaceId),
+        workspaceName: String(identity.workspaceName || displayNameFromPath(writingWorkspaceRoot) || "当前工作区"),
+      });
+    }).catch(() => {});
+    return () => { canceled = true; };
+  }, [writingWorkspaceRoot]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem("paperwriter.research.web-scope-mode", webWorkspaceMode); } catch {}
+  }, [webWorkspaceMode]);
   const applyingRef = useRef(false);
+  const aiApplyInFlightRef = useRef(false);
   const readyRef = useRef(false);
   const editorSelectionRef = useRef(null);
   const updateFlowRef = useRef({ active: false, handled: "" });
@@ -10159,11 +12351,14 @@ export default function App() {
   const activeDocumentKeyRef = useRef(documentRuntimeKey(currentPath, activeTabId));
   const mainCanvasRef = useRef(null);
   const rightCanvasRef = useRef(null);
+  const workSurfaceRef = useRef(null);
   const currentPathRef = useRef(currentPath);
   const dirtyRef = useRef(dirty);
   const dirtyTabIdsRef = useRef(new Set(openTabs.filter((tab) => tab.dirty).map((tab) => tab.id)));
   const liveUpdatedAtByTabRef = useRef(new Map());
   const liveRevisionByTabRef = useRef(new Map());
+  const diskRevisionByTabRef = useRef(new Map());
+  const lastEditAtByTabRef = useRef(new Map());
   const liveEditorSourceByTabRef = useRef(new Map());
   const documentStateRef = useRef(documentState);
   const updateAutoCheckedRef = useRef(false);
@@ -10175,6 +12370,13 @@ export default function App() {
   const rightSplitApplyRunRef = useRef(0);
   const rightSplitSelectionRef = useRef(null);
   const rightSplitTabIdRef = useRef("");
+  const workspaceGroupsRef = useRef(workspaceGroups);
+  const aiSecondaryPaneLayoutRef = useRef(null);
+  const immersiveSecondaryPaneLayoutRef = useRef(null);
+  const previousImmersiveModeRef = useRef(false);
+  const aiModeTriggerRef = useRef(null);
+  const settingsTriggerRef = useRef(null);
+  const tabTemplateReturnFocusRef = useRef(null);
   const aiRequestIdRef = useRef("");
   const aiPreviousSidebarsRef = useRef(null);
   const aiStartedAtRef = useRef(0);
@@ -10191,10 +12393,36 @@ export default function App() {
   const autosaveErrorAtRef = useRef(0);
   const tabClosePendingIdsRef = useRef(new Set());
   const sessionClosePendingRef = useRef(false);
+  const workspaceSearchRequestRef = useRef("");
+  const closeInternalLinkPicker = useCallback(() => setInternalLinkPicker(null), []);
+
+  useLayoutEffect(() => {
+    const surface = workSurfaceRef.current;
+    if (!surface) return undefined;
+    let frame = 0;
+    const measure = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const width = Math.max(0, Math.round(surface.getBoundingClientRect().width));
+        setWorkSurfaceWidth((current) => current === width ? current : width);
+      });
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(surface);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
 
   const recordTabMutation = useCallback((tabId, updatedAt = new Date().toISOString()) => {
     if (!tabId) return false;
     liveUpdatedAtByTabRef.current.set(tabId, updatedAt);
+    lastEditAtByTabRef.current.set(tabId, Date.now());
+    setPersistenceState("dirty");
     liveRevisionByTabRef.current.set(tabId, (liveRevisionByTabRef.current.get(tabId) || 0) + 1);
     const becameDirty = !dirtyTabIdsRef.current.has(tabId);
     dirtyTabIdsRef.current.add(tabId);
@@ -10252,7 +12480,8 @@ export default function App() {
       const { from, to } = activeEditor.state.selection;
       editorSelectionRef.current = { from, to };
     },
-    onUpdate: () => {
+    onUpdate: ({ transaction }) => {
+      if (transaction?.getMeta?.("paperKnowledgeDerived") || transaction?.getMeta?.("paperStructuredDerived")) return;
       if (applyingRef.current) return;
       const tabId = activeTabIdRef.current;
       liveEditorSourceByTabRef.current.set(tabId, "main");
@@ -10274,7 +12503,8 @@ export default function App() {
       rightSplitSelectionRef.current = { from, to };
     },
     onFocus: () => setActivePane("right"),
-    onUpdate: () => {
+    onUpdate: ({ transaction }) => {
+      if (transaction?.getMeta?.("paperKnowledgeDerived") || transaction?.getMeta?.("paperStructuredDerived")) return;
       if (rightSplitApplyingRef.current) return;
       const splitId = rightSplitTabIdRef.current;
       if (!splitId) return;
@@ -10282,6 +12512,10 @@ export default function App() {
       recordTabMutation(splitId);
     },
   }), [recordTabMutation, rightEditorExtensions]);
+  const activeSecondaryView = useMemo(
+    () => getActiveWorkspaceView(workspaceGroups, WORKSPACE_GROUP_ID.SECONDARY),
+    [workspaceGroups],
+  );
   const rightSplitTab = useMemo(() => openTabs.find((tab) => tab.id === rightSplitTabId) || null, [openTabs, rightSplitTabId]);
   const rightSplitDocument = useMemo(() => {
     if (!rightSplitTab || rightSplitTab.id === activeTabId) {
@@ -10294,16 +12528,119 @@ export default function App() {
 
   const rightSplitEditor = useEditor(rightEditorOptions);
 
+  const researchPaneFocused = !aiMode
+    && activePane === "right"
+    && activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH;
   const splitPaneActive = !aiMode && activePane === "right" && Boolean(rightSplitTabId && rightSplitDocument && rightSplitEditor);
-  const activeWorkEditor = splitPaneActive ? rightSplitEditor : editor;
-  const activeWorkDocument = splitPaneActive ? rightSplitDocument : documentState;
+  const activeWorkEditor = researchPaneFocused ? null : (splitPaneActive ? rightSplitEditor : editor);
+  const activeWorkDocument = researchPaneFocused ? null : (splitPaneActive ? rightSplitDocument : documentState);
+  const activeWorkPath = researchPaneFocused ? "" : (splitPaneActive ? (rightSplitTab?.path || "") : currentPath);
   const activeWorkSelectionRef = splitPaneActive ? rightSplitSelectionRef : editorSelectionRef;
-  const tabViewModels = useMemo(() => openTabs.map(({ id, path, title, dirty: tabDirty }) => ({ id, path, title, dirty: tabDirty })), [openTabs]);
+  const structureWorkEditor = activeWorkEditor || editor;
+  const structureWorkDocument = activeWorkDocument || documentState;
+  const structureWorkPath = activeWorkPath || currentPath;
+  const structureWorkTabId = splitPaneActive ? rightSplitTabId : activeTabId;
+  const workspaceRelationshipContextKey = `${writingWorkspaceRoot || ""}\n${structureWorkTabId || ""}\n${structureWorkPath || ""}\n${structureWorkDocument?.documentId || ""}`;
+  const workspaceRelationshipContextRef = useRef(workspaceRelationshipContextKey);
+  workspaceRelationshipContextRef.current = workspaceRelationshipContextKey;
+  const knowledgeReferences = useEditorState({
+    editor: structureWorkEditor,
+    selector: ({ editor: activeEditor }) => collectKnowledgeReferences(activeEditor),
+  }) || { links: [], citations: [], footnotes: [] };
+  const citationOrder = useMemo(() => [...new Set(knowledgeReferences.citations.map((citation) => citation.sourceId).filter(Boolean))], [knowledgeReferences.citations]);
+  const citationSourcesForDock = useMemo(() => {
+    const merged = new Map(((structureWorkDocument?.citationSources || [])).map((source) => [source.id, source]));
+    for (const source of workspaceCitationSources) merged.set(source.id, source);
+    return [...merged.values()];
+  }, [structureWorkDocument?.citationSources, workspaceCitationSources]);
+  const citationPickerSources = useMemo(() => {
+    const targetTab = citationPicker?.documentTabId
+      ? openTabs.find((tab) => tab.id === citationPicker.documentTabId)
+      : null;
+    const targetDocument = targetTab?.id === activeTabId ? documentState : targetTab?.document;
+    const merged = new Map((targetDocument?.citationSources || []).map((source) => [source.id, source]));
+    for (const source of workspaceCitationSources) merged.set(source.id, source);
+    return [...merged.values()];
+  }, [activeTabId, citationPicker?.documentTabId, documentState, openTabs, workspaceCitationSources]);
+  const visibleFootnotes = useMemo(() => {
+    const byId = new Map(((structureWorkDocument?.footnotes || [])).map((footnote) => [footnote.id, footnote]));
+    const seen = new Set();
+    return knowledgeReferences.footnotes.map((reference) => {
+      if (!reference.footnoteId || seen.has(reference.footnoteId)) return null;
+      seen.add(reference.footnoteId);
+      return byId.get(reference.footnoteId) || null;
+    }).filter(Boolean);
+  }, [structureWorkDocument?.footnotes, knowledgeReferences.footnotes]);
+  const primaryGroupTabs = useMemo(() => workspaceGroups.primary.views.map((view) => {
+    const tab = openTabs.find((candidate) => candidate.id === view.tabId);
+    const tabDocument = tab?.id === activeTabId ? documentState : tab?.document;
+    return tab ? {
+      viewId: view.viewId,
+      tabId: tab.id,
+      kind: WORKSPACE_VIEW_KIND.DOCUMENT,
+      title: tab.title,
+      path: tab.path,
+      dirty: tab.dirty,
+      letterTemplateId: getLetterTemplate(tabDocument, letterTemplates).id,
+    } : null;
+  }).filter(Boolean), [activeTabId, documentState.letterTemplateId, documentState.templateId, letterTemplates, openTabs, workspaceGroups.primary.views]);
+  const secondaryGroupTabs = useMemo(() => workspaceGroups.secondary.views.map((view) => {
+    if (view.kind === WORKSPACE_VIEW_KIND.DOCUMENT) {
+      const tab = openTabs.find((candidate) => candidate.id === view.tabId);
+      return tab ? {
+        viewId: view.viewId,
+        tabId: tab.id,
+        kind: WORKSPACE_VIEW_KIND.DOCUMENT,
+        title: tab.title,
+        path: tab.path,
+        dirty: tab.dirty,
+        letterTemplateId: getLetterTemplate(tab.document, letterTemplates).id,
+      } : null;
+    }
+    const item = researchItemsByViewId[view.viewId]
+      || (view.sourceId ? librarySources.find((source) => source.id === view.sourceId) : null)
+      || (activeSecondaryView?.viewId === view.viewId ? activeLibraryItem : null);
+    const title = item?.title || item?.name || item?.fileName || view.titleSnapshot || view.relativePath || "未命名资料";
+    const researchType = item?.type === "web"
+      ? "web"
+      : (/\.pdf$/i.test(view.relativePath || item?.name || "") ? "pdf" : "file");
+    const page = Number(view.viewState?.page) || 1;
+    return {
+      viewId: view.viewId,
+      kind: WORKSPACE_VIEW_KIND.RESEARCH,
+      researchType,
+      title,
+      path: view.relativePath || "",
+      metaLabel: researchType === "pdf" ? `PDF · ${page}` : ({
+        web: "网页",
+        markdown: "Markdown",
+        text: "文本",
+        table: "表格",
+        image: "图片",
+      }[researchType] || "资料"),
+    };
+  }).filter(Boolean), [activeLibraryItem, activeSecondaryView?.viewId, letterTemplates, librarySources, openTabs, researchItemsByViewId, workspaceGroups.secondary.views]);
+  useEffect(() => {
+    if (activeSecondaryView?.kind !== WORKSPACE_VIEW_KIND.RESEARCH) {
+      setPendingCitationPage("");
+      return;
+    }
+    const item = researchItemsByViewId[activeSecondaryView.viewId]
+      || (activeSecondaryView.sourceId ? librarySources.find((source) => source.id === activeSecondaryView.sourceId) : null)
+      || activeLibraryItem;
+    const isPdf = item?.type === "file" && /\.pdf$/i.test(activeSecondaryView.relativePath || item.relativePath || item.name || "");
+    setPendingCitationPage(isPdf ? String(activeSecondaryView.viewState?.page || 1) : "");
+  }, [activeLibraryItem, activeSecondaryView, librarySources, researchItemsByViewId]);
+  const activeTabReadOnly = Boolean(openTabs.find((tab) => tab.id === activeTabId)?.readOnly || documentState?._readOnlyFutureSchema);
+  const activeWorkReadOnly = splitPaneActive
+    ? Boolean(rightSplitTab?.readOnly || rightSplitDocument?._readOnlyFutureSchema)
+    : activeTabReadOnly;
   const mainCanvasDocument = useMemo(() => paperCanvasViewModel(documentState), [
     documentState.author,
     documentState.createdAt,
     documentState.customBackground,
     documentState.displayDate,
+    documentState.documentId,
     documentState.letterTemplateId,
     documentState.templateId,
     documentState.title,
@@ -10313,6 +12650,7 @@ export default function App() {
     rightSplitDocument?.createdAt,
     rightSplitDocument?.customBackground,
     rightSplitDocument?.displayDate,
+    rightSplitDocument?.documentId,
     rightSplitDocument?.letterTemplateId,
     rightSplitDocument?.templateId,
     rightSplitDocument?.title,
@@ -10320,6 +12658,16 @@ export default function App() {
   const documentCacheSummary = useMemo(() => summarizeDocumentCache(openTabs), [openTabs]);
   const availableAiProviders = useMemo(() => getTestedAiProviders(aiConfig), [aiConfig]);
   const aiHasUsableProvider = availableAiProviders.length > 0;
+  const aiApplyResolverLabel = useMemo(() => {
+    const assignment = aiConfig.taskModels?.applyResolver || {};
+    const assignedKey = assignment.providerId && assignment.modelId
+      ? createAiModelKey(assignment.providerId, assignment.modelId)
+      : aiConfig.activeModelKey;
+    const model = availableAiProviders.find((candidate) => candidate.id === assignedKey);
+    return model
+      ? `${model.providerLabel || model.label || "AI"} · ${model.modelName || model.model || "定位模型"}`
+      : "直接应用定位模型";
+  }, [aiConfig.activeModelKey, aiConfig.taskModels, availableAiProviders]);
   const effectiveAiProvider = useMemo(() => {
     if (availableAiProviders.some((provider) => provider.id === aiSelectedProvider)) {
       return aiSelectedProvider;
@@ -10330,7 +12678,16 @@ export default function App() {
     return availableAiProviders[0]?.id || aiConfig.activeModelKey;
   }, [aiConfig.activeModelKey, aiSelectedProvider, availableAiProviders]);
   const effectiveAiConfig = useMemo(() => getAiProviderRuntimeConfig(aiConfig, effectiveAiProvider), [aiConfig, effectiveAiProvider]);
+  const effectiveAiChoice = useMemo(
+    () => availableAiProviders.find((provider) => provider.id === effectiveAiProvider) || availableAiProviders[0] || null,
+    [availableAiProviders, effectiveAiProvider],
+  );
   const activeDocumentKey = useMemo(() => documentRuntimeKey(currentPath, activeTabId), [activeTabId, currentPath]);
+  useEffect(() => {
+    setManualFallbackAiBlockIndexes([]);
+    setManualAiApply(null);
+    setAiApplyPreview(null);
+  }, [activeDocumentKey, aiOutput]);
 
   const resolveConfirmDialog = useCallback((value) => {
     const resolver = confirmDialogResolverRef.current;
@@ -10349,6 +12706,46 @@ export default function App() {
       ...options,
     });
   }), []);
+
+  const openSettings = useCallback(() => {
+    setAiModeChooserOpen(false);
+    setSettingsDialog({
+      open: true,
+      section: "",
+      targetTabId: splitPaneActive && rightSplitTabId ? rightSplitTabId : activeTabIdRef.current,
+    });
+  }, [rightSplitTabId, splitPaneActive]);
+
+  const openSettingsSection = useCallback((section) => {
+    setSettingsDialog((current) => ({
+      ...current,
+      open: false,
+      section: section === "template" ? "template" : "ai",
+      targetTabId: current.targetTabId
+        || (splitPaneActive && rightSplitTabId ? rightSplitTabId : activeTabIdRef.current),
+    }));
+  }, [rightSplitTabId, splitPaneActive]);
+  const openAiSettings = useCallback(() => {
+    setAiModeChooserOpen(false);
+    setSettingsDialog({
+      open: false,
+      section: "ai",
+      targetTabId: splitPaneActive && rightSplitTabId ? rightSplitTabId : activeTabIdRef.current,
+    });
+  }, [rightSplitTabId, splitPaneActive]);
+  const closeSettings = useCallback(() => {
+    setSettingsDialog((current) => ({ ...current, open: false, section: "" }));
+  }, []);
+
+  const handleOpenGroupTabTemplate = useCallback((view, returnFocusElement) => {
+    if (view?.kind !== "document" || !view.tabId) return;
+    tabTemplateReturnFocusRef.current = returnFocusElement?.focus ? returnFocusElement : null;
+    setTabTemplateDialog({ open: true, targetTabId: view.tabId });
+  }, []);
+
+  const closeTabTemplateDialog = useCallback(() => {
+    setTabTemplateDialog({ open: false, targetTabId: "" });
+  }, []);
 
   const resolvePromptDialog = useCallback((value) => {
     const resolver = promptDialogResolverRef.current;
@@ -10530,22 +12927,40 @@ export default function App() {
   }, [activeTabId]);
 
   useEffect(() => {
+    workspaceGroupsRef.current = workspaceGroups;
+    window.localStorage.setItem("paperwriter.workspaceSplitRatio", String(workspaceGroups.splitRatio));
+  }, [workspaceGroups]);
+
+  useEffect(() => {
+    const focusedGroup = activePane === "right" && workspaceGroups.secondary.views.length
+      ? WORKSPACE_GROUP_ID.SECONDARY
+      : WORKSPACE_GROUP_ID.PRIMARY;
+    if (workspaceGroups.focusedGroup !== focusedGroup) {
+      setWorkspaceGroups((previous) => previous.focusedGroup === focusedGroup
+        ? previous
+        : { ...previous, focusedGroup });
+    }
+  }, [activePane, workspaceGroups.focusedGroup, workspaceGroups.secondary.views.length]);
+
+  useEffect(() => {
     rightSplitTabIdRef.current = rightSplitTabId;
   }, [rightSplitTabId]);
 
   useEffect(() => {
-    if (!rightSplitTabId) {
+    const activeSecondary = getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY);
+    if (!activeSecondary) {
       if (activePane === "right") {
         setActivePane("main");
       }
       return;
     }
+    if (activeSecondary.kind === WORKSPACE_VIEW_KIND.RESEARCH) return;
     if (rightSplitTabId === activeTabId || !openTabs.some((tab) => tab.id === rightSplitTabId)) {
       rightSplitTabIdRef.current = "";
       setRightSplitTabId("");
       setActivePane("main");
     }
-  }, [activePane, activeTabId, openTabs, rightSplitTabId]);
+  }, [activePane, activeTabId, openTabs, rightSplitTabId, setRightSplitTabId, workspaceGroups]);
 
   useEffect(() => {
     if (!rightSplitEditor || !rightSplitTabId) {
@@ -10568,7 +12983,14 @@ export default function App() {
       } catch {
         replaceEditorContentWithoutHistory(rightSplitEditor, splitDocument.html || "<p></p>");
       }
+      restoreEditorSelectionWithoutHistory(rightSplitEditor, splitTab?.selectionState);
+      rightSplitSelectionRef.current = readEditorSelectionState(rightSplitEditor);
       syncDocumentCommentDecorations(rightSplitEditor, normalizeDocumentComments(splitDocument.comments));
+      window.requestAnimationFrame(() => {
+        if (rightSplitApplyRunRef.current === runId) {
+          restoreCanvasScrollState(rightCanvasRef.current, splitTab?.scrollState);
+        }
+      });
       window.setTimeout(() => {
         if (rightSplitApplyRunRef.current === runId) {
           rightSplitApplyingRef.current = false;
@@ -10601,10 +13023,10 @@ export default function App() {
   }, [aiChatMessages]);
 
   useEffect(() => {
-    if (folderState.path) {
-      persistSession({ folderPath: folderState.path });
+    if (writingWorkspaceRoot) {
+      persistSession({ folderPath: writingWorkspaceRoot });
     }
-  }, [folderState.path, persistSession]);
+  }, [persistSession, writingWorkspaceRoot]);
 
   useEffect(() => {
     if (!activeTabId) {
@@ -10625,11 +13047,30 @@ export default function App() {
     });
   }, [activeTabId, currentPath, dirty, documentState.title]);
 
-  const showStatus = useCallback((message, tone = "success") => {
-    setStatus({ message, tone });
+  const showStatus = useCallback((message, tone = "success", options = {}) => {
+    const duration = Number.isFinite(options.duration) ? Math.max(1000, options.duration) : 2800;
+    setStatus({ message, tone, dismissible: Boolean(options.dismissible) });
     window.clearTimeout(showStatus.timer);
-    showStatus.timer = window.setTimeout(() => setStatus(null), 2800);
+    showStatus.timer = window.setTimeout(() => setStatus(null), duration);
   }, []);
+
+  const dismissStatus = useCallback(() => {
+    window.clearTimeout(showStatus.timer);
+    setStatus(null);
+  }, [showStatus]);
+
+  const toggleAiModeChooser = useCallback(() => {
+    if (aiModeChooserOpen) {
+      setAiModeChooserOpen(false);
+      return;
+    }
+    if (!aiHasUsableProvider) {
+      openAiSettings();
+      showStatus(AI_MODEL_REQUIRED_MESSAGE, "warning", { duration: 5000, dismissible: true });
+      return;
+    }
+    setAiModeChooserOpen(true);
+  }, [aiHasUsableProvider, aiModeChooserOpen, openAiSettings, showStatus]);
 
   const updateCommentsForPane = useCallback((pane, updater) => {
     const updatedAt = new Date().toISOString();
@@ -10826,6 +13267,7 @@ export default function App() {
           dirty: dirtyTabIdsRef.current.has(splitId),
           editorJson: includeEditorJson ? (rightSplitEditor?.getJSON?.() || null) : undefined,
           scrollState: readCanvasScrollState(rightCanvasRef.current),
+          selectionState: readEditorSelectionState(rightSplitEditor),
         });
       }
     }
@@ -10845,6 +13287,138 @@ export default function App() {
     return snapshotTabsWithRevisions(documentSnapshots, liveRevisionByTabRef.current);
   }, [editor, rightSplitEditor]);
 
+  const openSearch = useCallback((scope = "document", options = {}) => {
+    if (scope === "workspace" && !writingWorkspaceRoot) {
+      showStatus("请先打开一个文件夹", "warning");
+      return;
+    }
+    setSearchMode(scope === "workspace" ? "workspace" : "document");
+    if (scope !== "workspace") setDocumentReplaceVisible(Boolean(options.replace));
+  }, [showStatus, writingWorkspaceRoot]);
+
+  const closeSearch = useCallback(() => {
+    setSearchMode("");
+    renderDocumentSearchState(activeWorkEditor, null);
+  }, [activeWorkEditor]);
+
+  const moveDocumentSearch = useCallback((delta) => {
+    setDocumentSearchState((previous) => {
+      const next = moveActiveDocumentSearchMatch(previous, delta);
+      if (next.activeMatch) {
+        window.setTimeout(() => activeWorkEditor?.chain().focus().setTextSelection(next.activeMatch.from).scrollIntoView().run(), 0);
+      }
+      return next;
+    });
+  }, [activeWorkEditor]);
+
+  useEffect(() => {
+    if (!activeWorkEditor) return undefined;
+    const update = () => {
+      const next = searchDocumentText(activeWorkEditor.state.doc, searchMode === "document" ? searchQuery : "");
+      setDocumentSearchState(next);
+    };
+    update();
+    activeWorkEditor.on("update", update);
+    return () => activeWorkEditor.off("update", update);
+  }, [activeWorkEditor, searchMode, searchQuery]);
+
+  useEffect(() => {
+    renderDocumentSearchState(activeWorkEditor, searchMode === "document" ? documentSearchState : null);
+  }, [activeWorkEditor, documentSearchState, searchMode]);
+
+  const replaceDocumentSearchMatches = useCallback((replaceAll = false) => {
+    if (!activeWorkEditor || activeWorkReadOnly) {
+      if (activeWorkReadOnly) showStatus("当前文档为只读，不能替换", "warning");
+      return;
+    }
+    const matches = replaceAll
+      ? documentSearchState.matches
+      : (documentSearchState.activeMatch ? [documentSearchState.activeMatch] : []);
+    if (!matches.length) return;
+    const transaction = activeWorkEditor.state.tr;
+    applyDocumentTextReplacements(transaction, matches, documentReplaceValue);
+    if (!transaction.docChanged) return;
+    activeWorkEditor.view.dispatch(transaction.scrollIntoView());
+    activeWorkEditor.commands.focus();
+    showStatus(replaceAll ? `已替换 ${matches.length} 处匹配` : "已替换当前匹配", "success");
+  }, [activeWorkEditor, activeWorkReadOnly, documentReplaceValue, documentSearchState, showStatus]);
+
+  useEffect(() => {
+    if (searchMode !== "workspace" || !writingWorkspaceRoot) return undefined;
+    const query = workspaceSearchQuery.trim();
+    const previousRequest = workspaceSearchRequestRef.current;
+    if (previousRequest) bridge.cancelFolderSearch?.(writingWorkspaceRoot, previousRequest).catch?.(() => {});
+    if (!query) {
+      setWorkspaceSearchState({ loading: false, results: [], error: "", requestId: "" });
+      return undefined;
+    }
+    const requestId = `search-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    workspaceSearchRequestRef.current = requestId;
+    setWorkspaceSearchState({ loading: true, results: [], error: "", requestId });
+    const timer = window.setTimeout(async () => {
+      try {
+        const overrides = snapshotLiveTabs().filter((tab) => tab.path && tab.dirty).map((tab) => ({ path: tab.path, document: tab.document }));
+        const result = await bridge.searchFolder?.({ folderPath: writingWorkspaceRoot, query, requestId, overrides, limit: 100 });
+        if (workspaceSearchRequestRef.current !== requestId || result?.canceled) return;
+        const results = (result?.results || []).map((item) => ({
+          ...item,
+          query: result?.query || query,
+          snippetRanges: item.snippetMatchStart >= 0 ? [{ from: item.snippetMatchStart, to: item.snippetMatchStart + item.snippetMatchLength }] : [],
+        }));
+        setWorkspaceSearchState({ loading: false, results, error: "", requestId });
+      } catch (error) {
+        if (workspaceSearchRequestRef.current === requestId) setWorkspaceSearchState({ loading: false, results: [], error: error?.message || "工作区搜索失败", requestId });
+      }
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+      bridge.cancelFolderSearch?.(writingWorkspaceRoot, requestId).catch?.(() => {});
+    };
+  }, [searchMode, snapshotLiveTabs, workspaceSearchQuery, writingWorkspaceRoot]);
+
+  const verifyOpenDiskRevisions = useCallback(async () => {
+    const tabs = snapshotLiveTabs().filter((tab) => tab.path);
+    const changedIds = new Set();
+    await Promise.all(tabs.map(async (tab) => {
+      try {
+        const result = await bridge.getDocumentRevision?.(tab.path);
+        const actual = result?.diskRevision || null;
+        const expected = diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null;
+        if (expected && !sameDiskRevision(actual, expected)) changedIds.add(tab.id);
+        else if (!expected && actual) diskRevisionByTabRef.current.set(tab.id, actual);
+      } catch {
+        if (diskRevisionByTabRef.current.has(tab.id)) changedIds.add(tab.id);
+      }
+    }));
+    const nextTabs = openTabsRef.current.map((tab) => ({ ...tab, externalChanged: changedIds.has(tab.id) }));
+    openTabsRef.current = nextTabs;
+    setOpenTabs(nextTabs);
+    const activeChanged = changedIds.has(activeTabIdRef.current);
+    setExternalVersionDetected(activeChanged);
+    if (activeChanged) {
+      setPersistenceState("external");
+      showStatus("检测到磁盘上的外部版本；保存时会保护两个版本", "warning");
+    }
+    return changedIds;
+  }, [showStatus, snapshotLiveTabs]);
+
+  useEffect(() => {
+    bridge.watchWorkspace?.(writingWorkspaceRoot || "").catch?.(() => {});
+    if (!writingWorkspaceRoot) return undefined;
+    const onChanged = () => {
+      refreshFolderRef.current?.();
+      verifyOpenDiskRevisions();
+    };
+    const unsubscribeChanged = bridge.onWorkspaceChanged?.(onChanged);
+    const unsubscribeError = bridge.onWorkspaceWatchError?.((payload) => showStatus(payload?.message || "工作区文件监听不可用；仍会在保存前校验", "warning"));
+    return () => {
+      unsubscribeChanged?.();
+      unsubscribeError?.();
+    };
+  }, [showStatus, verifyOpenDiskRevisions, writingWorkspaceRoot]);
+
+  useEffect(() => bridge.onWindowFocus?.(() => verifyOpenDiskRevisions()), [verifyOpenDiskRevisions]);
+
   const activeSessionPath = currentPath
     || openTabs.find((tab) => tab.id === activeTabId)?.recoveryPath
     || "";
@@ -10852,20 +13426,33 @@ export default function App() {
     () => sessionTabSignature(activeSessionPath, openTabs),
     [activeSessionPath, openTabs],
   );
+  const workspaceGroupsSessionSnapshot = useMemo(
+    () => summarizeWorkspaceGroups(workspaceGroups, openTabs),
+    [openTabs, workspaceGroups],
+  );
+  const workspaceGroupsSessionSignature = useMemo(
+    () => JSON.stringify(workspaceGroupsSessionSnapshot),
+    [workspaceGroupsSessionSnapshot],
+  );
 
   useEffect(() => {
     if (!sessionRestoredRef.current) {
-      return;
+      return undefined;
     }
-    persistSession({
-      activePath: currentPathRef.current
-        || openTabsRef.current.find((tab) => tab.id === activeTabIdRef.current)?.recoveryPath
-        || "",
-      tabs: summarizeSessionTabs(openTabsRef.current.map((tab) => (
+    const timer = window.setTimeout(() => {
+      const liveTabs = openTabsRef.current.map((tab) => (
         tab.id === activeTabIdRef.current ? { ...tab, path: currentPathRef.current } : tab
-      ))),
-    });
-  }, [persistSession, sessionPathSignature]);
+      ));
+      persistSession({
+        activePath: currentPathRef.current
+          || liveTabs.find((tab) => tab.id === activeTabIdRef.current)?.recoveryPath
+          || "",
+        tabs: summarizeSessionTabs(liveTabs),
+        workspaceGroups: summarizeWorkspaceGroups(workspaceGroupsRef.current, liveTabs),
+      });
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [persistSession, sessionPathSignature, workspaceGroupsSessionSignature]);
 
   useEffect(() => {
     let mounted = true;
@@ -10898,11 +13485,11 @@ export default function App() {
     if (!editor) {
       return undefined;
     }
-    editor.setEditable(!(aiMode && aiStatus === "streaming"));
+    editor.setEditable(!activeTabReadOnly && !(aiMode && aiStatus === "streaming") && !aiApplyPreview);
     return () => {
       editor.setEditable(true);
     };
-  }, [aiMode, aiStatus, editor]);
+  }, [activeTabReadOnly, aiApplyPreview, aiMode, aiStatus, editor]);
 
   useEffect(() => {
     if (!aiMode || aiStatus !== "streaming" || !aiStartedAtRef.current) {
@@ -10932,7 +13519,7 @@ export default function App() {
       });
     };
     updateElapsed();
-    const timer = window.setInterval(updateElapsed, 500);
+    const timer = window.setInterval(updateElapsed, 100);
     return () => window.clearInterval(timer);
   }, [aiMode, aiStatus, updateChatStateForKey, updateOptimizeStateForKey]);
 
@@ -11117,6 +13704,14 @@ export default function App() {
     setHelpOpen(false);
   }, []);
 
+  const openReleaseNotes = useCallback(() => {
+    setReleaseNotesOpen(true);
+  }, []);
+
+  const closeReleaseNotes = useCallback(() => {
+    setReleaseNotesOpen(false);
+  }, []);
+
   const clearUpdateResultReset = useCallback(() => {
     if (!updateResultResetTimerRef.current) {
       return;
@@ -11292,7 +13887,7 @@ export default function App() {
 
   const getSaveDocument = useCallback(() => {
     const sourceDocument = documentStateRef.current;
-    const html = editor?.getHTML() || sourceDocument.html || "<p></p>";
+    const html = stripDerivedKnowledgeDataFromHtml(editor?.getHTML() || sourceDocument.html || "<p></p>");
     const title = sourceDocument.title?.trim() || inferTitle(editor?.getText() || "");
     return normalizeDocument({
       ...sourceDocument,
@@ -11312,7 +13907,7 @@ export default function App() {
     if (!sourceDocument) {
       return null;
     }
-    const html = rightSplitEditor?.getHTML() || sourceDocument.html || "<p></p>";
+    const html = stripDerivedKnowledgeDataFromHtml(rightSplitEditor?.getHTML() || sourceDocument.html || "<p></p>");
     const title = sourceDocument.title?.trim() || inferTitle(rightSplitEditor?.getText() || "");
     return normalizeDocument({
       ...sourceDocument,
@@ -11393,65 +13988,232 @@ export default function App() {
     updateRightSplitDocument({ displayDate: displayDate.slice(0, 40) });
   }, [updateRightSplitDocument]);
 
+  const updateDocumentSplitRatio = useCallback((value) => {
+    const next = normalizeWorkspaceSplitRatio(value);
+    setDocumentPaneRatio(next);
+    window.localStorage.setItem("paperwriter.workspaceSplitRatio", String(next));
+  }, []);
+
+  const startDocumentSplitResize = useCallback((event) => {
+    if (event.button !== 0) return;
+    const workspace = event.currentTarget.closest(".paper-workspace");
+    if (!workspace) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    const bounds = workspace.getBoundingClientRect();
+    const move = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId || !bounds.width) return;
+      updateDocumentSplitRatio((moveEvent.clientX - bounds.left) / bounds.width);
+    };
+    const stop = (upEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", stop, true);
+      window.removeEventListener("pointercancel", stop, true);
+    };
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", stop, true);
+    window.addEventListener("pointercancel", stop, true);
+  }, [updateDocumentSplitRatio]);
+
+  const commitWorkspaceGroups = useCallback((nextGroups) => {
+    const next = nextGroups || workspaceGroupsRef.current;
+    workspaceGroupsRef.current = next;
+    rightSplitTabIdRef.current = activeSecondaryDocumentTabId(next);
+    setWorkspaceGroups(next);
+    return next;
+  }, []);
+
+  useEffect(() => {
+    if (!openTabs.length) return;
+    const tabById = new Map(openTabs.map((tab) => [tab.id, tab]));
+    setWorkspaceGroups((previous) => {
+      const refreshViews = (views, allowResearch) => (views || []).flatMap((view) => {
+        if (view.kind === WORKSPACE_VIEW_KIND.RESEARCH) return allowResearch ? [view] : [];
+        const tab = tabById.get(view.tabId);
+        return tab ? [createDocumentWorkspaceView(workspaceDocumentView(tab))] : [];
+      });
+      let primaryViews = refreshViews(previous.primary.views, false);
+      let secondaryViews = refreshViews(previous.secondary.views, true);
+      const assignedTabIds = new Set([...primaryViews, ...secondaryViews]
+        .filter((view) => view.kind === WORKSPACE_VIEW_KIND.DOCUMENT)
+        .map((view) => view.tabId));
+      for (const tab of openTabs) {
+        if (!assignedTabIds.has(tab.id)) {
+          primaryViews.push(createDocumentWorkspaceView(workspaceDocumentView(tab)));
+          assignedTabIds.add(tab.id);
+        }
+      }
+      if (!primaryViews.length) {
+        const firstSecondaryDocumentIndex = secondaryViews.findIndex((view) => view.kind === WORKSPACE_VIEW_KIND.DOCUMENT);
+        if (firstSecondaryDocumentIndex >= 0) {
+          primaryViews = [secondaryViews[firstSecondaryDocumentIndex]];
+          secondaryViews = secondaryViews.filter((_, index) => index !== firstSecondaryDocumentIndex);
+        } else {
+          primaryViews = [createDocumentWorkspaceView(workspaceDocumentView(openTabs[0]))];
+        }
+      }
+      const candidate = normalizeWorkspaceGroupsState({
+        ...previous,
+        primary: { views: primaryViews, activeViewId: previous.primary.activeViewId },
+        secondary: { views: secondaryViews, activeViewId: previous.secondary.activeViewId },
+      }, { fallbackPrimaryDocument: workspaceDocumentView(openTabs[0]) });
+      return JSON.stringify(candidate) === JSON.stringify(previous) ? previous : candidate;
+    });
+  }, [openTabs]);
+
+  const updateOpenResearchTargets = useCallback((libraryId, previousPath, nextPath, itemPatch = {}) => {
+    let nextGroups = workspaceGroupsRef.current;
+    const changedViewIds = [];
+    for (const view of nextGroups.secondary.views) {
+      if (view.kind !== WORKSPACE_VIEW_KIND.RESEARCH || view.libraryId !== libraryId || !view.relativePath) continue;
+      if (view.relativePath !== previousPath && !view.relativePath.startsWith(`${previousPath}/`)) continue;
+      const suffix = view.relativePath.slice(previousPath.length);
+      nextGroups = updateWorkspaceResearchTarget(nextGroups, view.viewId, { libraryId, relativePath: `${nextPath}${suffix}` });
+      changedViewIds.push(view.viewId);
+    }
+    if (nextGroups !== workspaceGroupsRef.current) commitWorkspaceGroups(nextGroups);
+    if (changedViewIds.length) {
+      setResearchItemsByViewId((previous) => {
+        const copy = { ...previous };
+        for (const viewId of changedViewIds) {
+          if (copy[viewId]) copy[viewId] = { ...copy[viewId], ...itemPatch, relativePath: `${nextPath}${String(copy[viewId].relativePath || "").slice(previousPath.length)}` };
+        }
+        return copy;
+      });
+    }
+  }, [commitWorkspaceGroups]);
+
+  const removeOpenResearchViews = useCallback((selector) => {
+    const state = workspaceGroupsRef.current;
+    const removedIds = state.secondary.views.filter((view) => (
+      view.kind === WORKSPACE_VIEW_KIND.RESEARCH && selector(view)
+    )).map((view) => view.viewId);
+    if (!removedIds.length) return;
+    removedIds.forEach((viewId) => { void bridge.destroyResearchWebView?.(viewId); });
+    const next = removeWorkspaceViews(state, new Set(removedIds));
+    commitWorkspaceGroups(next);
+    setResearchItemsByViewId((previous) => {
+      const copy = { ...previous };
+      removedIds.forEach((viewId) => delete copy[viewId]);
+      return copy;
+    });
+    const active = getActiveWorkspaceView(next, WORKSPACE_GROUP_ID.SECONDARY);
+    if (!active) {
+      setActiveLibraryItem(null);
+      setActivePane("main");
+    } else if (active.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
+      setActiveLibraryItem(researchItemsByViewIdRef.current[active.viewId]
+        || (active.sourceId ? librarySourcesRef.current.find((source) => source.id === active.sourceId) : null)
+        || null);
+    }
+  }, [commitWorkspaceGroups]);
+
   const handleToggleRightSplit = useCallback((tabId) => {
-    const previous = rightSplitTabIdRef.current;
-    if (tabId === activeTabIdRef.current && previous !== tabId) {
-      showStatus("当前正在编辑的信笺无需重复分屏", "warning");
+    const state = workspaceGroupsRef.current;
+    const location = findWorkspaceView(state, tabId);
+    if (!location || location.view.kind !== WORKSPACE_VIEW_KIND.DOCUMENT) return;
+    const targetGroup = location.groupId === WORKSPACE_GROUP_ID.PRIMARY
+      ? WORKSPACE_GROUP_ID.SECONDARY
+      : WORKSPACE_GROUP_ID.PRIMARY;
+    if (location.groupId === WORKSPACE_GROUP_ID.PRIMARY && state.primary.views.length <= 1) {
+      showStatus("左侧编辑组至少需要保留一个信笺", "warning");
       return;
     }
-    if (previous) {
-      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
-      openTabsRef.current = snapshot;
-      setOpenTabs(snapshot);
+    const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+    openTabsRef.current = snapshot;
+    setOpenTabs(snapshot);
+    const next = moveWorkspaceDocument(state, location.view.viewId, targetGroup, state[targetGroup].views.length);
+    if (next === state) return;
+    commitWorkspaceGroups(next);
+    if (targetGroup === WORKSPACE_GROUP_ID.PRIMARY) {
+      const target = snapshot.find((tab) => tab.id === tabId);
+      if (target) {
+        activeTabIdRef.current = target.id;
+        setActiveTabId(target.id);
+        applyDocument(target.document, target.path, target.dirty, { editorJson: target.editorJson, scrollState: target.scrollState });
+      }
+      setActivePane("main");
+    } else {
+      const nextPrimary = getActiveWorkspaceView(next, WORKSPACE_GROUP_ID.PRIMARY);
+      const primaryTab = snapshot.find((tab) => tab.id === nextPrimary?.tabId);
+      if (primaryTab && tabId === activeTabIdRef.current) {
+        activeTabIdRef.current = primaryTab.id;
+        setActiveTabId(primaryTab.id);
+        applyDocument(primaryTab.document, primaryTab.path, primaryTab.dirty, { editorJson: primaryTab.editorJson, scrollState: primaryTab.scrollState });
+      }
+      setActivePane("right");
     }
-    const nextSplitId = previous === tabId ? "" : tabId;
-    rightSplitTabIdRef.current = nextSplitId;
-    setRightSplitTabId(nextSplitId);
-    setActivePane(nextSplitId ? "right" : "main");
-    showStatus(nextSplitId ? (previous ? "已替换右分屏" : "已向右分屏") : "已取消右分屏", "success");
-  }, [showStatus, snapshotLiveTabs]);
+    showStatus(targetGroup === WORKSPACE_GROUP_ID.SECONDARY ? "已移到右侧编辑组" : "已移到左侧编辑组", "success");
+  }, [applyDocument, commitWorkspaceGroups, showStatus, snapshotLiveTabs]);
 
   const addOrActivateDocumentTab = useCallback(
-    (nextDocument, nextPath = "", nextDirty = false) => {
+    (nextDocument, nextPath = "", nextDirty = false, options = {}) => {
       const normalized = normalizeDocument(nextDocument, letterTemplates);
       const snapshot = snapshotLiveTabs({ includeEditorJson: true });
       const existingTab = nextPath ? snapshot.find((tab) => sameDocumentPath(tab.path, nextPath)) : null;
       if (existingTab) {
-        if (existingTab.id !== activeTabId) {
-          openTabsRef.current = snapshot;
-          setOpenTabs(snapshot);
-          if (rightSplitTabIdRef.current === existingTab.id) {
-            rightSplitTabIdRef.current = "";
-            setRightSplitTabId("");
-          }
+        openTabsRef.current = snapshot;
+        setOpenTabs(snapshot);
+        const location = findWorkspaceView(workspaceGroupsRef.current, existingTab.id);
+        if (location?.groupId === WORKSPACE_GROUP_ID.SECONDARY) {
+          commitWorkspaceGroups(selectWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY, location.view.viewId));
+          setActivePane("right");
+        } else {
+          const nextGroups = location
+            ? selectWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.PRIMARY, location.view.viewId)
+            : openWorkspaceDocument(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.PRIMARY, workspaceDocumentView(existingTab));
+          commitWorkspaceGroups(nextGroups);
           activeTabIdRef.current = existingTab.id;
           setActiveTabId(existingTab.id);
           setActivePane("main");
-          applyDocument(existingTab.document, existingTab.path, existingTab.dirty, { editorJson: existingTab.editorJson, scrollState: existingTab.scrollState });
+          if (existingTab.id !== activeTabId) {
+            applyDocument(existingTab.document, existingTab.path, existingTab.dirty, { editorJson: existingTab.editorJson, scrollState: existingTab.scrollState });
+          }
         }
         return existingTab.id;
       }
+      const requestedGroup = options.groupId === WORKSPACE_GROUP_ID.SECONDARY
+        || (!options.groupId && activePane === "right" && workspaceGroupsRef.current.secondary.views.length)
+        ? WORKSPACE_GROUP_ID.SECONDARY
+        : WORKSPACE_GROUP_ID.PRIMARY;
       const onlyTab = snapshot.length === 1 ? snapshot[0] : null;
-      const canReplaceBlank = nextPath
+      const canReplaceBlank = requestedGroup === WORKSPACE_GROUP_ID.PRIMARY
+        && (nextPath || options.replaceBlank)
         && onlyTab
         && !onlyTab.path
         && !onlyTab.dirty
         && !currentPath
         && !dirty;
-      if (tabCapacityFull && !canReplaceBlank) {
-        return "";
-      }
-      const tab = createDocumentTab(normalized, nextPath, nextDirty);
+      const tab = createDocumentTab(normalized, nextPath, nextDirty, options);
+      if (options.diskRevision) diskRevisionByTabRef.current.set(tab.id, options.diskRevision);
+      if (nextDirty) lastEditAtByTabRef.current.set(tab.id, Date.now());
       const nextTabs = canReplaceBlank ? [tab] : [...snapshot, tab];
       openTabsRef.current = nextTabs;
       setOpenTabs(nextTabs);
-      activeTabIdRef.current = tab.id;
-      setActiveTabId(tab.id);
-      setActivePane("main");
-      applyDocument(normalized, nextPath, nextDirty, { scrollState: tab.scrollState });
+      let nextGroups;
+      if (canReplaceBlank) {
+        const view = createDocumentWorkspaceView(workspaceDocumentView(tab));
+        nextGroups = {
+          ...workspaceGroupsRef.current,
+          primary: { views: [view], activeViewId: view.viewId },
+          focusedGroup: WORKSPACE_GROUP_ID.PRIMARY,
+        };
+      } else {
+        nextGroups = openWorkspaceDocument(workspaceGroupsRef.current, requestedGroup, workspaceDocumentView(tab));
+      }
+      commitWorkspaceGroups(nextGroups);
+      if (requestedGroup === WORKSPACE_GROUP_ID.PRIMARY) {
+        activeTabIdRef.current = tab.id;
+        setActiveTabId(tab.id);
+        setActivePane("main");
+        applyDocument(normalized, nextPath, nextDirty, { scrollState: tab.scrollState });
+      } else {
+        setActivePane("right");
+      }
       return tab.id;
     },
-    [activeTabId, applyDocument, currentPath, dirty, letterTemplates, snapshotLiveTabs, tabCapacityFull],
+    [activePane, activeTabId, applyDocument, commitWorkspaceGroups, currentPath, dirty, letterTemplates, snapshotLiveTabs],
   );
 
   useEffect(() => {
@@ -11492,6 +14254,7 @@ export default function App() {
         if (isActiveRestore()) {
           setFolderState((previous) => ({
             ...previous,
+            rootPath: previous.rootPath || folderPath,
             path: folderPath,
             loading: true,
           }));
@@ -11505,6 +14268,7 @@ export default function App() {
               files: result.files?.length || 0,
             });
             setFolderState({
+              rootPath: folderPath,
               path: result.folderPath || folderPath,
               parentPath: result.parentPath || "",
               folders: result.folders || [],
@@ -11528,6 +14292,7 @@ export default function App() {
               const fallback = fallbackPath ? await listFolderWithTimeout(fallbackPath) : null;
               if (fallbackPath && !fallback?.canceled) {
                 setFolderState({
+                  rootPath: fallback.folderPath || fallbackPath,
                   path: fallback.folderPath || fallbackPath,
                   parentPath: fallback.parentPath || "",
                   folders: fallback.folders || [],
@@ -11539,6 +14304,7 @@ export default function App() {
                 persistSession({ folderPath: fallback.folderPath || fallbackPath, activePath: "" });
               } else {
                 setFolderState({
+                  rootPath: folderPath,
                   path: folderPath,
                   parentPath: "",
                   files: [],
@@ -11550,6 +14316,7 @@ export default function App() {
               }
             } catch {
               setFolderState({
+                rootPath: folderPath,
                 path: folderPath,
                 parentPath: "",
                 files: [],
@@ -11565,7 +14332,7 @@ export default function App() {
       if (restoreEntries.length) {
         const restoredTabs = [];
         for (const restoreEntry of restoreEntries) {
-          const restorePath = restoreEntry.path;
+          const restorePath = restoreEntry.recoveryPath || restoreEntry.path;
           try {
             const result = await bridge.openDocumentPath(restorePath);
             if (!isActiveRestore()) {
@@ -11573,27 +14340,90 @@ export default function App() {
             }
             if (!result?.canceled && result?.document) {
               const normalized = normalizeDocument(result.document, letterTemplates);
-              restoredTabs.push(restoreEntry.temporary
-                ? createDocumentTab(normalized, "", true, {
+              const restoredFromRecovery = Boolean(restoreEntry.recoveryPath || restoreEntry.temporary);
+              if (restoredFromRecovery) {
+                const logicalPath = restoreEntry.temporary ? "" : restoreEntry.path;
+                const recoverySourcePath = restoreEntry.recoverySourcePath || logicalPath;
+                const recoveryBaseRevision = normalizeSessionDiskRevision(restoreEntry.recoveryBaseRevision);
+                const logicalRevision = logicalPath ? await bridge.getDocumentRevision?.(logicalPath).catch?.(() => null) : null;
+                const currentDiskRevision = normalizeSessionDiskRevision(logicalRevision?.diskRevision);
+                const sourceMatches = !logicalPath || !recoverySourcePath || sameDocumentPath(logicalPath, recoverySourcePath);
+                const externalChanged = Boolean(logicalPath && (
+                  !sourceMatches
+                  || !recoveryBaseRevision
+                  || !sameDiskRevision(currentDiskRevision, recoveryBaseRevision)
+                ));
+                restoredTabs.push(createDocumentTab(normalized, logicalPath, true, {
                     recoveryPath: result.path,
-                    recoveryId: result.recoveryId,
+                    recoveryId: restoreEntry.recoveryId || result.recoveryId,
+                    recoverySourcePath,
+                    recoveryBaseRevision,
                     recoveredTemporary: true,
-                  })
-                : createDocumentTab(normalized, result.path, false));
+                    diskRevision: recoveryBaseRevision,
+                    readOnly: result.readOnly,
+                    externalChanged,
+                  }));
+              } else {
+                restoredTabs.push(createDocumentTab(normalized, result.path, false, { diskRevision: result.diskRevision, readOnly: result.readOnly }));
+              }
             }
           } catch {
             // Missing or unreadable session files are skipped.
           }
         }
         if (isActiveRestore() && restoredTabs.length) {
-          const activeTab = restoredTabs.find((tab) => sameDocumentPath(tab.path || tab.recoveryPath, activePath)) || restoredTabs[0];
+          restoredTabs.forEach((tab) => { if (tab.diskRevision) diskRevisionByTabRef.current.set(tab.id, tab.diskRevision); });
+          dirtyTabIdsRef.current = new Set(restoredTabs.filter((tab) => tab.dirty).map((tab) => tab.id));
+          restoredTabs.filter((tab) => tab.dirty).forEach((tab) => lastEditAtByTabRef.current.set(tab.id, Date.now()));
+          const legacyActiveTab = restoredTabs.find((tab) => sameDocumentPath(tab.path || tab.recoveryPath, activePath)) || restoredTabs[0];
+          let fallbackGroups = createWorkspaceGroupsState(workspaceDocumentView(restoredTabs[0]), {
+            splitRatio: workspaceGroupsRef.current.splitRatio,
+          });
+          for (const tab of restoredTabs.slice(1)) {
+            fallbackGroups = openWorkspaceDocument(fallbackGroups, WORKSPACE_GROUP_ID.PRIMARY, workspaceDocumentView(tab));
+          }
+          fallbackGroups = selectWorkspaceView(fallbackGroups, WORKSPACE_GROUP_ID.PRIMARY, legacyActiveTab.id);
+          const restoredGroups = restoreWorkspaceGroupsSnapshot(sessionRef.current.workspaceGroups, {
+            documents: restoredTabs.map(workspaceDocumentView),
+            fallbackState: fallbackGroups,
+            fallbackPrimaryDocument: workspaceDocumentView(legacyActiveTab),
+            resolveDocumentTabId: (resourceKey) => {
+              const tab = restoredTabs.find((candidate) => documentTabResourceKey(candidate) === resourceKey);
+              return tab ? workspaceDocumentView(tab) : null;
+            },
+          }) || fallbackGroups;
+          const restoredPrimaryView = getActiveWorkspaceView(restoredGroups, WORKSPACE_GROUP_ID.PRIMARY);
+          const activeTab = restoredTabs.find((tab) => tab.id === restoredPrimaryView?.tabId) || legacyActiveTab;
           setOpenTabs(restoredTabs);
+          commitWorkspaceGroups(restoredGroups);
           activeTabIdRef.current = activeTab.id;
           setActiveTabId(activeTab.id);
           applyDocument(activeTab.document, activeTab.path, activeTab.dirty);
+          const restoredSecondaryView = getActiveWorkspaceView(restoredGroups, WORKSPACE_GROUP_ID.SECONDARY);
+          if (restoredGroups.focusedGroup === WORKSPACE_GROUP_ID.SECONDARY && restoredSecondaryView) {
+            setActivePane("right");
+            if (restoredSecondaryView.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
+              const restoredResearchItem = restoredSecondaryView.relativePath
+                ? {
+                    type: "file",
+                    relativePath: restoredSecondaryView.relativePath,
+                    name: restoredSecondaryView.titleSnapshot || displayNameFromPath(restoredSecondaryView.relativePath),
+                  }
+                : null;
+              if (restoredResearchItem) {
+                setResearchItemsByViewId((previous) => ({ ...previous, [restoredSecondaryView.viewId]: restoredResearchItem }));
+                setActiveLibraryItem(restoredResearchItem);
+              }
+            }
+          } else {
+            setActivePane("main");
+          }
+          setExternalVersionDetected(Boolean(activeTab.externalChanged));
+          setPersistenceState(activeTab.externalChanged ? "external" : (activeTab.dirty ? "recovery" : "workspace"));
           persistSession({
             activePath: activeTab.path || activeTab.recoveryPath,
             tabs: summarizeSessionTabs(restoredTabs),
+            workspaceGroups: summarizeWorkspaceGroups(restoredGroups, restoredTabs),
           });
         } else if (isActiveRestore()) {
           persistSession({ activePath: "", tabs: [] });
@@ -11609,14 +14439,10 @@ export default function App() {
       canceled = true;
       bridge.debugLog?.("renderer:restore:canceled", { runId });
     };
-  }, [applyDocument, editor, letterTemplates, persistSession]);
+  }, [applyDocument, commitWorkspaceGroups, editor, letterTemplates, persistSession]);
 
   const handleSelectTab = useCallback(
     (tabId) => {
-      if (tabId === activeTabId) {
-        setActivePane("main");
-        return;
-      }
       const snapshot = snapshotLiveTabs({ includeEditorJson: true });
       const target = snapshot.find((tab) => tab.id === tabId);
       if (!target) {
@@ -11624,26 +14450,101 @@ export default function App() {
       }
       openTabsRef.current = snapshot;
       setOpenTabs(snapshot);
-      if (rightSplitTabIdRef.current === target.id) {
-        rightSplitTabIdRef.current = "";
-        setRightSplitTabId("");
+      const location = findWorkspaceView(workspaceGroupsRef.current, target.id);
+      if (location?.groupId === WORKSPACE_GROUP_ID.SECONDARY) {
+        commitWorkspaceGroups(selectWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY, location.view.viewId));
+        setActivePane("right");
+        return;
       }
+      const nextGroups = location
+        ? selectWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.PRIMARY, location.view.viewId)
+        : openWorkspaceDocument(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.PRIMARY, workspaceDocumentView(target));
+      commitWorkspaceGroups(nextGroups);
       activeTabIdRef.current = target.id;
       setActiveTabId(target.id);
       setActivePane("main");
-      applyDocument(target.document, target.path, target.dirty, { editorJson: target.editorJson, scrollState: target.scrollState });
+      if (target.id !== activeTabId) {
+        applyDocument(target.document, target.path, target.dirty, { editorJson: target.editorJson, scrollState: target.scrollState });
+      }
     },
-    [activeTabId, applyDocument, snapshotLiveTabs],
+    [activeTabId, applyDocument, commitWorkspaceGroups, snapshotLiveTabs],
   );
 
-  const handleOpenTabTemplates = useCallback((tabId) => {
-    if (tabId && tabId !== activeTabId) {
-      handleSelectTab(tabId);
-    } else {
-      setActivePane("main");
+  const handleSelectGroupView = useCallback((groupId, viewId) => {
+    const state = workspaceGroupsRef.current;
+    const group = state[groupId];
+    const view = group?.views?.find((candidate) => candidate.viewId === viewId);
+    if (!view) return;
+    if (view.kind === WORKSPACE_VIEW_KIND.DOCUMENT) {
+      handleSelectTab(view.tabId);
+      return;
     }
-    setTemplateDialogOpen(true);
-  }, [activeTabId, handleSelectTab]);
+    const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+    openTabsRef.current = snapshot;
+    setOpenTabs(snapshot);
+    const next = selectWorkspaceView(state, WORKSPACE_GROUP_ID.SECONDARY, viewId);
+    commitWorkspaceGroups(next);
+    setActivePane("right");
+    const item = researchItemsByViewId[viewId]
+      || (view.sourceId ? librarySources.find((source) => source.id === view.sourceId) : null)
+      || null;
+    setActiveLibraryItem(item);
+    setActiveResearchError("");
+  }, [commitWorkspaceGroups, handleSelectTab, librarySources, researchItemsByViewId, snapshotLiveTabs]);
+
+  const handleReorderGroupView = useCallback((groupId, viewId, beforeViewId) => {
+    const state = workspaceGroupsRef.current;
+    const views = state[groupId]?.views || [];
+    const fromIndex = views.findIndex((view) => view.viewId === viewId);
+    if (fromIndex < 0) return;
+    let toIndex = beforeViewId ? views.findIndex((view) => view.viewId === beforeViewId) : views.length - 1;
+    if (toIndex < 0) toIndex = views.length - 1;
+    if (beforeViewId && fromIndex < toIndex) toIndex -= 1;
+    commitWorkspaceGroups(reorderWorkspaceView(state, groupId, viewId, toIndex));
+  }, [commitWorkspaceGroups]);
+
+  const handleMoveGroupDocument = useCallback((viewId, targetGroupId, beforeViewId = null) => {
+    const state = workspaceGroupsRef.current;
+    const location = findWorkspaceView(state, viewId);
+    if (!location || location.view.kind !== WORKSPACE_VIEW_KIND.DOCUMENT) return;
+    if (location.groupId === targetGroupId) {
+      handleReorderGroupView(targetGroupId, viewId, beforeViewId);
+      return;
+    }
+    if (location.groupId === WORKSPACE_GROUP_ID.PRIMARY && state.primary.views.length <= 1) {
+      showStatus("左侧编辑组至少需要保留一个信笺", "warning");
+      return;
+    }
+    const targetViews = state[targetGroupId]?.views || [];
+    let insertionIndex = beforeViewId ? targetViews.findIndex((view) => view.viewId === beforeViewId) : targetViews.length;
+    if (insertionIndex < 0) insertionIndex = targetViews.length;
+    const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+    openTabsRef.current = snapshot;
+    setOpenTabs(snapshot);
+    const next = moveWorkspaceDocument(state, location.view.viewId, targetGroupId, insertionIndex);
+    if (next === state) return;
+    commitWorkspaceGroups(next);
+    if (targetGroupId === WORKSPACE_GROUP_ID.PRIMARY) {
+      const tab = snapshot.find((candidate) => candidate.id === location.view.tabId);
+      if (tab) {
+        activeTabIdRef.current = tab.id;
+        setActiveTabId(tab.id);
+        applyDocument(tab.document, tab.path, tab.dirty, { editorJson: tab.editorJson, scrollState: tab.scrollState });
+      }
+      setActivePane("main");
+    } else {
+      if (location.view.tabId === activeTabIdRef.current) {
+        const nextPrimary = getActiveWorkspaceView(next, WORKSPACE_GROUP_ID.PRIMARY);
+        const primaryTab = snapshot.find((candidate) => candidate.id === nextPrimary?.tabId);
+        if (primaryTab) {
+          activeTabIdRef.current = primaryTab.id;
+          setActiveTabId(primaryTab.id);
+          applyDocument(primaryTab.document, primaryTab.path, primaryTab.dirty, { editorJson: primaryTab.editorJson, scrollState: primaryTab.scrollState });
+        }
+      }
+      setActivePane("right");
+    }
+  }, [applyDocument, commitWorkspaceGroups, handleReorderGroupView, showStatus, snapshotLiveTabs]);
 
   const handleCloseTab = useCallback(
     async (tabId) => {
@@ -11652,12 +14553,15 @@ export default function App() {
       try {
       await waitForTabSave(tabId);
       let snapshot = snapshotLiveTabs({ includeEditorJson: true });
-      let closingIndex = snapshot.findIndex((tab) => tab.id === tabId);
-      let closingTab = snapshot[closingIndex];
+      let closingTab = snapshot.find((tab) => tab.id === tabId);
       if (!closingTab) {
         return;
       }
-      const isActive = tabId === activeTabId;
+      const groupsBeforeClose = workspaceGroupsRef.current;
+      const location = findWorkspaceView(groupsBeforeClose, tabId);
+      const isActive = location?.groupId === WORKSPACE_GROUP_ID.SECONDARY
+        ? groupsBeforeClose.secondary.activeViewId === location.view.viewId
+        : tabId === activeTabId;
       const isDirty = closingTab.dirty;
       if (isDirty) {
         const promptedRevision = liveRevisionByTabRef.current.get(tabId) || 0;
@@ -11682,8 +14586,7 @@ export default function App() {
           return;
         }
         snapshot = snapshotLiveTabs({ includeEditorJson: true });
-        closingIndex = snapshot.findIndex((tab) => tab.id === tabId);
-        closingTab = snapshot[closingIndex];
+        closingTab = snapshot.find((tab) => tab.id === tabId);
         if (!closingTab) return;
       }
       if (closingTab.recoveryPath) {
@@ -11693,8 +14596,8 @@ export default function App() {
       if (!remaining.length) {
         const blank = createBlankDocument(letterTemplates, newDocumentTemplateId);
         const nextTab = createDocumentTab(blank);
-        rightSplitTabIdRef.current = "";
-        setRightSplitTabId("");
+        const nextGroups = createWorkspaceGroupsState(workspaceDocumentView(nextTab), { splitRatio: groupsBeforeClose.splitRatio });
+        commitWorkspaceGroups(nextGroups);
         setActivePane("main");
         openTabsRef.current = [nextTab];
         setOpenTabs([nextTab]);
@@ -11703,37 +14606,94 @@ export default function App() {
         applyDocument(blank, "", false, { scrollState: nextTab.scrollState });
         return;
       }
-      if (rightSplitTabIdRef.current === tabId) {
-        rightSplitTabIdRef.current = "";
-        setRightSplitTabId("");
-        setActivePane("main");
+      let nextTabs = remaining;
+      let nextGroups = groupsBeforeClose;
+      if (location?.groupId === WORKSPACE_GROUP_ID.PRIMARY && groupsBeforeClose.primary.views.length <= 1) {
+        const blank = createBlankDocument(letterTemplates, newDocumentTemplateId);
+        const blankTab = createDocumentTab(blank);
+        nextTabs = [...remaining, blankTab];
+        const blankView = createDocumentWorkspaceView(workspaceDocumentView(blankTab));
+        nextGroups = {
+          ...groupsBeforeClose,
+          primary: { views: [blankView], activeViewId: blankView.viewId },
+          focusedGroup: WORKSPACE_GROUP_ID.PRIMARY,
+        };
+      } else if (location) {
+        nextGroups = closeWorkspaceView(groupsBeforeClose, location.groupId, location.view.viewId);
+      } else {
+        nextGroups = removeWorkspaceViews(groupsBeforeClose, { tabId });
       }
-      openTabsRef.current = remaining;
-      setOpenTabs(remaining);
-      if (isActive) {
-        const nextTab = remaining[Math.max(0, closingIndex - 1)] || remaining[0];
-        if (rightSplitTabIdRef.current === nextTab.id) {
-          rightSplitTabIdRef.current = "";
-          setRightSplitTabId("");
+      openTabsRef.current = nextTabs;
+      setOpenTabs(nextTabs);
+      commitWorkspaceGroups(nextGroups);
+      const nextPrimaryView = getActiveWorkspaceView(nextGroups, WORKSPACE_GROUP_ID.PRIMARY);
+      const nextPrimaryTab = nextTabs.find((tab) => tab.id === nextPrimaryView?.tabId);
+      if (location?.groupId === WORKSPACE_GROUP_ID.PRIMARY && nextPrimaryTab) {
+        activeTabIdRef.current = nextPrimaryTab.id;
+        setActiveTabId(nextPrimaryTab.id);
+        applyDocument(nextPrimaryTab.document, nextPrimaryTab.path, nextPrimaryTab.dirty, { editorJson: nextPrimaryTab.editorJson, scrollState: nextPrimaryTab.scrollState });
+        if (isActive) setActivePane("main");
+      } else if (location?.groupId === WORKSPACE_GROUP_ID.SECONDARY && isActive) {
+        const nextSecondary = getActiveWorkspaceView(nextGroups, WORKSPACE_GROUP_ID.SECONDARY);
+        if (!nextSecondary) {
+          setActiveLibraryItem(null);
+          setActivePane("main");
+        } else {
+          if (nextSecondary.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
+            setActiveLibraryItem(researchItemsByViewId[nextSecondary.viewId]
+              || (nextSecondary.sourceId ? librarySources.find((source) => source.id === nextSecondary.sourceId) : null)
+              || null);
+          }
+          setActivePane("right");
         }
-        setActivePane("main");
-        activeTabIdRef.current = nextTab.id;
-        setActiveTabId(nextTab.id);
-        applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson, scrollState: nextTab.scrollState });
       }
       } finally {
         tabClosePendingIdsRef.current.delete(tabId);
       }
     },
-    [activeTabId, applyDocument, letterTemplates, newDocumentTemplateId, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave],
+    [activeTabId, applyDocument, commitWorkspaceGroups, letterTemplates, librarySources, newDocumentTemplateId, researchItemsByViewId, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave],
   );
 
-  const handleNew = useCallback(() => {
-    const tabId = addOrActivateDocumentTab(createBlankDocument(letterTemplates, newDocumentTemplateId), "", false);
-    if (!tabId) {
-      showStatus("标签栏已满，请先关闭一个信笺", "warning");
+  const handleCloseGroupView = useCallback(async (groupId, viewId) => {
+    const state = workspaceGroupsRef.current;
+    const view = state[groupId]?.views?.find((candidate) => candidate.viewId === viewId);
+    if (!view) return;
+    if (view.kind === WORKSPACE_VIEW_KIND.DOCUMENT) {
+      await handleCloseTab(view.tabId);
       return;
     }
+    void bridge.destroyResearchWebView?.(viewId);
+    const next = closeWorkspaceView(state, groupId, viewId);
+    commitWorkspaceGroups(next);
+    setResearchItemsByViewId((previous) => {
+      if (!(viewId in previous)) return previous;
+      const copy = { ...previous };
+      delete copy[viewId];
+      return copy;
+    });
+    const nextSecondary = getActiveWorkspaceView(next, WORKSPACE_GROUP_ID.SECONDARY);
+    if (!nextSecondary) {
+      setActiveLibraryItem(null);
+      setActiveResearchError("");
+      setActivePane("main");
+      return;
+    }
+    if (nextSecondary.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
+      setActiveLibraryItem(researchItemsByViewId[nextSecondary.viewId]
+        || (nextSecondary.sourceId ? librarySources.find((source) => source.id === nextSecondary.sourceId) : null)
+        || null);
+    }
+    setActivePane("right");
+  }, [commitWorkspaceGroups, handleCloseTab, librarySources, researchItemsByViewId]);
+
+  const handleNew = useCallback((groupId) => {
+    const tabId = addOrActivateDocumentTab(
+      createBlankDocument(letterTemplates, newDocumentTemplateId),
+      "",
+      false,
+      groupId ? { groupId } : {},
+    );
+    if (!tabId) return;
     showStatus("已新建空白信笺", "success");
   }, [addOrActivateDocumentTab, letterTemplates, newDocumentTemplateId, showStatus]);
 
@@ -11742,12 +14702,18 @@ export default function App() {
     if (result?.canceled) {
       return;
     }
-    const tabId = addOrActivateDocumentTab(result.document, result.path, false);
-    if (!tabId) {
-      showStatus("标签栏已满，请先关闭一个信笺再打开文档", "warning");
-      return;
-    }
+    const tabId = addOrActivateDocumentTab(result.document, result.path, false, { diskRevision: result.diskRevision, readOnly: result.readOnly });
+    if (!tabId) return;
     showStatus("文档已打开", "success");
+  }, [addOrActivateDocumentTab, showStatus]);
+
+  const handleImportDocument = useCallback(async () => {
+    const result = await bridge.importDocument?.();
+    if (result?.canceled || !result?.document) return;
+    const tabId = addOrActivateDocumentTab(result.document, "", true, { replaceBlank: true });
+    if (!tabId) return;
+    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+    showStatus(warnings.length ? `文档已导入；${warnings.length} 项内容已降级，保存后才会生成 .letterpaper` : "文档已导入；保存后才会生成 .letterpaper", warnings.length ? "warning" : "success");
   }, [addOrActivateDocumentTab, showStatus]);
 
   const handleOpenFolder = useCallback(async () => {
@@ -11756,6 +14722,7 @@ export default function App() {
       return;
     }
     setFolderState({
+      rootPath: result.folderPath || "",
       path: result.folderPath || "",
       parentPath: result.parentPath || "",
       folders: result.folders || [],
@@ -11787,7 +14754,8 @@ export default function App() {
       showStatus("无法打开这个文件夹", "warning");
       return;
     }
-    setFolderState({
+    setFolderState((previous) => ({
+      rootPath: previous.rootPath || result.folderPath || path,
       path: result.folderPath || path,
       parentPath: result.parentPath || "",
       folders: result.folders || [],
@@ -11795,7 +14763,7 @@ export default function App() {
       entries: result.entries || [...(result.folders || []), ...(result.files || [])],
       loading: false,
       error: "",
-    });
+    }));
     setExpandedFolders({});
   }, [showStatus]);
 
@@ -11805,7 +14773,8 @@ export default function App() {
     }
     const result = await listFolderWithTimeout(folderState.path);
     if (!result?.canceled) {
-      setFolderState({
+      setFolderState((previous) => ({
+        rootPath: previous.rootPath || result.folderPath || folderState.path,
         path: result.folderPath || folderState.path,
         parentPath: result.parentPath || "",
         folders: result.folders || [],
@@ -11813,7 +14782,7 @@ export default function App() {
         entries: result.entries || [...(result.folders || []), ...(result.files || [])],
         loading: false,
         error: "",
-      });
+      }));
     }
   }, [folderState.path]);
 
@@ -11846,7 +14815,7 @@ export default function App() {
         if (existingTab.id !== activeTabId) {
           handleSelectTab(existingTab.id);
         }
-        return;
+        return existingTab.id;
       }
       const startedAt = window.performance?.now?.() || Date.now();
       showStatus("正在打开文档...", "success");
@@ -11858,18 +14827,57 @@ export default function App() {
         ipcMs: Math.round((window.performance?.now?.() || Date.now()) - startedAt),
       });
       if (result?.canceled || !result?.document) {
-        showStatus("这个文件不是笺间文档", "warning");
+        showStatus(result?.error ? `打开失败：${result.error}` : "这个文件不是笺间文档", "warning");
         return;
       }
-      const tabId = addOrActivateDocumentTab(result.document, result.path, false);
+      const tabId = addOrActivateDocumentTab(result.document, result.path, false, { diskRevision: result.diskRevision, readOnly: result.readOnly });
       if (!tabId) {
         showStatus("标签栏已满，请先关闭一个信笺再打开文档", "warning");
         return;
       }
       showStatus("文档已打开", "success");
+      return tabId;
     },
     [activeTabId, addOrActivateDocumentTab, handleSelectTab, openTabs, showStatus],
   );
+
+  const handleOpenWorkspaceSearchResult = useCallback(async (result) => {
+    if (!result?.path) return;
+    const tabId = await handleOpenFolderFile(result.path);
+    if (!tabId) return;
+    const query = String(result.query || workspaceSearchQuery).trim();
+    setSearchMode("");
+    setSearchQuery(query);
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      if (activeTabIdRef.current === tabId && sameDocumentPath(currentPathRef.current, result.path)) break;
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    }
+    if (activeTabIdRef.current !== tabId || !sameDocumentPath(currentPathRef.current, result.path)) return;
+    if (result.matchField === "title" || result.matchField === "fileName") {
+      const input = mainCanvasRef.current?.querySelector?.(".paper-title-input");
+      input?.focus?.();
+      input?.select?.();
+      return;
+    }
+    if (result.matchField === "author") {
+      const input = mainCanvasRef.current?.querySelector?.(".paper-author-input");
+      input?.focus?.();
+      input?.select?.();
+      return;
+    }
+    const targetEditor = editor;
+    if (!targetEditor || !query) return;
+    let next = searchDocumentText(targetEditor.state.doc, query);
+    if (next.matches.length && Number.isFinite(Number(result.matchStart))) {
+      const targetOffset = Number(result.matchStart);
+      const closestIndex = next.matches.reduce((best, match, index) => (
+        Math.abs(match.plainStart - targetOffset) < Math.abs(next.matches[best].plainStart - targetOffset) ? index : best
+      ), 0);
+      next = { ...next, activeIndex: closestIndex, activeMatch: next.matches[closestIndex] };
+    }
+    setDocumentSearchState(next);
+    if (next.activeMatch) targetEditor.chain().focus().setTextSelection(next.activeMatch.from).scrollIntoView().run();
+  }, [editor, handleOpenFolderFile, workspaceSearchQuery]);
 
   const handleCreateFolderInTree = useCallback(async (entry) => {
     const parentPath = entry?.path || folderState.path;
@@ -11917,7 +14925,7 @@ export default function App() {
       return;
     }
     await refreshTreeAfterEntryChange(folderPath);
-    const tabId = addOrActivateDocumentTab(result.document || { ...blank, title: title.trim() }, result.path, false);
+    const tabId = addOrActivateDocumentTab(result.document || { ...blank, title: title.trim() }, result.path, false, { diskRevision: result.diskRevision });
     if (!tabId) {
       showStatus("信笺已创建；标签栏已满，请关闭一个标签后从文件夹打开", "warning");
       return;
@@ -12001,14 +15009,35 @@ export default function App() {
     if (!entry?.path || entry.type !== "file") {
       return;
     }
+    const sourceTab = snapshotLiveTabs({ includeEditorJson: true }).find((tab) => sameDocumentPath(tab.path, entry.path));
+    if (sourceTab?.dirty) {
+      showStatus("请先保存这篇信笺，再复制备份，以便为原件和副本建立稳定身份", "warning");
+      return;
+    }
     const result = await bridge.backupDocument?.(entry.path);
     if (!result?.ok) {
       showStatus(result?.message || "备份失败", "warning");
       return;
     }
+    if (sourceTab && result.sourceDocument && result.sourceDiskRevision) {
+      const nextTabs = openTabsRef.current.map((tab) => {
+        if (tab.id !== sourceTab.id) return tab;
+        const document = mergePersistedDocumentIdentity(tab.document, result.sourceDocument);
+        diskRevisionByTabRef.current.set(tab.id, result.sourceDiskRevision);
+        return { ...tab, document, diskRevision: result.sourceDiskRevision };
+      });
+      openTabsRef.current = nextTabs;
+      setOpenTabs(nextTabs);
+      if (sourceTab.id === activeTabIdRef.current) {
+        const document = mergePersistedDocumentIdentity(documentStateRef.current, result.sourceDocument);
+        documentStateRef.current = document;
+        setDocumentState(document);
+      }
+      persistSession({ tabs: summarizeSessionTabs(nextTabs) });
+    }
     await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
     showStatus("备份已复制到当前目录", "success");
-  }, [folderState.path, refreshTreeAfterEntryChange, showStatus]);
+  }, [folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus, snapshotLiveTabs]);
 
   const handleDeleteTreeEntry = useCallback(async (entry) => {
     if (!entry?.path) {
@@ -12160,29 +15189,35 @@ export default function App() {
 
   const handleOutlineItemClick = useCallback(
     (item) => {
-      if (!editor || typeof item?.pos !== "number") {
+      if (!structureWorkEditor || typeof item?.pos !== "number") {
         return;
       }
+      setActivePane(structureWorkEditor === rightSplitEditor ? "right" : "main");
       if (item.type === "toc") {
-        const tocNode = editor.state.doc.nodeAt(item.pos);
-        const selectionPos = Math.min(item.pos + (tocNode?.nodeSize || 1), editor.state.doc.content.size);
-        editor.chain().focus().setTextSelection(selectionPos).run();
+        const tocNode = structureWorkEditor.state.doc.nodeAt(item.pos);
+        const selectionPos = Math.min(item.pos + (tocNode?.nodeSize || 1), structureWorkEditor.state.doc.content.size);
+        structureWorkEditor.chain().focus().setTextSelection(selectionPos).run();
       } else {
-        const selectionPos = Math.min(item.pos + 1, editor.state.doc.content.size);
-        editor.chain().focus().setTextSelection(selectionPos).run();
+        const selectionPos = Math.min(item.pos + 1, structureWorkEditor.state.doc.content.size);
+        structureWorkEditor.chain().focus().setTextSelection(selectionPos).run();
       }
       window.requestAnimationFrame(() => {
-        const node = editor.view.nodeDOM(item.pos);
+        const node = structureWorkEditor.view.nodeDOM(item.pos);
         const element = node?.nodeType === window.Node.ELEMENT_NODE ? node : node?.parentElement;
         element?.scrollIntoView({ behavior: "smooth", block: "center" });
       });
     },
-    [editor],
+    [rightSplitEditor, structureWorkEditor],
   );
 
   const handleSave = useCallback(
     async (saveAs) => {
       try {
+        const focusedSecondaryView = getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY);
+        if (activePane === "right" && focusedSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
+          showStatus("当前活动标签是资料；请先切回信笺再保存", "warning");
+          return;
+        }
         const targetTab = splitPaneActive && rightSplitTab
           ? rightSplitTab
           : openTabsRef.current.find((tab) => tab.id === activeTabIdRef.current);
@@ -12193,30 +15228,127 @@ export default function App() {
           ? getRightSplitSaveDocument()
           : getSaveDocument();
         if (!nextDocument) return;
+        if (targetTab.readOnly || nextDocument?._readOnlyFutureSchema) {
+          showStatus("此信笺使用未来格式，当前版本只能只读打开", "warning");
+          return;
+        }
         const revision = liveRevisionByTabRef.current.get(targetTab.id) || 0;
         const previousDocumentKey = documentRuntimeKey(targetTab.path, targetTab.id);
         const reservedPaths = openTabsRef.current
           .filter((tab) => tab.id !== targetTab.id && tab.path)
           .map((tab) => tab.path);
-        const result = await queueTabSave(targetTab.id, () => (
-          bridge.saveDocument(nextDocument, targetTab.path, saveAs, reservedPaths)
+        const expectedRevision = diskRevisionByTabRef.current.get(targetTab.id) || targetTab.diskRevision || null;
+        let result = await queueTabSave(targetTab.id, () => (
+          bridge.saveDocument(nextDocument, targetTab.path, saveAs, reservedPaths, expectedRevision)
         ));
+        if (result?.conflict) {
+          setExternalVersionDetected(true);
+          setPersistenceState("external");
+          const decision = await showConfirmDialog({
+            tone: "warning",
+            icon: RefreshCw,
+            eyebrow: "检测到外部版本",
+            title: "磁盘上的信笺已被其他程序修改",
+            message: "磁盘版本已保留；当前内存稿也已保存为带时间戳的本机冲突副本。",
+            detail: result.conflictCopyPath,
+            cancelValue: "cancel",
+            actions: [
+              { value: "compare", label: "对照查看", variant: "primary" },
+              { value: "reload", label: "重新载入磁盘版", variant: "secondary" },
+              { value: "overwrite", label: "明确覆盖磁盘版", variant: "danger" },
+              { value: "cancel", label: "稍后处理", variant: "ghost" },
+            ],
+          });
+          if (decision === "overwrite") {
+            result = await queueTabSave(targetTab.id, () => bridge.saveDocument(
+              nextDocument,
+              targetTab.path,
+              false,
+              reservedPaths,
+              result.actualRevision,
+              { conflictAction: "overwrite" },
+            ));
+            if (result?.conflict) {
+              setExternalVersionDetected(true);
+              setPersistenceState("external");
+              showStatus("确认覆盖期间又检测到新的外部版本；未覆盖磁盘，并再次保留了本机冲突副本", "warning");
+              return;
+            }
+          } else if (decision === "reload") {
+            const reloaded = await bridge.openDocumentPath(targetTab.path);
+            if (!reloaded?.canceled && reloaded?.document) {
+              diskRevisionByTabRef.current.set(targetTab.id, reloaded.diskRevision);
+              dirtyTabIdsRef.current.delete(targetTab.id);
+              const normalizedReload = normalizeDocument(reloaded.document, letterTemplates);
+              const nextTabs = openTabsRef.current.map((tab) => tab.id === targetTab.id ? { ...tab, document: normalizedReload, dirty: false, diskRevision: reloaded.diskRevision, externalChanged: false } : tab);
+              openTabsRef.current = nextTabs;
+              setOpenTabs(nextTabs);
+              if (targetTab.id === activeTabIdRef.current) applyDocument(normalizedReload, targetTab.path, false);
+              setPersistenceState("workspace");
+              setExternalVersionDetected(false);
+            }
+            showStatus("已重新载入磁盘版本；内存稿保留在冲突副本中", "success");
+            return;
+          } else if (decision === "compare") {
+            const diskResult = await bridge.openDocumentPath(targetTab.path);
+            if (!diskResult?.canceled && diskResult?.document) {
+              const comparisonId = addOrActivateDocumentTab({
+                ...diskResult.document,
+                title: `${diskResult.document.title || targetTab.title || "未命名信笺"}（磁盘版本对照）`,
+              }, "", false, { readOnly: true });
+              if (comparisonId) {
+                rightSplitTabIdRef.current = targetTab.id;
+                setRightSplitTabId(targetTab.id);
+                setActivePane("main");
+              }
+            }
+            showStatus("已在只读视图中打开磁盘版本；右侧保留当前内存稿，冲突副本也已写入磁盘", "success");
+            return;
+          } else {
+            showStatus("两个版本都已保留，正文未被覆盖", "warning");
+            return;
+          }
+        }
         if (result?.canceled) return;
         if (!result?.path) throw new Error("保存完成后没有返回文件路径");
         const unchanged = (liveRevisionByTabRef.current.get(targetTab.id) || 0) === revision;
         const savedDocument = normalizeDocument(result.document || nextDocument, letterTemplates);
+        if (result.diskRevision) diskRevisionByTabRef.current.set(targetTab.id, result.diskRevision);
         migrateAiRequestDocumentKey(previousDocumentKey, documentRuntimeKey(result.path, targetTab.id));
-        if (unchanged) dirtyTabIdsRef.current.delete(targetTab.id);
-        const nextTabs = openTabsRef.current.map((tab) => (
+        const latestSnapshot = unchanged ? openTabsRef.current : snapshotLiveTabs({ includeEditorJson: true });
+        const latestTargetTab = latestSnapshot.find((tab) => tab.id === targetTab.id) || targetTab;
+        const livePersistedDocument = unchanged
+          ? savedDocument
+          : mergePersistedDocumentIdentity(latestTargetTab.document || nextDocument, savedDocument);
+        let recoveryWrite = null;
+        let recoveryWriteError = null;
+        if (unchanged) {
+          dirtyTabIdsRef.current.delete(targetTab.id);
+        } else {
+          try {
+            recoveryWrite = await queueTabSave(targetTab.id, () => bridge.saveTempDocument?.(
+              livePersistedDocument,
+              recoveryTabId(latestTargetTab),
+            ));
+            if (recoveryWrite?.canceled || !recoveryWrite?.path) throw new Error("恢复缓存未生成文件");
+          } catch (error) {
+            recoveryWriteError = error;
+          }
+        }
+        const nextTabs = latestSnapshot.map((tab) => (
           tab.id === targetTab.id
             ? {
                 ...tab,
                 path: result.path,
-                recoveryPath: "",
-                recoveryId: "",
-                recoveredTemporary: false,
-                title: savedDocument.title,
-                document: unchanged ? savedDocument : tab.document,
+                recoveryPath: unchanged ? "" : (recoveryWrite?.path || tab.recoveryPath || ""),
+                recoveryId: unchanged ? "" : (recoveryWrite?.recoveryId || tab.recoveryId || recoveryTabId(tab)),
+                recoverySourcePath: unchanged ? "" : (recoveryWrite?.path ? result.path : tab.recoverySourcePath || ""),
+                recoveryBaseRevision: unchanged ? null : (recoveryWrite?.path ? normalizeSessionDiskRevision(result.diskRevision) : tab.recoveryBaseRevision || null),
+                recoveredTemporary: unchanged ? false : Boolean(recoveryWrite?.path || tab.recoveryPath),
+                title: livePersistedDocument.title,
+                document: livePersistedDocument,
+                diskRevision: result.diskRevision || tab.diskRevision,
+                externalChanged: false,
                 dirty: !unchanged,
               }
             : tab
@@ -12228,16 +15360,23 @@ export default function App() {
           setCurrentPath(result.path);
           dirtyRef.current = !unchanged;
           setDirty(!unchanged);
-          if (unchanged) {
-            documentStateRef.current = savedDocument;
-            setDocumentState(savedDocument);
-          }
-          persistSession({ activePath: result.path, tabs: summarizeSessionTabs(nextTabs) });
+          documentStateRef.current = livePersistedDocument;
+          setDocumentState(livePersistedDocument);
+          setExternalVersionDetected(false);
+          setPersistenceState(unchanged ? "workspace" : (recoveryWrite?.path ? "recovery" : "dirty"));
         }
+        const activeSessionTab = nextTabs.find((tab) => tab.id === activeTabIdRef.current) || nextTabs[0];
+        persistSession({ activePath: activeSessionTab?.path || activeSessionTab?.recoveryPath || "", tabs: summarizeSessionTabs(nextTabs) });
         refreshFolder();
-        const recoveryCleaned = await deleteRecoveryBestEffort(bridge.deleteTempDocument, recoveryIdToDelete);
-        if (!recoveryCleaned) {
+        const recoveryCleaned = unchanged
+          ? await deleteRecoveryBestEffort(bridge.deleteTempDocument, recoveryIdToDelete)
+          : true;
+        if (unchanged && !recoveryCleaned) {
           showStatus("文档已保存，但旧恢复文件清理失败", "warning");
+        } else if (!unchanged && recoveryWriteError) {
+          showStatus(`已写入点击保存时的版本，但后续编辑写入恢复缓存失败：${recoveryWriteError?.message || "稍后将重试"}`, "warning");
+        } else if (!unchanged) {
+          showStatus("已写入点击保存时的版本；保存期间的新编辑已写入恢复缓存", "success");
         } else {
           showStatus(targetTab.id === rightSplitTab?.id && splitPaneActive ? "右分屏信笺已保存" : "文档已保存", "success");
         }
@@ -12245,7 +15384,7 @@ export default function App() {
         showStatus(error?.message || "文档保存失败", "warning");
       }
     },
-    [getRightSplitSaveDocument, getSaveDocument, letterTemplates, migrateAiRequestDocumentKey, persistSession, queueTabSave, refreshFolder, rightSplitTab, showStatus, splitPaneActive],
+    [activePane, addOrActivateDocumentTab, applyDocument, getRightSplitSaveDocument, getSaveDocument, letterTemplates, migrateAiRequestDocumentKey, persistSession, queueTabSave, refreshFolder, rightSplitTab, showConfirmDialog, showStatus, snapshotLiveTabs, splitPaneActive],
   );
 
   useEffect(() => {
@@ -12320,12 +15459,16 @@ export default function App() {
                 continue;
               }
               const result = await queueTabSave(tab.id, () => (tab.path
-                ? bridge.saveDocument(tab.document, tab.path, false)
+                ? bridge.saveDocument(tab.document, tab.path, false, [], diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null)
                 : bridge.saveTempDocument?.(tab.document, recoveryTabId(tab))));
+              if (result?.conflict) {
+                throw new Error(`检测到外部版本；内存稿已保存为冲突副本：${result.conflictCopyPath}`);
+              }
               if (result?.canceled || !result?.path) {
                 await bridge.closeCanceled?.(payload);
                 return;
               }
+              if (tab.path && result.diskRevision) diskRevisionByTabRef.current.set(tab.id, result.diskRevision);
               if (!snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) {
                 showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
                 await bridge.closeCanceled?.(payload);
@@ -12338,6 +15481,9 @@ export default function App() {
                 recoveryId: tab.path ? "" : (result.recoveryId || recoveryTabId(tab)),
                 recoveredTemporary: !tab.path,
                 document: result.document || tab.document,
+                diskRevision: result.diskRevision || tab.diskRevision,
+                recoverySourcePath: tab.path ? "" : tab.recoverySourcePath,
+                recoveryBaseRevision: tab.path ? null : tab.recoveryBaseRevision,
                 dirty: !tab.path,
               });
             }
@@ -12392,18 +15538,14 @@ export default function App() {
             continue;
           }
           try {
-            const result = await queueTabSave(tab.id, () => (tab.path
-              ? bridge.saveDocument(tab.document, tab.path, false)
-              : bridge.saveTempDocument?.(tab.document, recoveryTabId(tab))));
+            const result = await queueTabSave(tab.id, () => bridge.saveTempDocument?.(tab.document, recoveryTabId(tab)));
             if (result?.canceled || !result?.path) throw new Error("自动保存没有生成可恢复文件");
             updates.set(tab.id, {
-              document: result.document || tab.document,
               path: result.path,
-              recoveryId: result.recoveryId || recoveryTabId(tab),
-              temporary: !tab.path,
               sourcePath: tab.path || "",
+              baseRevision: normalizeSessionDiskRevision(diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision),
+              recoveryId: result.recoveryId || recoveryTabId(tab),
               snapshotRevision: tab.snapshotRevision,
-              unchanged: snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current),
             });
           } catch (error) {
             const now = Date.now();
@@ -12417,41 +15559,24 @@ export default function App() {
         const nextTabs = openTabsRef.current.map((tab) => {
           const update = updates.get(tab.id);
           if (!update) return tab;
-          const targetUnchanged = update.sourcePath
-            ? sameDocumentPath(tab.path, update.sourcePath)
-            : !tab.path;
+          const targetUnchanged = sameDocumentPath(tab.path || "", update.sourcePath);
           if (!targetUnchanged) return tab;
-          if (update.temporary) {
-            return {
-              ...tab,
-              recoveryPath: update.path,
-              recoveryId: update.recoveryId,
-              recoveredTemporary: true,
-              dirty: true,
-            };
-          }
-          if (!update.unchanged || !snapshotRevisionIsCurrent({ id: tab.id, snapshotRevision: update.snapshotRevision }, liveRevisionByTabRef.current)) return tab;
-          dirtyTabIdsRef.current.delete(tab.id);
-          return { ...tab, document: update.document, dirty: false };
+          return {
+            ...tab,
+            recoveryPath: update.path,
+            recoveryId: update.recoveryId,
+            recoverySourcePath: update.sourcePath,
+            recoveryBaseRevision: update.baseRevision,
+            recoveredTemporary: true,
+            dirty: true,
+          };
         });
         openTabsRef.current = nextTabs;
         setOpenTabs(nextTabs);
         const activeId = activeTabIdRef.current;
-        const activeUpdate = updates.get(activeId);
-        const activeTabAfterUpdate = nextTabs.find((tab) => tab.id === activeId);
-        const activeTargetUnchanged = activeUpdate?.sourcePath
-          ? sameDocumentPath(activeTabAfterUpdate?.path, activeUpdate.sourcePath)
-          : !activeTabAfterUpdate?.path;
-        const activeUpdateCurrent = activeUpdate?.unchanged
-          && activeTargetUnchanged
-          && snapshotRevisionIsCurrent({ id: activeId, snapshotRevision: activeUpdate.snapshotRevision }, liveRevisionByTabRef.current);
-        if (activeUpdateCurrent) {
-          documentStateRef.current = activeUpdate.document;
-          setDocumentState(activeUpdate.document);
-          if (!activeUpdate.temporary) {
-            dirtyRef.current = false;
-            setDirty(false);
-          }
+        if (updates.has(activeId)) {
+          const activeRecoveryTab = nextTabs.find((tab) => tab.id === activeId);
+          setPersistenceState(activeRecoveryTab?.externalChanged ? "external" : "recovery");
         }
         persistSession({
           activePath: nextTabs.find((tab) => tab.id === activeId)?.path
@@ -12459,40 +15584,154 @@ export default function App() {
             || "",
           tabs: summarizeSessionTabs(nextTabs),
         });
-        refreshFolderRef.current?.();
       } finally {
         autosaveRunningRef.current = false;
       }
-    }, 60000);
+    }, 30000);
 
     return () => window.clearInterval(timer);
   }, [persistSession, queueTabSave, showStatus, snapshotLiveTabs]);
 
+  const flushDirtyWorkspaceTabs = useCallback(async ({ idleOnly = false } = {}) => {
+    if (sessionClosePendingRef.current) return;
+    const now = Date.now();
+    const snapshot = snapshotLiveTabs();
+    const candidates = snapshot.filter((tab) => tab.path && tab.dirty && !tab.readOnly && !tab.externalChanged
+      && (!idleOnly || now - (lastEditAtByTabRef.current.get(tab.id) || now) >= 5 * 60 * 1000));
+    for (const tab of candidates) {
+      if (saveQueueByTabRef.current.has(tab.id) || !snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) continue;
+      try {
+        const expectedRevision = diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null;
+        const result = await queueTabSave(tab.id, () => bridge.saveDocument(tab.document, tab.path, false, [], expectedRevision));
+        if (result?.conflict) {
+          setOpenTabs((previous) => {
+            const next = previous.map((item) => item.id === tab.id ? { ...item, externalChanged: true } : item);
+            openTabsRef.current = next;
+            return next;
+          });
+          if (tab.id === activeTabIdRef.current) {
+            setExternalVersionDetected(true);
+            setPersistenceState("external");
+          }
+          showStatus(`检测到外部版本；本机稿已保留为冲突副本`, "warning");
+          continue;
+        }
+        if (!result?.path) continue;
+        if (result.diskRevision) diskRevisionByTabRef.current.set(tab.id, result.diskRevision);
+        if (!snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) continue;
+        dirtyTabIdsRef.current.delete(tab.id);
+        const nextTabs = openTabsRef.current.map((item) => item.id === tab.id ? {
+          ...item,
+          document: result.document || tab.document,
+          diskRevision: result.diskRevision,
+          recoveryPath: "",
+          recoveryId: "",
+          recoverySourcePath: "",
+          recoveryBaseRevision: null,
+          recoveredTemporary: false,
+          dirty: false,
+          externalChanged: false,
+        } : item);
+        openTabsRef.current = nextTabs;
+        setOpenTabs(nextTabs);
+        if (tab.id === activeTabIdRef.current) {
+          dirtyRef.current = false;
+          setDirty(false);
+          setPersistenceState("workspace");
+          setExternalVersionDetected(false);
+        }
+        if (tab.recoveryPath) await bridge.deleteTempDocument?.(recoveryTabId(tab)).catch?.(() => {});
+      } catch (error) {
+        const timestamp = Date.now();
+        if (timestamp - autosaveErrorAtRef.current > 5 * 60 * 1000) {
+          autosaveErrorAtRef.current = timestamp;
+          showStatus(error?.message || "工作区自动写入失败，将继续保留恢复缓存", "warning");
+        }
+      }
+    }
+    persistSession({ tabs: summarizeSessionTabs(openTabsRef.current) });
+  }, [persistSession, queueTabSave, showStatus, snapshotLiveTabs]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => flushDirtyWorkspaceTabs({ idleOnly: true }), 30000);
+    return () => window.clearInterval(timer);
+  }, [flushDirtyWorkspaceTabs]);
+
+  useEffect(() => bridge.onWindowBlur?.(() => flushDirtyWorkspaceTabs({ idleOnly: false })), [flushDirtyWorkspaceTabs]);
+
   useEffect(() => {
     const handleKeyDown = (event) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") {
+      if (event.key === "Escape" && searchMode) {
+        event.preventDefault();
+        closeSearch();
         return;
       }
-      event.preventDefault();
-      handleSave(event.shiftKey);
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      const state = workspaceGroupsRef.current;
+      const focusedGroupId = activePane === "right" && state.secondary.views.length
+        ? WORKSPACE_GROUP_ID.SECONDARY
+        : WORKSPACE_GROUP_ID.PRIMARY;
+      const focusedView = getActiveWorkspaceView(state, focusedGroupId);
+      const focusedResearch = focusedGroupId === WORKSPACE_GROUP_ID.SECONDARY
+        && focusedView?.kind === WORKSPACE_VIEW_KIND.RESEARCH;
+      if (!event.altKey && key === "w") {
+        if (window.document.querySelector("[role='dialog'],[role='alertdialog']")) return;
+        event.preventDefault();
+        if (focusedView) void handleCloseGroupView(focusedGroupId, focusedView.viewId);
+        return;
+      }
+      if (event.altKey && key === "i") {
+        event.preventDefault();
+        handleImportDocument();
+      } else if (event.altKey && key === "e") {
+        event.preventDefault();
+        setExportDialogOpen(true);
+      } else if (!event.altKey && key === "n") {
+        event.preventDefault();
+        handleNew();
+      } else if (!event.altKey && key === "o") {
+        event.preventDefault();
+        handleOpen();
+      } else if (key === "s") {
+        event.preventDefault();
+        handleSave(event.shiftKey);
+      } else if (key === "f") {
+        event.preventDefault();
+        if (focusedResearch) {
+          closeSearch();
+          window.dispatchEvent(new CustomEvent("paper-pdf-find"));
+        } else openSearch("document");
+      } else if (key === "h") {
+        event.preventDefault();
+        if (!focusedResearch) openSearch("document", { replace: true });
+      } else if (key === "p") {
+        event.preventDefault();
+        openSearch("workspace");
+      }
     };
 
     window.document.addEventListener("keydown", handleKeyDown, true);
     return () => window.document.removeEventListener("keydown", handleKeyDown, true);
-  }, [handleSave]);
+  }, [activePane, closeSearch, handleCloseGroupView, handleImportDocument, handleNew, handleOpen, handleSave, openSearch, searchMode]);
 
   const handleExportPdf = useCallback(async (targetPath) => {
     const nextDocument = getSaveDocument();
     setDocumentState(nextDocument);
     setPrintMode(true);
+    let restorePrintPaperBackground = () => {};
     try {
-      await new Promise((resolve) => window.setTimeout(resolve, 120));
+      await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+      const printSheet = window.document.querySelector(".canvas.print-mode .paper-sheet");
+      restorePrintPaperBackground = applyPrintPaperBackground(printSheet);
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
       const result = await bridge.exportPdf(nextDocument.title, targetPath);
       if (!result?.canceled) {
         showStatus("PDF 已导出", "success");
       }
       return result;
     } finally {
+      restorePrintPaperBackground();
       setPrintMode(false);
     }
   }, [getSaveDocument, showStatus]);
@@ -12536,6 +15775,22 @@ export default function App() {
     }
   }, [getSaveDocument, showStatus]);
 
+  const handleExportEditable = useCallback(async (format, targetPath) => {
+    const nextDocument = getSaveDocument();
+    setDocumentState(nextDocument);
+    const exchangeDocument = {
+      ...nextDocument,
+      comments: [],
+      aiState: createEmptyAiState(),
+    };
+    const result = await bridge.exportEditable?.(exchangeDocument, format, targetPath);
+    if (!result?.canceled) {
+      const warnings = Array.isArray(result?.warnings) ? result.warnings : [];
+      showStatus(warnings.length ? `${format.toUpperCase()} 已导出；有 ${warnings.length} 项降级` : `${format.toUpperCase()} 已导出`, warnings.length ? "warning" : "success");
+    }
+    return result;
+  }, [getSaveDocument, showStatus]);
+
   const handleInsertImage = useCallback(async () => {
     let result;
     try {
@@ -12561,6 +15816,7 @@ export default function App() {
       alt: normalizeImageText(result.name || "图片"),
       caption: "",
       width: "78%",
+      imageId: createDocumentId(),
     }).run();
   }, [activeWorkEditor, showStatus]);
 
@@ -12628,23 +15884,14 @@ export default function App() {
       return;
     }
     const content = {
-      type: "text",
-      text,
-      marks: [{
-        type: "link",
-        attrs: {
-          href: url,
-          target: "_blank",
-          rel: "noopener noreferrer nofollow",
-          class: null,
-        },
-      }],
+      type: "paperExternalLink",
+      attrs: { href: url, label: text },
     };
     linkDialog.editor
       .chain()
       .focus()
       .insertContentAt({ from: linkDialog.from, to: linkDialog.to }, content)
-      .setTextSelection(linkDialog.from + text.length)
+      .setTextSelection(linkDialog.from + 1)
       .run();
     setLinkDialog(null);
     showStatus(linkDialog.editing ? "链接已更新" : "链接已插入", "success");
@@ -12654,7 +15901,11 @@ export default function App() {
     if (!linkDialog?.editor) {
       return;
     }
-    linkDialog.editor.chain().focus().setTextSelection({ from: linkDialog.from, to: linkDialog.to }).unsetLink().run();
+    const label = String(linkDialog.text || "");
+    linkDialog.editor.chain().focus().insertContentAt(
+      { from: linkDialog.from, to: linkDialog.to },
+      label ? { type: "text", text: label } : "",
+    ).setTextSelection(linkDialog.from + label.length).run();
     setLinkDialog(null);
     showStatus("链接已移除", "success");
   }, [linkDialog, showStatus]);
@@ -12670,6 +15921,49 @@ export default function App() {
     documentStateRef.current = nextDocument;
     setDocumentState(nextDocument);
   }, [recordTabMutation]);
+
+  const handleApplyTabTemplate = useCallback((tabId, letterTemplateId) => {
+    const letterTemplate = letterTemplates.find((template) => template.id === letterTemplateId);
+    if (!tabId || !letterTemplate) {
+      showStatus("没有找到要使用的模板", "warning");
+      return false;
+    }
+
+    const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+    const targetTab = snapshot.find((tab) => tab.id === tabId);
+    const sourceDocument = tabId === activeTabIdRef.current
+      ? documentStateRef.current
+      : targetTab?.document;
+    if (!targetTab || !sourceDocument) {
+      showStatus("没有找到要修改的信笺", "warning");
+      return false;
+    }
+    if (targetTab.readOnly || sourceDocument._readOnlyFutureSchema) {
+      showStatus("未来格式信笺为只读，不能切换模板", "warning");
+      return false;
+    }
+    if (getLetterTemplate(sourceDocument, letterTemplates).id === letterTemplate.id) {
+      showStatus(`“${targetTab.title || "当前信笺"}”已在使用“${letterTemplate.label}”`, "success");
+      return true;
+    }
+
+    const updatedAt = new Date().toISOString();
+    const nextDocument = applyLetterTemplateToDocument(sourceDocument, letterTemplate, updatedAt);
+    const nextTabs = snapshot.map((tab) => (
+      tab.id === tabId
+        ? { ...tab, document: nextDocument, dirty: true }
+        : tab
+    ));
+    openTabsRef.current = nextTabs;
+    setOpenTabs(nextTabs);
+    if (tabId === activeTabIdRef.current) {
+      documentStateRef.current = nextDocument;
+      setDocumentState(nextDocument);
+    }
+    recordTabMutation(tabId, updatedAt);
+    showStatus(`已为“${targetTab.title || "当前信笺"}”使用“${letterTemplate.label}”`, "success");
+    return true;
+  }, [letterTemplates, recordTabMutation, showStatus, snapshotLiveTabs]);
 
   const handleCreateUserTemplate = useCallback((template) => {
     const nextTemplate = normalizeUserTemplate(template, userTemplateGroups);
@@ -12842,18 +16136,40 @@ export default function App() {
     if (wasNewDocumentDefault) {
       setNewDocumentTemplateId(newDocumentFallback.id);
     }
-    if (documentStateRef.current.letterTemplateId === templateId) {
-      updateDocumentSetting({
-        letterTemplateId: documentFallback.id,
-        templateId: documentFallback.paperId,
-        fontFamily: documentFallback.typography.bodyFont,
-        fontSize: documentFallback.typography.bodySize,
-        customBackground: "",
+    const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+    const affectedTabIds = snapshot
+      .filter((tab) => {
+        const sourceDocument = tab.id === activeTabIdRef.current ? documentStateRef.current : tab.document;
+        return sourceDocument?.letterTemplateId === templateId;
+      })
+      .map((tab) => tab.id);
+    if (affectedTabIds.length) {
+      const affectedIds = new Set(affectedTabIds);
+      const updatedAt = new Date().toISOString();
+      const nextTabs = snapshot.map((tab) => {
+        if (!affectedIds.has(tab.id)) return tab;
+        const sourceDocument = tab.id === activeTabIdRef.current ? documentStateRef.current : tab.document;
+        return {
+          ...tab,
+          document: applyLetterTemplateToDocument(sourceDocument, documentFallback, updatedAt),
+          dirty: true,
+        };
       });
+      openTabsRef.current = nextTabs;
+      setOpenTabs(nextTabs);
+      if (affectedIds.has(activeTabIdRef.current)) {
+        const activeDocument = nextTabs.find((tab) => tab.id === activeTabIdRef.current)?.document;
+        if (activeDocument) {
+          documentStateRef.current = activeDocument;
+          setDocumentState(activeDocument);
+        }
+      }
+      affectedTabIds.forEach((tabId) => recordTabMutation(tabId, updatedAt));
       const defaultFallbackMessage = wasNewDocumentDefault
         ? `；新建默认已恢复为“${newDocumentFallback.label}”`
         : "";
-      showStatus(`已删除“${template.label}”，当前信笺已切换为“${documentFallback.label}”${defaultFallbackMessage}`, "success");
+      const affectedMessage = affectedTabIds.length === 1 ? "1 个打开的信笺" : `${affectedTabIds.length} 个打开的信笺`;
+      showStatus(`已删除“${template.label}”，${affectedMessage}已切换为“${documentFallback.label}”${defaultFallbackMessage}`, "success");
       return;
     }
     if (wasNewDocumentDefault) {
@@ -12861,7 +16177,7 @@ export default function App() {
       return;
     }
     showStatus(`已删除用户模板“${template.label}”`, "success");
-  }, [letterTemplates, newDocumentTemplateHistory, newDocumentTemplateId, showStatus, updateDocumentSetting, userLetterTemplates]);
+  }, [letterTemplates, newDocumentTemplateHistory, newDocumentTemplateId, recordTabMutation, showStatus, snapshotLiveTabs, userLetterTemplates]);
 
   const handleNewDocumentTemplateChange = useCallback((templateId) => {
     const template = letterTemplates.find((item) => item.id === templateId);
@@ -12906,18 +16222,11 @@ export default function App() {
     showStatus(`已将“${template.label}”设为新建信笺的默认模板`, "success");
   }, [letterTemplates, newDocumentTemplateHistory, newDocumentTemplateId, showStatus]);
 
-  const handleLetterTemplateChange = useCallback(
+  const handleTabTemplateChange = useCallback(
     (letterTemplateId) => {
-      const letterTemplate = letterTemplates.find((template) => template.id === letterTemplateId) || DEFAULT_LETTER_TEMPLATES[0];
-      updateDocumentSetting({
-        letterTemplateId: letterTemplate.id,
-        templateId: letterTemplate.paperId,
-        fontFamily: letterTemplate.typography.bodyFont,
-        fontSize: letterTemplate.typography.bodySize,
-        customBackground: "",
-      });
+      handleApplyTabTemplate(tabTemplateDialog.targetTabId, letterTemplateId);
     },
-    [letterTemplates, updateDocumentSetting],
+    [handleApplyTabTemplate, tabTemplateDialog.targetTabId],
   );
 
   const handleSaveAiConfig = useCallback(async (draft) => {
@@ -12980,43 +16289,143 @@ export default function App() {
     return result;
   }, [showStatus]);
 
+  const clearActiveAiRequestRefs = useCallback(() => {
+    aiRequestIdRef.current = "";
+    aiStartedAtRef.current = 0;
+    aiPromptTokenEstimateRef.current = 0;
+    aiRequestMetaRef.current = { kind: "" };
+    aiChatAssistantIdRef.current = "";
+  }, []);
+
   const exitAiMode = useCallback(() => {
     const requestId = aiRequestIdRef.current;
     if (requestId && aiStatus === "streaming") {
       bridge.cancelAi?.(requestId);
     }
-    aiRequestIdRef.current = "";
+    clearActiveAiRequestRefs();
     setAiModeKind("none");
-    aiStartedAtRef.current = 0;
-    aiPromptTokenEstimateRef.current = 0;
-    aiRequestMetaRef.current = { kind: "" };
-    aiChatAssistantIdRef.current = "";
+    setAiModeChooserOpen(false);
     if (aiPreviousSidebarsRef.current) {
       setLeftSidebarCollapsed(aiPreviousSidebarsRef.current.left);
       aiPreviousSidebarsRef.current = null;
     }
-  }, [aiStatus]);
+    const savedLayout = aiSecondaryPaneLayoutRef.current;
+    aiSecondaryPaneLayoutRef.current = null;
+    if (savedLayout && immersiveMode) {
+      immersiveSecondaryPaneLayoutRef.current = savedLayout;
+    } else if (savedLayout) {
+      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      openTabsRef.current = snapshot;
+      setOpenTabs(snapshot);
+      commitWorkspaceGroups(savedLayout.workspaceGroups);
+      const primaryView = getActiveWorkspaceView(savedLayout.workspaceGroups, WORKSPACE_GROUP_ID.PRIMARY);
+      const primaryTab = snapshot.find((tab) => tab.id === primaryView?.tabId);
+      if (primaryTab && primaryTab.id !== activeTabIdRef.current) {
+        activeTabIdRef.current = primaryTab.id;
+        setActiveTabId(primaryTab.id);
+        applyDocument(primaryTab.document, primaryTab.path, primaryTab.dirty, { editorJson: primaryTab.editorJson, scrollState: primaryTab.scrollState });
+      }
+      setActivePane(savedLayout.activePane === "right" && savedLayout.workspaceGroups.secondary.views.length ? "right" : "main");
+    }
+  }, [aiStatus, applyDocument, clearActiveAiRequestRefs, commitWorkspaceGroups, immersiveMode, snapshotLiveTabs]);
 
-  const enterAiMode = useCallback((kind) => {
-    if (aiMode) {
+  const activateAiMode = useCallback((kind) => {
+    if (kind !== "optimize" && kind !== "chat") {
       return false;
     }
+    if (!aiHasUsableProvider) {
+      showStatus("请先在“设置 > AI 配置”中配置并测试可用模型", "warning");
+      return false;
+    }
+    if (aiModeKind === kind) return true;
+
+    const enteringAiMode = aiModeKind === "none";
     setAiSelectedProvider(effectiveAiProvider);
-    aiPreviousSidebarsRef.current = {
-      left: leftSidebarCollapsed,
-    };
-    setLeftSidebarCollapsed(true);
+    if (enteringAiMode) {
+      aiPreviousSidebarsRef.current = {
+        left: leftSidebarCollapsed,
+      };
+      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      openTabsRef.current = snapshot;
+      setOpenTabs(snapshot);
+      aiSecondaryPaneLayoutRef.current = immersiveMode && immersiveSecondaryPaneLayoutRef.current
+        ? immersiveSecondaryPaneLayoutRef.current
+        : { workspaceGroups: workspaceGroupsRef.current, activePane };
+      setActivePane("main");
+      setLeftSidebarCollapsed(true);
+    }
     setAiModeKind(kind);
     if (normalizeAiState(documentStateRef.current?.aiState).lastMode !== kind) {
       updateActiveDocumentAiState((previous) => ({ ...previous, lastMode: kind }));
     }
-    aiRequestIdRef.current = "";
-    aiStartedAtRef.current = 0;
-    aiPromptTokenEstimateRef.current = 0;
-    aiRequestMetaRef.current = { kind: "" };
-    aiChatAssistantIdRef.current = "";
+    if (kind === "chat") {
+      aiChatContextRef.current = { signature: "", context: "", images: [] };
+    }
+    clearActiveAiRequestRefs();
     return true;
-  }, [aiMode, effectiveAiProvider, leftSidebarCollapsed, updateActiveDocumentAiState]);
+  }, [activePane, aiHasUsableProvider, aiModeKind, clearActiveAiRequestRefs, effectiveAiProvider, immersiveMode, leftSidebarCollapsed, showStatus, snapshotLiveTabs, updateActiveDocumentAiState]);
+
+  const requestAiModeChange = useCallback(async (kind) => {
+    if (!aiHasUsableProvider) {
+      openAiSettings();
+      showStatus(AI_MODEL_REQUIRED_MESSAGE, "warning", { duration: 5000, dismissible: true });
+      return false;
+    }
+    if (aiModeKind === kind) {
+      setAiModeChooserOpen(false);
+      return true;
+    }
+    if (shouldConfirmAiModeChange({ currentMode: aiModeKind, nextMode: kind, busy: aiStatus === "streaming" })) {
+      const currentLabel = aiModeKind === "chat" ? "AI问答" : "AI优化";
+      const nextLabel = kind === "chat" ? "AI问答" : "AI优化";
+      const decision = await showConfirmDialog({
+        tone: "warning",
+        icon: Square,
+        eyebrow: "切换 AI 模式",
+        title: `停止${currentLabel}并切换到${nextLabel}？`,
+        message: "当前生成会停止，已经产生的内容会保留。",
+        cancelValue: "cancel",
+        actions: [
+          { value: "switch", label: "停止并切换", variant: "primary", autoFocus: true },
+          { value: "cancel", label: "继续当前生成", variant: "ghost" },
+        ],
+      });
+      if (decision !== "switch") return false;
+      const requestId = aiRequestIdRef.current;
+      if (requestId) bridge.cancelAi?.(requestId);
+    }
+    const activated = activateAiMode(kind);
+    if (activated) {
+      setAiPageTransition(kind);
+      setAiModeChooserOpen(false);
+    }
+    return activated;
+  }, [activateAiMode, aiHasUsableProvider, aiModeKind, aiStatus, openAiSettings, showConfirmDialog, showStatus]);
+
+  const requestExitAiMode = useCallback(async () => {
+    if (aiModeKind === "none") {
+      setAiModeChooserOpen(false);
+      return true;
+    }
+    if (shouldConfirmAiModeExit({ currentMode: aiModeKind, busy: aiStatus === "streaming" })) {
+      const currentLabel = aiModeKind === "chat" ? "AI问答" : "AI优化";
+      const decision = await showConfirmDialog({
+        tone: "warning",
+        icon: Square,
+        eyebrow: "退出 AI 模式",
+        title: `停止并退出${currentLabel}？`,
+        message: "当前生成会停止，已经产生的内容会保留。",
+        cancelValue: "cancel",
+        actions: [
+          { value: "exit", label: "停止并退出", variant: "primary", autoFocus: true },
+          { value: "cancel", label: "继续当前生成", variant: "ghost" },
+        ],
+      });
+      if (decision !== "exit") return false;
+    }
+    exitAiMode();
+    return true;
+  }, [aiModeKind, aiStatus, exitAiMode, showConfirmDialog]);
 
   const handleStopAi = useCallback(() => {
     const requestId = aiRequestIdRef.current;
@@ -13059,22 +16468,1661 @@ export default function App() {
     editor.chain().focus().setTextSelection({ from: Math.min(from, to), to: Math.max(from, to) }).scrollIntoView().run();
   }, [editor, showStatus]);
 
-  const handleEnterAiOptimize = useCallback(() => {
-    enterAiMode("optimize");
-  }, [enterAiMode]);
-
-  const handleEnterAiChat = useCallback(() => {
-    if (enterAiMode("chat")) {
-      aiChatContextRef.current = { signature: "", context: "", images: [] };
+  const updateKnowledgeDocument = useCallback((updater) => {
+    if (activeWorkReadOnly) {
+      showStatus("未来格式信笺为只读，不能修改脚注、引用或关联", "warning");
+      return null;
     }
-  }, [enterAiMode]);
+    const editingRightPane = splitPaneActive && rightSplitTabIdRef.current;
+    const previous = editingRightPane
+      ? (openTabsRef.current.find((tab) => tab.id === rightSplitTabIdRef.current)?.document || rightSplitDocument)
+      : documentStateRef.current;
+    if (!previous) return null;
+    const wasLegacy = Number(previous?.version || 1) < 2;
+    const upgraded = normalizeDocumentSchemaV2(previous || {});
+    const updatedAt = new Date().toISOString();
+    const candidate = typeof updater === "function" ? updater(upgraded) : { ...upgraded, ...(updater || {}) };
+    const nextDocument = normalizeDocumentSchemaV2({ ...candidate, updatedAt });
+    if (editingRightPane) {
+      const tabId = rightSplitTabIdRef.current;
+      const nextTabs = openTabsRef.current.map((tab) => (
+        tab.id === tabId ? { ...tab, document: nextDocument, title: nextDocument.title || tab.title, dirty: true } : tab
+      ));
+      openTabsRef.current = nextTabs;
+      setOpenTabs(nextTabs);
+      recordTabMutation(tabId, updatedAt);
+    } else {
+      documentStateRef.current = nextDocument;
+      setDocumentState(nextDocument);
+      recordTabMutation(activeTabIdRef.current, updatedAt);
+    }
+    if (wasLegacy) showStatus("已启用文档格式 v2；首次保存时会保留迁移前备份", "success");
+    return nextDocument;
+  }, [activeWorkReadOnly, recordTabMutation, rightSplitDocument, showStatus, splitPaneActive]);
+
+  const captureElementInsertTarget = useCallback(() => {
+    const state = workspaceGroupsRef.current;
+    const groupId = activePane === "right" ? WORKSPACE_GROUP_ID.SECONDARY : WORKSPACE_GROUP_ID.PRIMARY;
+    const view = getActiveWorkspaceView(state, groupId);
+    if (!view || view.kind !== WORKSPACE_VIEW_KIND.DOCUMENT) return null;
+    const targetEditor = groupId === WORKSPACE_GROUP_ID.SECONDARY ? rightSplitEditor : editor;
+    const tab = openTabsRef.current.find((candidate) => candidate.id === view.tabId);
+    if (!targetEditor || !tab || tab.readOnly || tab.document?._readOnlyFutureSchema) return null;
+    const selection = targetEditor.state.selection;
+    return {
+      requestId: createDocumentId(),
+      groupId,
+      documentTabId: tab.id,
+      selection: { from: selection.from, to: selection.to },
+      revision: liveRevisionByTabRef.current.get(tab.id) || 0,
+      workspaceRoot: writingWorkspaceRoot || "",
+    };
+  }, [activePane, editor, rightSplitEditor, writingWorkspaceRoot]);
+
+  const captureStructureManagementTarget = useCallback(() => {
+    const state = workspaceGroupsRef.current;
+    const secondaryView = getActiveWorkspaceView(state, WORKSPACE_GROUP_ID.SECONDARY);
+    const groupId = activePane === "right" && secondaryView?.kind === WORKSPACE_VIEW_KIND.DOCUMENT
+      ? WORKSPACE_GROUP_ID.SECONDARY
+      : WORKSPACE_GROUP_ID.PRIMARY;
+    const view = getActiveWorkspaceView(state, groupId);
+    const targetEditor = groupId === WORKSPACE_GROUP_ID.SECONDARY ? rightSplitEditor : editor;
+    const tab = openTabsRef.current.find((candidate) => candidate.id === view?.tabId);
+    if (!view || view.kind !== WORKSPACE_VIEW_KIND.DOCUMENT || !targetEditor || !tab || tab.readOnly || tab.document?._readOnlyFutureSchema) return null;
+    const selection = targetEditor.state.selection;
+    return {
+      requestId: createDocumentId(),
+      groupId,
+      documentTabId: tab.id,
+      selection: { from: selection.from, to: selection.to },
+      revision: liveRevisionByTabRef.current.get(tab.id) || 0,
+      workspaceRoot: writingWorkspaceRoot || "",
+    };
+  }, [activePane, editor, rightSplitEditor, writingWorkspaceRoot]);
+
+  const resolveElementInsertTarget = useCallback((target, options = {}) => {
+    if (!target?.documentTabId) return null;
+    const state = workspaceGroupsRef.current;
+    const location = findWorkspaceView(state, target.documentTabId);
+    if (!location || location.groupId !== target.groupId || location.view.kind !== WORKSPACE_VIEW_KIND.DOCUMENT) return null;
+    if (state[location.groupId]?.activeViewId !== location.view.viewId) return null;
+    const tab = openTabsRef.current.find((candidate) => candidate.id === target.documentTabId);
+    if (!tab || tab.readOnly || tab.document?._readOnlyFutureSchema) return null;
+    if (!options.allowRevisionChange && (liveRevisionByTabRef.current.get(tab.id) || 0) !== target.revision) return null;
+    const targetEditor = location.groupId === WORKSPACE_GROUP_ID.SECONDARY ? rightSplitEditor : editor;
+    if (!targetEditor) return null;
+    if (location.groupId === WORKSPACE_GROUP_ID.PRIMARY && activeTabIdRef.current !== tab.id) return null;
+    if (location.groupId === WORKSPACE_GROUP_ID.SECONDARY && rightSplitTabIdRef.current !== tab.id) return null;
+    const maxPosition = targetEditor.state.doc.content.size;
+    const from = Math.max(0, Math.min(maxPosition, Number(target.selection?.from) || targetEditor.state.selection.from));
+    const to = Math.max(from, Math.min(maxPosition, Number(target.selection?.to) || from));
+    return { groupId: location.groupId, tab, editor: targetEditor, selection: { from, to } };
+  }, [editor, rightSplitEditor]);
+
+  const updateKnowledgeDocumentForTarget = useCallback((target, updater, options = {}) => {
+    const resolved = resolveElementInsertTarget(target, options);
+    if (!resolved) return null;
+    const { groupId, tab } = resolved;
+    const previous = groupId === WORKSPACE_GROUP_ID.PRIMARY ? documentStateRef.current : tab.document;
+    if (!previous) return null;
+    const wasLegacy = Number(previous?.version || 1) < 2;
+    const upgraded = normalizeDocumentSchemaV2(previous);
+    const updatedAt = new Date().toISOString();
+    const candidate = typeof updater === "function" ? updater(upgraded) : { ...upgraded, ...(updater || {}) };
+    const nextDocument = normalizeDocumentSchemaV2({ ...candidate, updatedAt });
+    if (groupId === WORKSPACE_GROUP_ID.PRIMARY) {
+      documentStateRef.current = nextDocument;
+      setDocumentState(nextDocument);
+    }
+    const nextTabs = openTabsRef.current.map((item) => item.id === tab.id
+      ? { ...item, document: nextDocument, title: nextDocument.title || item.title, dirty: true }
+      : item);
+    openTabsRef.current = nextTabs;
+    setOpenTabs(nextTabs);
+    recordTabMutation(tab.id, updatedAt);
+    if (wasLegacy) showStatus("已启用文档格式 v2；首次保存时会保留迁移前备份", "success");
+    return { ...resolved, document: nextDocument };
+  }, [recordTabMutation, resolveElementInsertTarget, showStatus]);
+
+  const insertAtCapturedSelection = useCallback((resolved, content) => {
+    if (!resolved?.editor) return false;
+    const { from, to } = resolved.selection;
+    return resolved.editor.chain().focus().insertContentAt(from === to ? from : { from, to }, content).run();
+  }, []);
+
+  const refreshResearchLibrarySources = useCallback(async (libraryId = researchRootRef.current?.libraryId) => {
+    if (!libraryId) {
+      setLibrarySources([]);
+      setLibrarySourcesReady(false);
+      return [];
+    }
+    try {
+      const result = await bridge.listResearchLibrarySources?.(libraryId);
+      const sources = Array.isArray(result?.sources) ? result.sources : [];
+      if (researchRootRef.current?.libraryId !== libraryId) return sources;
+      const warningCount = Array.isArray(result?.warnings) ? result.warnings.length : 0;
+      const removedNoteCount = Array.isArray(result?.removedNoteSourceIds) ? result.removedNoteSourceIds.length : 0;
+      if (warningCount) showStatus(`资料来源读取完成；${warningCount} 项元数据需要检查`, "warning");
+      else if (removedNoteCount) showStatus(`已删除 ${removedNoteCount} 条旧笔记资料`, "success");
+      setLibrarySources(sources);
+      setLibrarySourcesReady(true);
+      setActiveLibraryItem((previous) => {
+        if (!previous?.id || previous.type === "file") return previous;
+        return sources.find((source) => source.id === previous.id) || null;
+      });
+      return sources;
+    } catch (error) {
+      if (researchRootRef.current?.libraryId === libraryId) {
+        setLibrarySourcesReady(false);
+        setResearchTreeError(error?.message || "资料来源读取失败");
+      }
+      return [];
+    }
+  }, [showStatus]);
+
+  const refreshResearchWebTree = useCallback(async (libraryId = researchRootRef.current?.libraryId) => {
+    if (!libraryId) {
+      setWebTreeState({ folders: [], placements: {}, diskRevision: null, warnings: [], readOnly: false });
+      return null;
+    }
+    try {
+      const result = await bridge.listResearchWebTree?.(libraryId);
+      if (researchRootRef.current?.libraryId !== libraryId) return result;
+      const next = {
+        folders: Array.isArray(result?.folders) ? result.folders : (Array.isArray(result?.tree?.folders) ? result.tree.folders : []),
+        placements: result?.placements && typeof result.placements === "object" ? result.placements : (result?.tree?.placements || {}),
+        diskRevision: result?.diskRevision || null,
+        warnings: Array.isArray(result?.warnings) ? result.warnings : [],
+        readOnly: Boolean(result?.readOnly),
+      };
+      setWebTreeState(next);
+      if (next.warnings.length) showStatus("网页分组索引需要检查；当前以只读扁平列表显示", "warning");
+      return result;
+    } catch (error) {
+      showStatus(error?.message || "网页分组读取失败", "warning");
+      return null;
+    }
+  }, [showStatus]);
+
+  const refreshIndependentResearchFolder = useCallback(async (
+    relativePath = "",
+    libraryId = researchRootRef.current?.libraryId,
+    options = {},
+  ) => {
+    if (!libraryId) {
+      setResearchEntries([]);
+      return [];
+    }
+    const normalizedPath = normalizeResearchRelativePath(relativePath);
+    const updateCurrent = options.current === true
+      || (options.current !== false && normalizedPath === researchCurrentRelativePathRef.current);
+    if (updateCurrent) {
+      setResearchTreeLoading(true);
+      setResearchTreeError("");
+    } else if (normalizedPath) {
+      setResearchExpandedFolders((previous) => ({
+        ...previous,
+        [normalizedPath]: { ...(previous[normalizedPath] || {}), expanded: true, loading: true, error: "" },
+      }));
+    }
+    try {
+      const result = await bridge.listResearchFolder?.(libraryId, normalizedPath);
+      const entries = normalizeResearchTreeEntries(result?.entries);
+      if (researchRootRef.current?.libraryId !== libraryId) return entries;
+      if (updateCurrent) {
+        if (researchCurrentRelativePathRef.current !== normalizedPath) return entries;
+        setResearchEntries(entries);
+      } else if (normalizedPath) {
+        setResearchEntries((previous) => replaceResearchTreeFolder(previous, normalizedPath, entries));
+        setResearchExpandedFolders((previous) => ({
+          ...previous,
+          [normalizedPath]: { expanded: true, loading: false, error: "", entries },
+        }));
+      }
+      return entries;
+    } catch (error) {
+      if (researchRootRef.current?.libraryId !== libraryId) return [];
+      const message = error?.message || "资料目录读取失败";
+      if (updateCurrent && researchCurrentRelativePathRef.current === normalizedPath) setResearchTreeError(message);
+      else if (normalizedPath) {
+        setResearchExpandedFolders((previous) => ({
+          ...previous,
+          [normalizedPath]: { ...(previous[normalizedPath] || {}), expanded: true, loading: false, error: message },
+        }));
+      }
+      return [];
+    } finally {
+      if (updateCurrent && researchRootRef.current?.libraryId === libraryId && researchCurrentRelativePathRef.current === normalizedPath) {
+        setResearchTreeLoading(false);
+      }
+    }
+  }, []);
+
+  const applyResearchRoot = useCallback(async (root) => {
+    const normalized = root && typeof root === "object" ? root : { configured: false, available: false };
+    const previousLibraryId = String(researchRootRef.current?.libraryId || "");
+    const nextLibraryId = normalized.available ? String(normalized.libraryId || "") : "";
+    const libraryChanged = previousLibraryId !== nextLibraryId;
+    const staleResearchPane = Boolean(previousLibraryId && previousLibraryId !== nextLibraryId
+      && workspaceGroupsRef.current.secondary.views.some((view) => view.kind === WORKSPACE_VIEW_KIND.RESEARCH && view.libraryId === previousLibraryId));
+    if (staleResearchPane) removeOpenResearchViews((view) => view.libraryId === previousLibraryId);
+    researchRootRef.current = normalized;
+    researchCurrentRelativePathRef.current = "";
+    setResearchRoot(normalized);
+    setResearchCurrentRelativePath("");
+    setResearchEntries([]);
+    setResearchExpandedFolders({});
+    setResearchTreeLoading(false);
+    setResearchBusyKeys([]);
+    setLibrarySources([]);
+    setLibrarySourcesReady(false);
+    setWebTreeState({ folders: [], placements: {}, diskRevision: null, warnings: [], readOnly: false });
+    if (libraryChanged || !nextLibraryId || staleResearchPane) {
+      setActiveLibraryItem(null);
+      setActiveResearchError("");
+    }
+    setResearchTreeError(normalized?.error || "");
+    if (!normalized.available || !normalized.libraryId) return normalized;
+    await Promise.all([
+      refreshIndependentResearchFolder("", normalized.libraryId, { current: true }),
+      refreshResearchLibrarySources(normalized.libraryId),
+      refreshResearchWebTree(normalized.libraryId),
+      bridge.watchResearchLibrary?.(normalized.libraryId).catch?.(() => null),
+    ]);
+    return normalized;
+  }, [refreshIndependentResearchFolder, refreshResearchLibrarySources, refreshResearchWebTree, removeOpenResearchViews]);
+
+  const refreshResearchRoot = useCallback(async () => {
+    try {
+      return await applyResearchRoot(await bridge.getResearchRoot?.());
+    } catch (error) {
+      setResearchTreeError(error?.message || "资料目录配置读取失败");
+      return null;
+    }
+  }, [applyResearchRoot]);
+
+  useEffect(() => {
+    void refreshResearchRoot();
+  }, [refreshResearchRoot]);
+
+  useEffect(() => {
+    if (!researchRoot || typeof researchRoot !== "object") return;
+    const libraryId = researchRoot.available ? String(researchRoot.libraryId || "") : "";
+    const incompatible = workspaceGroups.secondary.views.filter((view) => (
+      view.kind === WORKSPACE_VIEW_KIND.RESEARCH && (!libraryId || view.libraryId !== libraryId)
+    ));
+    if (incompatible.length) {
+      removeOpenResearchViews((view) => !libraryId || view.libraryId !== libraryId);
+      return;
+    }
+    if (librarySourcesReady) {
+      const availableSourceIds = new Set(librarySources.filter((source) => {
+        if (source.type !== "web") return true;
+        if (webWorkspaceIdentityPending) return true;
+        return (webTreeState.placements[source.id]?.scopeKey || "global") === webScopeKey;
+      }).map((source) => source.id));
+      const missingSources = workspaceGroups.secondary.views.filter((view) => (
+        view.kind === WORKSPACE_VIEW_KIND.RESEARCH && view.libraryId === libraryId && view.sourceId && !availableSourceIds.has(view.sourceId)
+      ));
+      if (missingSources.length) {
+        const missingIds = new Set(missingSources.map((view) => view.viewId));
+        removeOpenResearchViews((view) => missingIds.has(view.viewId));
+        return;
+      }
+    }
+    const active = getActiveWorkspaceView(workspaceGroups, WORKSPACE_GROUP_ID.SECONDARY);
+    if (active?.kind !== WORKSPACE_VIEW_KIND.RESEARCH || active.libraryId !== libraryId) return;
+    const existing = researchItemsByViewId[active.viewId];
+    const item = existing
+      || (active.sourceId ? librarySources.find((source) => source.id === active.sourceId) : null)
+      || (active.relativePath ? librarySources.find((source) => source.type === "file" && source.relativePath === active.relativePath) : null)
+      || (active.relativePath ? {
+          type: "file",
+          relativePath: active.relativePath,
+          name: displayNameFromPath(active.relativePath),
+        } : null);
+    if (!item) return;
+    if (!existing) setResearchItemsByViewId((previous) => ({ ...previous, [active.viewId]: item }));
+    setActiveLibraryItem((previous) => previous === item ? previous : item);
+  }, [librarySources, librarySourcesReady, removeOpenResearchViews, researchItemsByViewId, researchRoot, webScopeKey, webTreeState.placements, webWorkspaceIdentityPending, workspaceGroups]);
+
+  const openResearchTargetSignature = useMemo(() => JSON.stringify(workspaceGroups.secondary.views
+    .filter((view) => view.kind === WORKSPACE_VIEW_KIND.RESEARCH)
+    .map((view) => [view.viewId, view.libraryId, view.relativePath || "", view.sourceId || ""])), [workspaceGroups.secondary.views]);
+
+  useEffect(() => {
+    const libraryId = researchRoot?.available ? String(researchRoot.libraryId || "") : "";
+    if (!libraryId) return undefined;
+    const fileViews = workspaceGroupsRef.current.secondary.views.filter((view) => (
+      view.kind === WORKSPACE_VIEW_KIND.RESEARCH && view.libraryId === libraryId && view.relativePath
+    ));
+    if (!fileViews.length) return undefined;
+    let canceled = false;
+    const validate = async () => {
+      const byParent = new Map();
+      for (const view of fileViews) {
+        const separator = view.relativePath.lastIndexOf("/");
+        const parent = separator >= 0 ? view.relativePath.slice(0, separator) : "";
+        if (!byParent.has(parent)) byParent.set(parent, []);
+        byParent.get(parent).push(view);
+      }
+      const missingViewIds = new Set();
+      for (const [parent, views] of byParent) {
+        try {
+          const result = await bridge.listResearchFolder?.(libraryId, parent);
+          if (canceled || !result) return;
+          const present = new Set((result.entries || []).map((entry) => String(entry.relativePath || "").replace(/\\/g, "/")));
+          for (const view of views) if (!present.has(view.relativePath)) missingViewIds.add(view.viewId);
+        } catch {
+          return;
+        }
+      }
+      if (!canceled && missingViewIds.size) removeOpenResearchViews((view) => missingViewIds.has(view.viewId));
+    };
+    void validate();
+    return () => { canceled = true; };
+  }, [librarySources, openResearchTargetSignature, removeOpenResearchViews, researchRoot?.available, researchRoot?.libraryId]);
+
+  useEffect(() => {
+    if (!researchRoot?.libraryId) return undefined;
+    let timer = 0;
+    const refresh = (payload = {}) => {
+      if (payload.libraryId && payload.libraryId !== researchRoot.libraryId) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const currentBrowsePath = researchCurrentRelativePathRef.current;
+        void refreshIndependentResearchFolder(currentBrowsePath, researchRoot.libraryId, { current: true });
+        const changedPath = String(payload.relativePath || "").replace(/\\/g, "/");
+        const separatorIndex = changedPath.lastIndexOf("/");
+        const parentPath = separatorIndex >= 0 ? changedPath.slice(0, separatorIndex) : "";
+        if (parentPath && parentPath !== currentBrowsePath) {
+          void refreshIndependentResearchFolder(parentPath, researchRoot.libraryId, { current: false });
+        }
+        void refreshResearchLibrarySources(researchRoot.libraryId);
+        void refreshResearchWebTree(researchRoot.libraryId);
+      }, 120);
+    };
+    const showWatchError = (payload = {}) => {
+      if (!payload.libraryId || payload.libraryId === researchRoot.libraryId) {
+        setResearchTreeError(payload.message || "资料目录监听失败，请手动刷新");
+      }
+    };
+    const unsubscribeChanged = bridge.onResearchLibraryChanged?.(refresh);
+    const unsubscribeError = bridge.onResearchLibraryWatchError?.(showWatchError);
+    return () => {
+      window.clearTimeout(timer);
+      unsubscribeChanged?.();
+      unsubscribeError?.();
+    };
+  }, [refreshIndependentResearchFolder, refreshResearchLibrarySources, refreshResearchWebTree, researchRoot?.libraryId]);
+
+  const handlePickResearchRoot = useCallback(async () => {
+    try {
+      const result = await bridge.pickResearchRoot?.();
+      if (result?.canceled) return;
+      await applyResearchRoot(result);
+      setLeftSidebarMode("research");
+      showStatus("资料目录已连接", "success");
+    } catch (error) {
+      showStatus(error?.message || "无法选择资料目录", "warning");
+    }
+  }, [applyResearchRoot, showStatus]);
+
+  const runResearchEntryMutation = useCallback(async (key, task) => {
+    setResearchBusyKeys((previous) => [...new Set([...previous, key].filter(Boolean))]);
+    try {
+      return await task();
+    } finally {
+      setResearchBusyKeys((previous) => previous.filter((item) => item !== key));
+    }
+  }, []);
+
+  const handleToggleResearchFolder = useCallback(async (entry, expanded) => {
+    const relativePath = String(entry?.relativePath || "");
+    if (!relativePath) return;
+    if (!expanded) {
+      setResearchExpandedFolders((previous) => ({
+        ...previous,
+        [relativePath]: { ...(previous[relativePath] || {}), expanded: false, loading: false },
+      }));
+      return;
+    }
+    await refreshIndependentResearchFolder(relativePath, undefined, { current: false });
+  }, [refreshIndependentResearchFolder]);
+
+  const handleNavigateResearchPath = useCallback(async (relativePath = "") => {
+    if (!researchRootRef.current?.libraryId) return;
+    const normalizedPath = normalizeResearchRelativePath(relativePath);
+    researchCurrentRelativePathRef.current = normalizedPath;
+    setResearchCurrentRelativePath(normalizedPath);
+    setResearchEntries([]);
+    setResearchExpandedFolders({});
+    setResearchTreeError("");
+    await refreshIndependentResearchFolder(normalizedPath, researchRootRef.current.libraryId, { current: true });
+  }, [refreshIndependentResearchFolder]);
+
+  const handleCreateResearchFolder = useCallback(async (entry) => {
+    if (!researchRoot?.libraryId) return;
+    const libraryId = researchRoot.libraryId;
+    const parentRelativePath = researchEntryType(entry) === "folder" ? entry.relativePath : researchCurrentRelativePathRef.current;
+    const name = await showPromptDialog({ title: "新建资料文件夹", label: "文件夹名称", defaultValue: "新建文件夹", confirmLabel: "创建" });
+    if (!name?.trim()) return;
+    const key = entry?.relativePath || "research-root";
+    try {
+      await runResearchEntryMutation(key, () => bridge.createResearchFolder?.(libraryId, parentRelativePath, name.trim()));
+      if (researchRootRef.current?.libraryId !== libraryId) return;
+      await refreshIndependentResearchFolder(parentRelativePath, libraryId);
+      showStatus("资料文件夹已创建", "success");
+    } catch (error) {
+      showStatus(error?.message || "资料文件夹创建失败", "warning");
+    }
+  }, [refreshIndependentResearchFolder, researchRoot?.libraryId, runResearchEntryMutation, showPromptDialog, showStatus]);
+
+  const handleImportResearchFiles = useCallback(async (entry) => {
+    if (!researchRoot?.libraryId) return;
+    const libraryId = researchRoot.libraryId;
+    const targetRelativePath = researchEntryType(entry) === "folder" ? entry.relativePath : researchCurrentRelativePathRef.current;
+    const key = entry?.relativePath || "research-root";
+    try {
+      const result = await runResearchEntryMutation(key, () => bridge.importResearchFiles?.(libraryId, targetRelativePath));
+      if (result?.canceled) return;
+      if (researchRootRef.current?.libraryId !== libraryId) return;
+      await refreshIndependentResearchFolder(targetRelativePath, libraryId);
+      showStatus(`已导入 ${result?.imported?.length || 0} 个资料文件`, "success");
+    } catch (error) {
+      showStatus(error?.message || "资料文件导入失败", "warning");
+    }
+  }, [refreshIndependentResearchFolder, researchRoot?.libraryId, runResearchEntryMutation, showStatus]);
+
+  const handleRenameResearchEntry = useCallback(async (entry) => {
+    if (!researchRoot?.libraryId || !entry?.relativePath) return;
+    const libraryId = researchRoot.libraryId;
+    const nextName = await showPromptDialog({ title: "重命名资料项目", label: "新名称", defaultValue: entry.name || "", confirmLabel: "重命名" });
+    if (!nextName?.trim() || nextName.trim() === entry.name) return;
+    try {
+      const result = await runResearchEntryMutation(entry.relativePath, () => bridge.renameResearchEntry?.(libraryId, entry.relativePath, nextName.trim()));
+      if (researchRootRef.current?.libraryId !== libraryId) return;
+      setResearchExpandedFolders({});
+      await refreshIndependentResearchFolder(researchCurrentRelativePathRef.current, libraryId, { current: true });
+      updateOpenResearchTargets(libraryId, entry.relativePath, result.relativePath, { name: nextName.trim() });
+      if (activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH && activeSecondaryView.libraryId === libraryId
+        && activeSecondaryView.relativePath === entry.relativePath) {
+        setActiveLibraryItem((previous) => previous ? { ...previous, name: nextName.trim(), relativePath: result.relativePath } : previous);
+      }
+      showStatus(result?.warnings?.length ? "已重命名；部分资料身份路径需手动检查" : "资料项目已重命名", result?.warnings?.length ? "warning" : "success");
+    } catch (error) {
+      showStatus(error?.message || "重命名失败", "warning");
+    }
+  }, [activeSecondaryView, refreshIndependentResearchFolder, researchRoot?.libraryId, runResearchEntryMutation, showPromptDialog, showStatus, updateOpenResearchTargets]);
+
+  const handleMoveResearchEntry = useCallback(async (entry, targetEntry) => {
+    if (!researchRoot?.libraryId || !entry?.relativePath) return;
+    const libraryId = researchRoot.libraryId;
+    let targetRelativePath = researchEntryType(targetEntry) === "folder" ? targetEntry.relativePath : researchCurrentRelativePathRef.current;
+    if (!targetEntry) {
+      const chosen = await showPromptDialog({ title: "移动资料项目", label: "目标文件夹（相对资料目录，根目录留空）", defaultValue: "", confirmLabel: "移动" });
+      if (chosen === null) return;
+      targetRelativePath = chosen.trim().replace(/\\/g, "/");
+    }
+    try {
+      const result = await runResearchEntryMutation(entry.relativePath, () => bridge.moveResearchEntry?.(libraryId, entry.relativePath, targetRelativePath));
+      if (researchRootRef.current?.libraryId !== libraryId) return;
+      setResearchExpandedFolders({});
+      await refreshIndependentResearchFolder(researchCurrentRelativePathRef.current, libraryId, { current: true });
+      updateOpenResearchTargets(libraryId, entry.relativePath, result.relativePath);
+      if (activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH && activeSecondaryView.libraryId === libraryId
+        && activeSecondaryView.relativePath === entry.relativePath) {
+        setActiveLibraryItem((previous) => previous ? { ...previous, relativePath: result.relativePath } : previous);
+      }
+      showStatus(result?.warnings?.length ? "已移动；部分资料身份路径需手动检查" : "资料项目已移动", result?.warnings?.length ? "warning" : "success");
+    } catch (error) {
+      showStatus(error?.message || "移动失败", "warning");
+    }
+  }, [activeSecondaryView, refreshIndependentResearchFolder, researchRoot?.libraryId, runResearchEntryMutation, showPromptDialog, showStatus, updateOpenResearchTargets]);
+
+  const handleTrashResearchEntry = useCallback(async (entry) => {
+    if (!researchRoot?.libraryId || !entry?.relativePath) return;
+    const libraryId = researchRoot.libraryId;
+    const choice = await showConfirmDialog({
+      title: "移到系统回收站",
+      message: `“${entry.name}”会移到系统回收站；资料身份记录不会被静默覆盖。`,
+      actions: [{ value: "trash", label: "移到回收站", tone: "danger" }, { value: "cancel", label: "取消" }],
+      cancelValue: "cancel",
+    });
+    if (choice !== "trash") return;
+    try {
+      await runResearchEntryMutation(entry.relativePath, () => bridge.trashResearchEntry?.(libraryId, entry.relativePath));
+      if (researchRootRef.current?.libraryId !== libraryId) return;
+      removeOpenResearchViews((view) => view.libraryId === libraryId
+        && Boolean(view.relativePath)
+        && (view.relativePath === entry.relativePath || view.relativePath.startsWith(`${entry.relativePath}/`)));
+      setResearchExpandedFolders({});
+      await refreshIndependentResearchFolder(researchCurrentRelativePathRef.current, libraryId, { current: true });
+      showStatus("资料项目已移到回收站", "success");
+    } catch (error) {
+      showStatus(error?.message || "无法移到回收站", "warning");
+    }
+  }, [refreshIndependentResearchFolder, removeOpenResearchViews, researchRoot?.libraryId, runResearchEntryMutation, showConfirmDialog, showStatus]);
+
+  const handleCopyResearchPath = useCallback(async (entry) => {
+    try {
+      await bridge.copyResearchEntryPath?.(researchRoot?.libraryId, entry?.relativePath || "");
+      showStatus("资料路径已复制", "success");
+    } catch (error) {
+      showStatus(error?.message || "路径复制失败", "warning");
+    }
+  }, [researchRoot?.libraryId, showStatus]);
+
+  const handleShowResearchEntry = useCallback(async (entry) => {
+    try {
+      await bridge.showResearchEntry?.(researchRoot?.libraryId, entry?.relativePath || "");
+    } catch (error) {
+      showStatus(error?.message || "无法在资源管理器中显示", "warning");
+    }
+  }, [researchRoot?.libraryId, showStatus]);
+
+  const openIndependentResearchItem = useCallback(async (item) => {
+    if (!researchRoot?.libraryId || !item) return;
+    if (researchEntryType(item) === "folder") {
+      await handleNavigateResearchPath(item.relativePath);
+      return;
+    }
+    const previewKind = item.type === "web" ? "web" : researchPreviewKind(item);
+    if (previewKind === "unsupported" || !canOpenResearchItem(item)) {
+      showStatus("此文件类型不支持在笺间打开", "warning");
+      return;
+    }
+    if (aiMode && !(await requestExitAiMode())) return;
+    if (previewKind === "document") {
+      try {
+        const result = await bridge.openResearchDocument?.(researchRoot.libraryId, item.relativePath);
+        if (result?.canceled || !result?.document) {
+          showStatus(result?.message || "无法打开资料中的笺间文档", "warning");
+          return;
+        }
+        const tabId = addOrActivateDocumentTab(result.document, result.path, false, {
+          groupId: WORKSPACE_GROUP_ID.SECONDARY,
+          diskRevision: result.diskRevision,
+          readOnly: result.readOnly,
+        });
+        if (!tabId) showStatus("标签栏已满，请先关闭一个标签", "warning");
+        else showStatus("资料信笺已在右侧打开", "success");
+      } catch (error) {
+        showStatus(error?.message || "无法打开资料中的笺间文档", "warning");
+      }
+      return;
+    }
+    if (rightSplitTabIdRef.current) {
+      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      openTabsRef.current = snapshot;
+      setOpenTabs(snapshot);
+    }
+    const target = item.type === "web"
+      ? { libraryId: researchRoot.libraryId, sourceId: item.id }
+      : { libraryId: researchRoot.libraryId, relativePath: item.relativePath };
+    const titleSnapshot = item.title || item.name || item.fileName || item.relativePath || "未命名资料";
+    const researchType = previewKind;
+    const nextGroups = openWorkspaceResearch(workspaceGroupsRef.current, { ...target, titleSnapshot, researchType });
+    const activeView = getActiveWorkspaceView(nextGroups, WORKSPACE_GROUP_ID.SECONDARY);
+    commitWorkspaceGroups(nextGroups);
+    if (activeView) setResearchItemsByViewId((previous) => ({ ...previous, [activeView.viewId]: item }));
+    setActivePane("right");
+    setActiveLibraryItem(item);
+    setActiveResearchError("");
+  }, [addOrActivateDocumentTab, aiMode, commitWorkspaceGroups, handleNavigateResearchPath, requestExitAiMode, researchRoot?.libraryId, showStatus, snapshotLiveTabs]);
+
+  const closeResearchSecondaryPane = useCallback(() => {
+    const active = getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY);
+    if (active?.kind === WORKSPACE_VIEW_KIND.RESEARCH) void handleCloseGroupView(WORKSPACE_GROUP_ID.SECONDARY, active.viewId);
+  }, [handleCloseGroupView]);
+
+  const handleLoadIndependentResearchPdf = useCallback(async (item, options = {}) => {
+    if (!researchRoot?.libraryId || !item?.relativePath) throw new Error("资料 PDF 已失效");
+    if (options.signal?.aborted) throw new DOMException("读取已取消", "AbortError");
+    const result = await bridge.readResearchPdf?.(researchRoot.libraryId, item.relativePath);
+    if (options.signal?.aborted) throw new DOMException("读取已取消", "AbortError");
+    return result;
+  }, [researchRoot?.libraryId]);
+
+  const handleLoadIndependentResearchPreview = useCallback(async (item, options = {}) => {
+    if (!researchRoot?.libraryId || !item?.relativePath) throw new Error("资料文件已失效");
+    if (options.signal?.aborted) throw new DOMException("读取已取消", "AbortError");
+    const result = await bridge.readResearchPreview?.(researchRoot.libraryId, item.relativePath);
+    if (options.signal?.aborted) throw new DOMException("读取已取消", "AbortError");
+    if (result?.unsupported) throw new Error(result.message || "当前环境不能读取本地资料文件");
+    return result;
+  }, [researchRoot?.libraryId]);
+
+  const handleOpenIndependentResearchExternal = useCallback(async (item) => {
+    try {
+      if (item?.type === "web") await bridge.openExternal?.(item.url);
+      else await bridge.openResearchEntryExternal?.(researchRoot?.libraryId, item?.relativePath || "");
+    } catch (error) {
+      showStatus(error?.message || "无法打开资料", "warning");
+    }
+  }, [researchRoot?.libraryId, showStatus]);
+
+  const saveResearchLibrarySource = useCallback(async (draft, previous = null) => {
+    if (!researchRoot?.libraryId) return null;
+    const result = await bridge.upsertResearchLibrarySource?.(
+      researchRoot.libraryId,
+      draft,
+      previous?.diskRevision || null,
+    );
+    if (result?.conflict) {
+      const choice = await showConfirmDialog({
+        title: "资料来源已在同步盘中修改",
+        message: "磁盘版本不会被覆盖。你可以重新载入，或把当前表单内容另存为一条新资料。",
+        actions: [{ value: "copy", label: "另存为新资料" }, { value: "reload", label: "重新载入" }],
+        cancelValue: "reload",
+      });
+      if (choice === "copy") {
+        const copy = { ...draft };
+        delete copy.id;
+        delete copy.diskRevision;
+        return saveResearchLibrarySource(copy, null);
+      }
+      await refreshResearchLibrarySources(researchRoot.libraryId);
+      return null;
+    }
+    if (result?.source) {
+      await refreshResearchLibrarySources(researchRoot.libraryId);
+      setActiveLibraryItem(result.source);
+      setResearchItemsByViewId((previous) => {
+        let changed = false;
+        const next = { ...previous };
+        for (const [viewId, item] of Object.entries(previous)) {
+          if (item?.id !== result.source.id) continue;
+          next[viewId] = result.source;
+          changed = true;
+        }
+        return changed ? next : previous;
+      });
+      return result.source;
+    }
+    return null;
+  }, [refreshResearchLibrarySources, researchRoot?.libraryId, showConfirmDialog]);
+
+  const handleAddLibraryWeb = useCallback(async (target = null) => {
+    const source = target?.type === "web" ? target : null;
+    const placement = source ? webTreeState.placements[source.id] : null;
+    setWebSourceDialog({
+      open: true,
+      source,
+      folderId: typeof target === "string" ? target : (placement?.folderId || ""),
+      scopeKey: source ? (placement?.scopeKey || "global") : webScopeKey,
+    });
+  }, [webScopeKey, webTreeState.placements]);
+
+  const handleSaveLibraryWeb = useCallback(async (draft) => {
+    const source = webSourceDialog.source;
+    if (!researchRoot?.libraryId) throw new Error("资料库尚未连接");
+    const result = await bridge.upsertResearchWebSource?.(
+      researchRoot.libraryId,
+      { ...source, ...draft, type: "web", notes: "" },
+      { scopeKey: webSourceDialog.scopeKey || webScopeKey, folderId: webSourceDialog.folderId || "" },
+      { source: source?.diskRevision || null, tree: webTreeState.diskRevision || null },
+    );
+    if (result?.conflict || result?.ok === false) {
+      await Promise.all([refreshResearchLibrarySources(researchRoot.libraryId), refreshResearchWebTree(researchRoot.libraryId)]);
+      throw new Error(result?.message || "网页资料已被外部修改，已重新载入且未覆盖磁盘版本");
+    }
+    if (!result?.source) throw new Error("网页资料保存失败");
+    await Promise.all([refreshResearchLibrarySources(researchRoot.libraryId), refreshResearchWebTree(researchRoot.libraryId)]);
+    setActiveLibraryItem((previous) => previous?.id === result.source.id ? result.source : previous);
+    setResearchItemsByViewId((previous) => Object.fromEntries(Object.entries(previous).map(([viewId, item]) => [viewId, item?.id === result.source.id ? result.source : item])));
+    showStatus(result.placementFallback ? (result.warning || "网页已保存，但暂时回退到全局未分组") : (source ? "网页资料已更新" : "网页资料已加入"), result.placementFallback ? "warning" : "success");
+    return result.source;
+  }, [refreshResearchLibrarySources, refreshResearchWebTree, researchRoot?.libraryId, showStatus, webScopeKey, webSourceDialog, webTreeState.diskRevision]);
+
+  const handleToggleWebWorkspace = useCallback(() => {
+    if (!writingWorkspaceIdentity?.workspaceId) {
+      showStatus("请先在文件区打开一个写作工作区；浏览器预览不能连接工作区网页区", "warning");
+      return;
+    }
+    const leavingScope = webScopeKey;
+    const leavingIds = new Set(librarySources.filter((source) => source.type === "web" && (webTreeState.placements[source.id]?.scopeKey || "global") === leavingScope).map((source) => source.id));
+    removeOpenResearchViews((view) => view.sourceId && leavingIds.has(view.sourceId));
+    setWebWorkspaceMode((mode) => mode === "workspace" ? "global" : "workspace");
+  }, [librarySources, removeOpenResearchViews, showStatus, webScopeKey, webTreeState.placements, writingWorkspaceIdentity?.workspaceId]);
+
+  const handleOpenWebCopyDialog = useCallback(() => {
+    if (!researchRoot?.libraryId) {
+      showStatus("请先选择资料文件夹", "warning");
+      return;
+    }
+    if (!webWorkspaceConnected || !webScopeKey.startsWith("workspace:")) {
+      showStatus("请先连接当前工作区的私区网页", "warning");
+      return;
+    }
+    if (webTreeState.readOnly) {
+      showStatus("网页树索引只读，暂时不能复制", "warning");
+      return;
+    }
+    setWebCopyDialog({ open: true });
+  }, [researchRoot?.libraryId, showStatus, webScopeKey, webTreeState.readOnly, webWorkspaceConnected]);
+  const handleCloseWebCopyDialog = useCallback(() => setWebCopyDialog({ open: false }), []);
+
+  const handleCopyWebSelection = useCallback(async ({ folderIds = [], sourceIds = [] } = {}) => {
+    if (!researchRoot?.libraryId || !webWorkspaceConnected || !webScopeKey.startsWith("workspace:")) throw new Error("当前没有可用的工作区私区");
+    const result = await bridge.copyResearchWebSelection?.(researchRoot.libraryId, {
+      folderIds,
+      sourceIds,
+      targetScopeKey: webScopeKey,
+      expectedTreeRevision: webTreeState.diskRevision || null,
+    });
+    if (!result || result.conflict || result.ok === false) {
+      await Promise.all([refreshResearchLibrarySources(researchRoot.libraryId), refreshResearchWebTree(researchRoot.libraryId)]);
+      throw new Error(result?.message || "网页树已被外部修改，已重新载入且未复制");
+    }
+    await Promise.all([refreshResearchLibrarySources(researchRoot.libraryId), refreshResearchWebTree(researchRoot.libraryId)]);
+    const summary = `已复制 ${result.copiedSourceCount || 0} 个网址，创建 ${result.createdFolderCount || 0} 个文件夹`;
+    showStatus(result.skippedDuplicateCount ? `${summary}，跳过 ${result.skippedDuplicateCount} 个重复网址` : summary, result.warnings?.length ? "warning" : "success");
+    return result;
+  }, [refreshResearchLibrarySources, refreshResearchWebTree, researchRoot?.libraryId, showStatus, webScopeKey, webTreeState.diskRevision, webWorkspaceConnected]);
+
+  const handleCreateWebFolder = useCallback(async (parentId = "") => {
+    if (!researchRoot?.libraryId || webTreeState.readOnly) return;
+    const name = await showPromptDialog({ title: "新建网页文件夹", label: "文件夹名称", defaultValue: "新建文件夹", confirmLabel: "创建" });
+    if (!name?.trim()) return;
+    try {
+      const result = await bridge.createResearchWebFolder?.(researchRoot.libraryId, { name: name.trim(), parentId, scopeKey: webScopeKey }, webTreeState.diskRevision || null);
+      if (result?.conflict) throw new Error(result.message || "网页分组已被外部修改");
+      await refreshResearchWebTree(researchRoot.libraryId);
+    } catch (error) {
+      await refreshResearchWebTree(researchRoot.libraryId);
+      showStatus(error?.message || "网页文件夹创建失败", "warning");
+    }
+  }, [refreshResearchWebTree, researchRoot?.libraryId, showPromptDialog, showStatus, webScopeKey, webTreeState.diskRevision, webTreeState.readOnly]);
+
+  const handleRenameWebFolder = useCallback(async (folder) => {
+    if (!researchRoot?.libraryId || !folder?.id || webTreeState.readOnly) return;
+    const name = await showPromptDialog({ title: "重命名网页文件夹", label: "文件夹名称", defaultValue: folder.name || "", confirmLabel: "保存" });
+    if (!name?.trim() || name.trim() === folder.name) return;
+    try {
+      const result = await bridge.updateResearchWebFolder?.(researchRoot.libraryId, { id: folder.id, name: name.trim() }, webTreeState.diskRevision || null);
+      if (result?.conflict) throw new Error(result.message || "网页分组已被外部修改");
+      await refreshResearchWebTree(researchRoot.libraryId);
+    } catch (error) {
+      await refreshResearchWebTree(researchRoot.libraryId);
+      showStatus(error?.message || "网页文件夹重命名失败", "warning");
+    }
+  }, [refreshResearchWebTree, researchRoot?.libraryId, showPromptDialog, showStatus, webTreeState.diskRevision, webTreeState.readOnly]);
+
+  const handleDeleteWebFolder = useCallback(async (folder) => {
+    if (!researchRoot?.libraryId || !folder?.id || webTreeState.readOnly) return;
+    const choice = await showConfirmDialog({
+      title: "删除网页文件夹",
+      message: "文件夹本身会删除，其中的网页和直接子文件夹会提升到上一级，不会删除任何网页。",
+      actions: [{ value: "delete", label: "删除文件夹", tone: "danger" }, { value: "cancel", label: "取消" }],
+      cancelValue: "cancel",
+    });
+    if (choice !== "delete") return;
+    try {
+      const result = await bridge.deleteResearchWebFolder?.(researchRoot.libraryId, folder.id, webTreeState.diskRevision || null);
+      if (result?.conflict) throw new Error(result.message || "网页分组已被外部修改");
+      await refreshResearchWebTree(researchRoot.libraryId);
+    } catch (error) {
+      await refreshResearchWebTree(researchRoot.libraryId);
+      showStatus(error?.message || "网页文件夹删除失败", "warning");
+    }
+  }, [refreshResearchWebTree, researchRoot?.libraryId, showConfirmDialog, showStatus, webTreeState.diskRevision, webTreeState.readOnly]);
+
+  const handleMoveWebFolder = useCallback(async (folder, parentId = "") => {
+    if (!researchRoot?.libraryId || !folder?.id || folder.parentId === parentId || webTreeState.readOnly) return;
+    try {
+      const result = await bridge.updateResearchWebFolder?.(researchRoot.libraryId, { id: folder.id, parentId }, webTreeState.diskRevision || null);
+      await refreshResearchWebTree(researchRoot.libraryId);
+      if (result?.conflict || result?.ok === false) showStatus(result?.message || "网页文件夹移动失败", "warning");
+    } catch (error) {
+      await refreshResearchWebTree(researchRoot.libraryId);
+      showStatus(error?.message || "网页文件夹移动失败", "warning");
+    }
+  }, [refreshResearchWebTree, researchRoot?.libraryId, showStatus, webTreeState.diskRevision, webTreeState.readOnly]);
+
+  const handleMoveWebSource = useCallback(async (source, folderId = "") => {
+    if (!researchRoot?.libraryId || !source?.id || webTreeState.readOnly) return;
+    try {
+      const result = await bridge.moveResearchWebSource?.(researchRoot.libraryId, source.id, { scopeKey: webScopeKey, folderId }, webTreeState.diskRevision || null);
+      await refreshResearchWebTree(researchRoot.libraryId);
+      if (result?.conflict || result?.ok === false) showStatus(result?.message || "网页移动失败", "warning");
+    } catch (error) {
+      await refreshResearchWebTree(researchRoot.libraryId);
+      showStatus(error?.message || "网页移动失败", "warning");
+    }
+  }, [refreshResearchWebTree, researchRoot?.libraryId, showStatus, webScopeKey, webTreeState.diskRevision, webTreeState.readOnly]);
+
+  const handleEditLibrarySource = useCallback((source) => (
+    source?.type === "web" ? handleAddLibraryWeb(source) : undefined
+  ), [handleAddLibraryWeb]);
+
+  const handleDeleteLibrarySource = useCallback(async (source) => {
+    if (!researchRoot?.libraryId || !source?.id) return;
+    const choice = await showConfirmDialog({
+      title: "删除网页",
+      message: "资料来源记录会从当前资料目录删除；信笺里已有的引用快照仍会保留。",
+      actions: [{ value: "delete", label: "删除", tone: "danger" }, { value: "cancel", label: "取消" }],
+      cancelValue: "cancel",
+    });
+    if (choice !== "delete") return;
+    try {
+      const result = await bridge.deleteResearchLibrarySource?.(researchRoot.libraryId, source.id, source.diskRevision || null);
+      if (result?.conflict) {
+        await Promise.all([refreshResearchLibrarySources(researchRoot.libraryId), refreshResearchWebTree(researchRoot.libraryId)]);
+        showStatus("来源已被外部修改，已重新载入且未删除", "warning");
+        return;
+      }
+      await Promise.all([refreshResearchLibrarySources(researchRoot.libraryId), refreshResearchWebTree(researchRoot.libraryId)]);
+      removeOpenResearchViews((view) => view.libraryId === researchRoot.libraryId && view.sourceId === source.id);
+      showStatus("网页资料已删除", "success");
+    } catch (error) {
+      showStatus(error?.message || "资料来源删除失败", "warning");
+    }
+  }, [refreshResearchLibrarySources, refreshResearchWebTree, removeOpenResearchViews, researchRoot?.libraryId, showConfirmDialog, showStatus]);
+
+  const refreshWorkspaceCitationSources = useCallback(async () => {
+    if (!writingWorkspaceRoot) {
+      setWorkspaceCitationSources([]);
+      return [];
+    }
+    setCitationLibraryLoading(true);
+    try {
+      const result = await bridge.listCitations?.(writingWorkspaceRoot);
+      const sources = normalizeWorkspaceCitationSources(result?.sources);
+      setWorkspaceCitationSources(sources);
+      return sources;
+    } catch (error) {
+      showStatus(error?.message || "参考文献来源库读取失败", "warning");
+      return [];
+    } finally {
+      setCitationLibraryLoading(false);
+    }
+  }, [showStatus, writingWorkspaceRoot]);
+
+  useEffect(() => {
+    if (leftSidebarMode === "structure" && structureMode === "references") refreshWorkspaceCitationSources();
+  }, [leftSidebarMode, refreshWorkspaceCitationSources, structureMode]);
+
+  const handleResearchViewStateChange = useCallback((viewId, viewState) => {
+    const active = getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY);
+    if (active?.kind !== WORKSPACE_VIEW_KIND.RESEARCH || active.viewId !== viewId) return;
+    const current = workspaceGroupsRef.current;
+    const next = updateWorkspaceResearchViewState(current, active.viewId, viewState);
+    if (next === current) return;
+    commitWorkspaceGroups(next);
+  }, [commitWorkspaceGroups]);
+
+  useEffect(() => {
+    if (!activeWorkEditor) return undefined;
+    const synchronize = createKnowledgeUpdateGuard(() => {
+      synchronizeStructuredInlineReferences(activeWorkEditor);
+      synchronizeKnowledgeReferences(activeWorkEditor, {
+        citationSources: activeWorkDocument?.citationSources || [],
+        footnotes: activeWorkDocument?.footnotes || [],
+      });
+    });
+    synchronize();
+    activeWorkEditor.on("update", synchronize);
+    return () => activeWorkEditor.off("update", synchronize);
+  }, [activeWorkDocument?.citationSources, activeWorkDocument?.footnotes, activeWorkEditor]);
+
+  const ensureImageReferenceDocument = useCallback((targetEditor) => {
+    const editingRightPane = targetEditor === rightSplitEditor;
+    const tabId = editingRightPane ? rightSplitTabIdRef.current : activeTabIdRef.current;
+    const tab = openTabsRef.current.find((item) => item.id === tabId);
+    const previous = editingRightPane ? tab?.document : documentStateRef.current;
+    if (!previous || tab?.readOnly || previous._readOnlyFutureSchema) {
+      throw new Error("当前信笺为只读，不能复制图片引用");
+    }
+    if (Number(previous.version || 1) >= 2 && normalizeDocumentId(previous.documentId)) return previous;
+    const updatedAt = new Date().toISOString();
+    const nextDocument = normalizeDocumentSchemaV2({ ...previous, updatedAt });
+    if (editingRightPane) {
+      const nextTabs = openTabsRef.current.map((item) => item.id === tabId
+        ? { ...item, document: nextDocument, title: nextDocument.title || item.title, dirty: true }
+        : item);
+      openTabsRef.current = nextTabs;
+      setOpenTabs(nextTabs);
+    } else {
+      documentStateRef.current = nextDocument;
+      setDocumentState(nextDocument);
+    }
+    recordTabMutation(tabId, updatedAt);
+    showStatus("已启用文档格式 v2；首次保存时会保留迁移前备份", "success");
+    return nextDocument;
+  }, [recordTabMutation, rightSplitEditor, showStatus]);
+
+  useEffect(() => {
+    const editorForDom = (editorDom) => {
+      if (editorDom && editorDom === rightSplitEditor?.view?.dom) return rightSplitEditor;
+      if (editorDom && editorDom === editor?.view?.dom) return editor;
+      return null;
+    };
+    const handleCopyReference = async (event) => {
+      const targetEditor = editorForDom(event.detail?.editorDom);
+      if (!targetEditor) return;
+      try {
+        const targetDocument = ensureImageReferenceDocument(targetEditor);
+        let imageId = normalizeDocumentId(event.detail?.imageId);
+        const requestedPosition = typeof event.detail?.position === "number" ? event.detail.position : Number.NaN;
+        let image = imageReferenceNumberAt(targetEditor, Number.isFinite(requestedPosition) ? requestedPosition : -1, imageId);
+        if (!image?.node || image.node.type.name !== "image") throw new Error("图片位置已经变化，请重新复制引用");
+        if (!imageId) {
+          imageId = createDocumentId();
+          const transaction = targetEditor.state.tr.setNodeMarkup(
+            image.position,
+            undefined,
+            { ...image.node.attrs, imageId },
+            image.node.marks,
+          );
+          targetEditor.view.dispatch(transaction);
+          image = imageReferenceNumberAt(targetEditor, image.position, imageId);
+        }
+        const result = await bridge.copyImageReference?.({
+          documentId: targetDocument.documentId,
+          imageId,
+          number: image?.number || 1,
+        });
+        if (result?.ok === false) throw new Error(result.message || "剪贴板写入失败");
+        showStatus(`图${image?.number || 1}的引用已复制`, "success");
+      } catch (error) {
+        showStatus(error?.message || "图片引用复制失败", "warning");
+      }
+    };
+    const handlePasteBlocked = () => showStatus("图片引用仅限本文档使用", "warning");
+    const handleOpenReference = (event) => {
+      const targetEditor = editorForDom(event.detail?.editorDom);
+      const imageId = normalizeDocumentId(event.detail?.imageId);
+      if (!targetEditor || event.detail?.missing || !imageId) {
+        showStatus("目标图片已删除", "warning");
+        return;
+      }
+      const target = imageReferenceNumberAt(targetEditor, -1, imageId);
+      if (!target?.node) {
+        showStatus("目标图片已删除", "warning");
+        return;
+      }
+      setActivePane(targetEditor === rightSplitEditor ? "right" : "main");
+      const transaction = targetEditor.state.tr
+        .setSelection(NodeSelection.create(targetEditor.state.doc, target.position))
+        .scrollIntoView();
+      targetEditor.view.dispatch(transaction);
+      targetEditor.view.focus();
+      window.requestAnimationFrame(() => {
+        const element = targetEditor.view.dom.querySelector(`[data-type="paper-image"][data-image-id="${imageId}"]`);
+        if (!element) return;
+        element.classList.add("image-reference-target");
+        window.setTimeout(() => element.classList.remove("image-reference-target"), 1_200);
+      });
+    };
+    window.addEventListener("paper-image-reference-copy", handleCopyReference);
+    window.addEventListener("paper-image-reference-paste-blocked", handlePasteBlocked);
+    window.addEventListener("paper-image-reference-open", handleOpenReference);
+    return () => {
+      window.removeEventListener("paper-image-reference-copy", handleCopyReference);
+      window.removeEventListener("paper-image-reference-paste-blocked", handlePasteBlocked);
+      window.removeEventListener("paper-image-reference-open", handleOpenReference);
+    };
+  }, [editor, ensureImageReferenceDocument, rightSplitEditor, showStatus]);
+
+  const closeKnowledgeReferencePopover = useCallback((options = {}) => {
+    setKnowledgeReferencePopover((current) => {
+      if (options?.restoreFocus && current?.anchorElement?.isConnected) {
+        window.requestAnimationFrame(() => current.anchorElement.focus?.());
+      }
+      return null;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleOpenReference = (event) => {
+      const detail = event.detail || {};
+      const belongsToRightEditor = detail.editorDom && detail.editorDom === rightSplitEditor?.view?.dom;
+      const targetDocument = belongsToRightEditor ? rightSplitDocument : documentState;
+      if (!targetDocument || !detail.anchorElement) return;
+      setActivePane(belongsToRightEditor ? "right" : "main");
+      const sourceMap = new Map(workspaceCitationSources.map((source) => [source.id, source]));
+      (targetDocument.citationSources || []).forEach((source) => sourceMap.set(source.id, source));
+      const footnote = (targetDocument.footnotes || []).find((item) => item.id === detail.footnoteId) || null;
+      setKnowledgeReferencePopover({
+        kind: detail.kind === "footnote" ? "footnote" : "citation",
+        number: Math.max(1, Number(detail.number) || 1),
+        pages: String(detail.pages || ""),
+        footnote,
+        source: sourceMap.get(detail.sourceId) || null,
+        anchorElement: detail.anchorElement,
+        anchorRect: detail.anchorRect || null,
+        position: Number(detail.position),
+      });
+    };
+    window.addEventListener("paper-knowledge-reference-open", handleOpenReference);
+    return () => window.removeEventListener("paper-knowledge-reference-open", handleOpenReference);
+  }, [documentState, rightSplitDocument, rightSplitEditor, workspaceCitationSources]);
+
+  useEffect(() => {
+    setKnowledgeReferencePopover(null);
+  }, [activeTabId, rightSplitTabId]);
+
+  useEffect(() => {
+    if (footnoteDialog.open || citationSourceDialog.open || citationPicker) setKnowledgeReferencePopover(null);
+  }, [citationPicker, citationSourceDialog.open, footnoteDialog.open]);
+
+  const handleAddFootnote = useCallback(() => {
+    const target = captureElementInsertTarget();
+    if (!target) {
+      showStatus("请先激活一个可编辑的信笺，再插入脚注", "warning");
+      return;
+    }
+    setFootnoteDialog({ open: true, footnote: null, insertTarget: target });
+  }, [captureElementInsertTarget, showStatus]);
+
+  const handleEditFootnote = useCallback((footnote) => {
+    if (!footnote?.id) return;
+    setFootnoteDialog({ open: true, footnote, insertTarget: null });
+  }, []);
+
+  const handleSaveFootnoteDialog = useCallback(async (text) => {
+    if (footnoteDialog.footnote?.id) {
+      updateKnowledgeDocument((document) => ({
+        ...document,
+        footnotes: (document.footnotes || []).map((item) => item.id === footnoteDialog.footnote.id
+          ? { ...item, text: text.trim(), updatedAt: new Date().toISOString() }
+          : item),
+      }));
+      showStatus("脚注已更新", "success");
+      return true;
+    }
+    const target = footnoteDialog.insertTarget;
+    if (!target) throw new Error("脚注插入位置已经失效");
+    const id = createDocumentId();
+    const now = new Date().toISOString();
+    const resolved = updateKnowledgeDocumentForTarget(target, (document) => ({
+      ...document,
+      footnotes: [...(document.footnotes || []), { id, text: text.trim(), createdAt: now, updatedAt: now }],
+    }));
+    if (!resolved) throw new Error("脚注输入期间目标信笺已经变化，未修改任何信笺");
+    insertAtCapturedSelection(resolved, { type: "paperFootnoteReference", attrs: { footnoteId: id, number: 1 } });
+    showStatus("脚注已插入", "success");
+    return true;
+  }, [footnoteDialog.footnote, footnoteDialog.insertTarget, insertAtCapturedSelection, showStatus, updateKnowledgeDocument, updateKnowledgeDocumentForTarget]);
+
+  const handleDeleteFootnote = useCallback(async (footnote) => {
+    const choice = await showConfirmDialog({ title: "删除脚注", message: "正文中的所有对应脚注标记也会删除。", actions: [{ value: "delete", label: "删除", tone: "danger" }, { value: "cancel", label: "取消" }], cancelValue: "cancel" });
+    if (choice !== "delete") return;
+    removeKnowledgeNodesByAttribute(structureWorkEditor, "paperFootnoteReference", "footnoteId", footnote.id);
+    // Keep the detached metadata so a single Ctrl+Z can restore a valid inline
+    // reference. Unreferenced footnotes are hidden and omitted by exporters.
+  }, [showConfirmDialog, structureWorkEditor]);
+
+  const handleAddCitationSource = useCallback(() => {
+    setCitationSourceDialog({ open: true, source: null, insertTarget: null, citationPage: "", returnToPicker: false });
+  }, []);
+
+  const handleEditCitationSource = useCallback((source) => {
+    if (!source?.id) return;
+    setCitationSourceDialog({ open: true, source, insertTarget: null, citationPage: "", returnToPicker: false });
+  }, []);
+
+  const persistCitationSource = useCallback(async (input, { insertTarget = null } = {}) => {
+    const previous = input?.id ? input : null;
+    const now = new Date().toISOString();
+    const normalized = normalizeCitationSources([{
+      ...input,
+      id: input?.id || createDocumentId(),
+      createdAt: input?.createdAt || now,
+      updatedAt: now,
+    }])[0];
+    if (!normalized) throw new Error("题名、网址或 DOI 至少填写一项");
+    const inWorkspace = Boolean(previous?.id && workspaceCitationSources.some((item) => item.id === previous.id));
+    const saveToWorkspace = Boolean(writingWorkspaceRoot && (!previous || inWorkspace || insertTarget));
+    let savedSource = normalized;
+    if (saveToWorkspace) {
+      const result = await bridge.upsertCitation?.(writingWorkspaceRoot, normalized);
+      savedSource = normalizeCitationSources([result?.source || normalized])[0];
+      if (!savedSource) throw new Error("参考文献来源返回格式无效");
+      setWorkspaceCitationSources(Array.isArray(result?.sources)
+        ? normalizeWorkspaceCitationSources(result.sources)
+        : (current) => [...current.filter((item) => item.id !== savedSource.id), savedSource]);
+    }
+    if (!saveToWorkspace && !insertTarget) {
+      updateKnowledgeDocument((document) => {
+        const sources = new Map((document.citationSources || []).map((item) => [item.id, item]));
+        sources.set(savedSource.id, savedSource);
+        return { ...document, citationSources: [...sources.values()] };
+      });
+    } else if (previous?.id) {
+      updateKnowledgeDocument((document) => ({
+        ...document,
+        citationSources: (document.citationSources || []).map((item) => item.id === savedSource.id ? savedSource : item),
+      }));
+    }
+    return { source: savedSource, savedToWorkspace: saveToWorkspace };
+  }, [updateKnowledgeDocument, workspaceCitationSources, writingWorkspaceRoot]);
+
+  const handleInsertCitationAtTarget = useCallback((target, source, page = "") => {
+    if (!target || !source?.id) return false;
+    const snapshot = normalizeCitationSources([source])[0];
+    if (!snapshot) {
+      showStatus("参考文献来源信息不完整，无法插入", "warning");
+      return false;
+    }
+    const resolved = updateKnowledgeDocumentForTarget(target, (document) => {
+      const sources = new Map((document.citationSources || []).map((item) => [item.id, item]));
+      sources.set(snapshot.id, snapshot);
+      return { ...document, citationSources: [...sources.values()] };
+    });
+    if (!resolved) {
+      showStatus("选择来源期间目标信笺已经变化，未插入引用", "warning");
+      return false;
+    }
+    insertAtCapturedSelection(resolved, { type: "paperCitationReference", attrs: { sourceId: snapshot.id, pages: String(page || snapshot.pages || ""), number: 1 } });
+    setPendingCitationPage("");
+    return true;
+  }, [insertAtCapturedSelection, showStatus, updateKnowledgeDocumentForTarget]);
+
+  const handleSaveCitationSourceDialog = useCallback(async (input, citationPage = "") => {
+    const target = citationSourceDialog.insertTarget;
+    const result = await persistCitationSource(input, { insertTarget: target });
+    if (target) {
+      if (handleInsertCitationAtTarget(target, result.source, citationPage)) {
+        showStatus("新参考文献来源已保存并插入", "success");
+      } else {
+        if (!result.savedToWorkspace) {
+          const retained = updateKnowledgeDocumentForTarget(target, (document) => {
+            const sources = new Map((document.citationSources || []).map((item) => [item.id, item]));
+            sources.set(result.source.id, result.source);
+            return { ...document, citationSources: [...sources.values()] };
+          }, { allowRevisionChange: true });
+          if (!retained) throw new Error("原插入信笺已经关闭，参考文献来源未能保留");
+        }
+        showStatus("参考文献来源已保存，但原插入位置已经失效", "warning");
+      }
+    } else {
+      showStatus(result.savedToWorkspace ? "参考文献来源已保存到当前工作区" : "参考文献来源已保存到当前信笺", "success");
+    }
+    return true;
+  }, [citationSourceDialog.insertTarget, handleInsertCitationAtTarget, persistCitationSource, showStatus, updateKnowledgeDocumentForTarget]);
+
+  const handleOpenCitationPicker = useCallback(() => {
+    const target = captureElementInsertTarget();
+    if (!target) {
+      showStatus("请先激活一个可编辑的信笺，再插入文献引用", "warning");
+      return;
+    }
+    setCitationPicker({ ...target, requestId: `citation-${Date.now()}`, initialPage: "" });
+    void refreshWorkspaceCitationSources();
+  }, [captureElementInsertTarget, refreshWorkspaceCitationSources, showStatus]);
+
+  const defaultPdfPageForCitationSource = useCallback((source) => {
+    const view = getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY);
+    if (view?.kind !== WORKSPACE_VIEW_KIND.RESEARCH || !view.libraryId || !source?.researchSourceId) return "";
+    const item = researchItemsByViewId[view.viewId]
+      || (view.sourceId ? librarySources.find((candidate) => candidate.id === view.sourceId) : null)
+      || activeLibraryItem;
+    const isPdf = item?.type === "file" && /\.pdf$/i.test(item.relativePath || item.fileName || item.name || "");
+    if (!isPdf || source.researchLibraryId !== view.libraryId) return "";
+    const stableFileSource = item?.id
+      ? item
+      : librarySources.find((candidate) => candidate.type === "file" && candidate.relativePath === view.relativePath);
+    if (!stableFileSource?.id || stableFileSource.id !== source.researchSourceId) return "";
+    return String(view.viewState?.page || 1);
+  }, [activeLibraryItem, librarySources, researchItemsByViewId]);
+
+  const handleChooseCitationSource = useCallback((source, page = "") => {
+    if (!citationPicker) return;
+    if (handleInsertCitationAtTarget(citationPicker, source, page)) {
+      setCitationPicker(null);
+      showStatus("文献引用已插入", "success");
+    }
+  }, [citationPicker, handleInsertCitationAtTarget, showStatus]);
+
+  const handleAddAndInsertCitationSource = useCallback((page = "") => {
+    const target = citationPicker;
+    if (!target) return;
+    setCitationPicker(null);
+    setCitationSourceDialog({ open: true, source: null, insertTarget: target, citationPage: String(page || ""), returnToPicker: true });
+  }, [citationPicker]);
+
+  const handleCloseCitationSourceDialog = useCallback((result = {}) => {
+    const previous = citationSourceDialog;
+    setCitationSourceDialog({ open: false, source: null, insertTarget: null, citationPage: "", returnToPicker: false });
+    if (!result?.saved && previous.returnToPicker && previous.insertTarget) {
+      setCitationPicker({
+        ...previous.insertTarget,
+        requestId: `citation-${Date.now()}`,
+        initialPage: previous.citationPage || "",
+      });
+    }
+  }, [citationSourceDialog]);
+
+  const handleDeleteCitationSource = useCallback(async (source) => {
+    if (!source?.id) return;
+    const inWorkspace = workspaceCitationSources.some((item) => item.id === source.id);
+    const isCited = citationOrder.includes(source.id);
+    const choice = await showConfirmDialog({
+      title: "移除参考文献来源",
+      message: inWorkspace
+        ? (isCited ? "来源会从工作区资料库移除；当前信笺仍保留引用快照。" : "来源会从工作区资料库移除。")
+        : (isCited ? "该来源仍被正文引用，不能删除信笺内快照。" : "来源会从当前信笺中移除。"),
+      actions: isCited && !inWorkspace
+        ? [{ value: "cancel", label: "知道了" }]
+        : [{ value: "delete", label: "移除", tone: "danger" }, { value: "cancel", label: "取消" }],
+      cancelValue: "cancel",
+    });
+    if (choice !== "delete") return;
+    if (!inWorkspace) {
+      updateKnowledgeDocument((document) => ({ ...document, citationSources: (document.citationSources || []).filter((item) => item.id !== source.id) }));
+      return;
+    }
+    try {
+      const result = await bridge.deleteCitation?.(writingWorkspaceRoot, source.id);
+      setWorkspaceCitationSources(Array.isArray(result?.sources) ? normalizeWorkspaceCitationSources(result.sources) : (current) => current.filter((item) => item.id !== source.id));
+      showStatus(isCited ? "工作区来源已移除；信笺引用快照已保留" : "参考文献来源已移除", "success");
+    } catch (error) {
+      showStatus(error?.message || "参考文献来源移除失败", "warning");
+    }
+  }, [citationOrder, showConfirmDialog, showStatus, updateKnowledgeDocument, workspaceCitationSources, writingWorkspaceRoot]);
+
+  const handleCreateCitationFromResearch = useCallback(async (researchSource) => {
+    if (!researchSource) {
+      showStatus("请先选择研究资料", "warning");
+      return;
+    }
+    const researchLibraryId = researchSource.researchLibraryId || researchRoot?.libraryId || "";
+    const researchSourceId = researchSource.id || researchSource.researchSourceId || "";
+    const bibliographic = researchSource.bibliographic || {};
+    const identifier = String(bibliographic.identifier || "").trim();
+    const existing = workspaceCitationSources.find((source) => (
+      researchSourceId && source.researchSourceId === researchSourceId
+      && (!source.researchLibraryId || source.researchLibraryId === researchLibraryId)
+    ));
+    const isPdf = researchSource.type === "file" && /\.pdf$/i.test(researchSource.fileName || researchSource.relativePath || researchSource.managedFileName || "");
+    const input = {
+      ...(existing || {}),
+      id: existing?.id || createDocumentId(),
+      type: researchSource.type === "web" ? "web" : (isPdf ? "pdf" : "other"),
+      title: researchSource.title || researchSource.fileName || "未命名来源",
+      authors: bibliographic.authors || [],
+      year: bibliographic.year || "",
+      containerTitle: bibliographic.containerTitle || bibliographic.publication || "",
+      publisher: bibliographic.publisher || "",
+      url: researchSource.url || "",
+      doi: /^10\./.test(identifier) ? identifier : "",
+      isbn: identifier && !/^10\./.test(identifier) ? identifier : "",
+      pages: bibliographic.pages || "",
+      researchLibraryId,
+      researchSourceId,
+    };
+    try {
+      const result = writingWorkspaceRoot ? await bridge.upsertCitation?.(writingWorkspaceRoot, input) : null;
+      const rawSource = result?.source || input;
+      const normalized = normalizeCitationSources([rawSource])[0];
+      if (!normalized) throw new Error("资料缺少可引用的题名或地址");
+      const savedSource = { ...normalized, researchLibraryId, researchSourceId };
+      if (writingWorkspaceRoot) {
+        setWorkspaceCitationSources(Array.isArray(result?.sources)
+          ? normalizeWorkspaceCitationSources(result.sources).map((source) => source.id === savedSource.id ? savedSource : source)
+          : (current) => [...current.filter((source) => source.id !== savedSource.id), savedSource]);
+      } else {
+        updateKnowledgeDocument((document) => ({
+          ...document,
+          citationSources: [...(document.citationSources || []).filter((source) => source.id !== savedSource.id), savedSource],
+        }));
+      }
+      setLeftSidebarMode("structure");
+      setStructureMode("references");
+      showStatus(writingWorkspaceRoot ? "已加入参考文献来源库；可从“元素 → 文献引用”插入" : "未打开工作区；来源快照已保存在当前信笺", writingWorkspaceRoot ? "success" : "warning");
+    } catch (error) {
+      showStatus(error?.message || "无法从研究资料创建参考文献来源", "warning");
+    }
+  }, [researchRoot?.libraryId, showStatus, updateKnowledgeDocument, workspaceCitationSources, writingWorkspaceRoot]);
+
+  const handleCreateCitationFromIndependentResearch = useCallback(async (item, options = {}) => {
+    if (!item || !researchRoot?.libraryId) return;
+    let source = item;
+    if (item.type === "file" && !item.id) {
+      source = librarySources.find((candidate) => candidate.type === "file" && candidate.relativePath === item.relativePath) || null;
+      if (!source) {
+        try {
+          source = await saveResearchLibrarySource({
+            type: "file",
+            title: item.name || item.fileName || "未命名资料",
+            relativePath: item.relativePath,
+            size: item.size || 0,
+            mime: item.mime || "",
+          });
+        } catch (error) {
+          showStatus(error?.message || "无法为资料建立稳定身份", "warning");
+          return;
+        }
+      }
+    }
+    if (!source) return;
+    const page = String(options?.page || "");
+    if (page) setPendingCitationPage(page);
+    await handleCreateCitationFromResearch({
+      ...source,
+      researchLibraryId: researchRoot.libraryId,
+      bibliographic: { ...(source.bibliographic || {}), ...(page ? { pages: page } : {}) },
+    });
+  }, [handleCreateCitationFromResearch, librarySources, researchRoot?.libraryId, saveResearchLibrarySource, showStatus]);
+
+  const jumpStructureEditorTo = useCallback((position) => {
+    if (!structureWorkEditor || !Number.isFinite(position)) return false;
+    const selectionPosition = Math.max(0, Math.min(structureWorkEditor.state.doc.content.size, Number(position) + 1));
+    setActivePane(structureWorkEditor === rightSplitEditor ? "right" : "main");
+    structureWorkEditor.chain().focus().setTextSelection(selectionPosition).scrollIntoView().run();
+    return true;
+  }, [rightSplitEditor, structureWorkEditor]);
+
+  const handleJumpFootnote = useCallback((footnote) => {
+    const reference = knowledgeReferences.footnotes.find((item) => item.footnoteId === footnote?.id);
+    if (!jumpStructureEditorTo(reference?.position)) showStatus("正文中的脚注位置已经失效", "warning");
+  }, [jumpStructureEditorTo, knowledgeReferences.footnotes, showStatus]);
+
+  const handleJumpCitationSource = useCallback((source) => {
+    const reference = knowledgeReferences.citations.find((item) => item.sourceId === source?.id);
+    if (!jumpStructureEditorTo(reference?.position)) showStatus("正文尚未使用这个来源", "warning");
+  }, [jumpStructureEditorTo, knowledgeReferences.citations, showStatus]);
+
+  const refreshWorkspaceRelationships = useCallback(async () => {
+    const requestId = workspaceRelationshipRequestRef.current + 1;
+    workspaceRelationshipRequestRef.current = requestId;
+    const requestContextKey = workspaceRelationshipContextRef.current;
+    if (!writingWorkspaceRoot) {
+      const empty = { documents: [], links: [], backlinks: [], duplicates: [] };
+      if (requestId === workspaceRelationshipRequestRef.current && requestContextKey === workspaceRelationshipContextRef.current) {
+        setWorkspaceRelationships(empty);
+      }
+      return empty;
+    }
+    try {
+      const currentLinks = collectKnowledgeReferences(structureWorkEditor).links;
+      const overrides = snapshotLiveTabs().filter((tab) => tab.path && tab.dirty).map((tab) => ({ path: tab.path, document: tab.document }));
+      const result = await bridge.getWorkspaceRelationships?.({
+        folderPath: writingWorkspaceRoot,
+        currentPath: structureWorkPath,
+        documentId: structureWorkDocument?.documentId || "",
+        currentLinks,
+        overrides,
+      });
+      const normalized = result || { documents: [], links: [], backlinks: [], duplicates: [] };
+      if (requestId !== workspaceRelationshipRequestRef.current || requestContextKey !== workspaceRelationshipContextRef.current) {
+        return { documents: [], links: [], backlinks: [], duplicates: [], stale: true };
+      }
+      setWorkspaceRelationships(normalized);
+      return normalized;
+    } catch (error) {
+      showStatus(error?.message || "关联索引刷新失败", "warning");
+      return { documents: [], links: [], backlinks: [], duplicates: [] };
+    }
+  }, [showStatus, snapshotLiveTabs, structureWorkDocument?.documentId, structureWorkEditor, structureWorkPath, writingWorkspaceRoot]);
+
+  useEffect(() => {
+    workspaceRelationshipRequestRef.current += 1;
+    setWorkspaceRelationships({ documents: [], links: [], backlinks: [], duplicates: [] });
+  }, [workspaceRelationshipContextKey]);
+
+  useEffect(() => {
+    const relatedPanelActive = leftSidebarMode === "structure" && structureMode === "related";
+    if (!relatedPanelActive && !internalLinkPicker) return undefined;
+    let timer = window.setTimeout(refreshWorkspaceRelationships, 48);
+    const refresh = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(refreshWorkspaceRelationships, 120);
+    };
+    structureWorkEditor?.on("update", refresh);
+    const unsubscribe = bridge.onWorkspaceChanged?.(refresh);
+    return () => {
+      window.clearTimeout(timer);
+      structureWorkEditor?.off("update", refresh);
+      unsubscribe?.();
+    };
+  }, [internalLinkPicker, leftSidebarMode, refreshWorkspaceRelationships, structureMode, structureWorkEditor]);
+
+  const reconcileIdentityResult = useCallback((result) => {
+    if (!result?.path || !result?.documentId) return;
+    const nextTabs = openTabsRef.current.map((tab) => {
+      if (!sameDocumentPath(tab.path, result.path) || tab.dirty) return tab;
+      diskRevisionByTabRef.current.set(tab.id, result.diskRevision || tab.diskRevision || null);
+      return { ...tab, document: result.document || { ...tab.document, version: 2, documentId: result.documentId, derivedFrom: result.document?.derivedFrom || tab.document?.derivedFrom || "", footnotes: tab.document?.footnotes || [], citationSources: tab.document?.citationSources || [] }, diskRevision: result.diskRevision || tab.diskRevision };
+    });
+    openTabsRef.current = nextTabs;
+    setOpenTabs(nextTabs);
+    if (sameDocumentPath(currentPathRef.current, result.path) && !dirtyRef.current) {
+      const nextDocument = normalizeDocument(result.document || { ...documentStateRef.current, version: 2, documentId: result.documentId }, letterTemplates);
+      documentStateRef.current = nextDocument;
+      setDocumentState(nextDocument);
+      if (result.diskRevision) diskRevisionByTabRef.current.set(activeTabIdRef.current, result.diskRevision);
+    }
+  }, [letterTemplates]);
+
+  const resolveLinkTargetIdentity = useCallback(async (target, force = false) => {
+    if (target?.documentId && !force) return target;
+    const openTarget = openTabsRef.current.find((tab) => sameDocumentPath(tab.path, target?.path));
+    if (openTarget?.dirty) throw new Error("目标信笺有未保存修改，请先保存后再建立关联");
+    const result = await bridge.regenerateDocumentIdentity?.(target?.path, force);
+    if (!result?.documentId) throw new Error("无法为目标信笺建立稳定身份");
+    reconcileIdentityResult(result);
+    return { ...target, documentId: result.documentId, needsIdentity: false };
+  }, [reconcileIdentityResult]);
+
+  const handleChooseInternalLink = useCallback(async (candidate) => {
+    if (!internalLinkPicker) return;
+    try {
+      if ((internalLinkPicker.workspaceRoot || "") !== (writingWorkspaceRoot || "")) {
+        throw new Error("当前文件区已经切换，请重新选择关联信笺");
+      }
+      const initial = resolveElementInsertTarget(internalLinkPicker);
+      if (!initial) throw new Error("关联选择期间目标信笺已经变化");
+      if (Number.isFinite(internalLinkPicker.replacingPosition)) {
+        const replacingNode = initial.editor.state.doc.nodeAt(internalLinkPicker.replacingPosition);
+        if (!replacingNode || replacingNode.type.name !== "paperInternalLink") throw new Error("原关联位置已发生变化");
+      }
+      const targetDocument = initial.groupId === WORKSPACE_GROUP_ID.PRIMARY ? documentStateRef.current : initial.tab.document;
+      const currentCandidate = (workspaceRelationships.documents || []).find((item) => (
+        candidate?.documentId && item.documentId
+          ? item.documentId === candidate.documentId
+          : sameDocumentPath(item.path, candidate?.path)
+      ));
+      if (!currentCandidate) throw new Error("关联候选已经过期，请重新选择");
+      if ((currentCandidate.documentId && currentCandidate.documentId === targetDocument?.documentId)
+        || (currentCandidate.path && sameDocumentPath(currentCandidate.path, initial.tab.path))) {
+        throw new Error("不能将当前信笺关联到自身");
+      }
+      const target = await resolveLinkTargetIdentity(currentCandidate);
+      const resolved = updateKnowledgeDocumentForTarget(internalLinkPicker, (document) => document);
+      if (!resolved) throw new Error("关联选择期间目标信笺已经变化");
+      const nodeContent = { type: "paperInternalLink", attrs: { documentId: target.documentId, title: target.title || "未命名信笺", label: target.title || "未命名信笺", pathHint: target.relativePath || "", missing: false } };
+      if (Number.isFinite(internalLinkPicker.replacingPosition)) {
+        const position = internalLinkPicker.replacingPosition;
+        const node = resolved.editor.state.doc.nodeAt(position);
+        resolved.editor.chain().focus().insertContentAt({ from: position, to: position + node.nodeSize }, nodeContent).run();
+      } else {
+        insertAtCapturedSelection(resolved, nodeContent);
+      }
+      setInternalLinkPicker(null);
+      showStatus("关联信笺已插入", "success");
+      window.setTimeout(refreshWorkspaceRelationships, 0);
+    } catch (error) {
+      showStatus(error?.message || "关联插入失败", "warning");
+    }
+  }, [insertAtCapturedSelection, internalLinkPicker, refreshWorkspaceRelationships, resolveElementInsertTarget, resolveLinkTargetIdentity, showStatus, updateKnowledgeDocumentForTarget, workspaceRelationships.documents, writingWorkspaceRoot]);
+
+  const handleOpenInternalLinkPicker = useCallback(async () => {
+    const target = captureElementInsertTarget();
+    if (!target) {
+      showStatus("请先激活一个可编辑的信笺，再插入关联", "warning");
+      return;
+    }
+    setWorkspaceRelationships({ documents: [], links: [], backlinks: [], duplicates: [] });
+    const relationships = await refreshWorkspaceRelationships();
+    if (relationships?.stale || (target.workspaceRoot || "") !== (writingWorkspaceRoot || "")) {
+      showStatus("当前文件区已经切换，请重新插入关联信笺", "warning");
+      return;
+    }
+    if (!resolveElementInsertTarget(target)) {
+      showStatus("关联选择期间目标信笺已经变化，请重试", "warning");
+      return;
+    }
+    setInternalLinkPicker({ ...target, direct: true });
+  }, [captureElementInsertTarget, refreshWorkspaceRelationships, resolveElementInsertTarget, showStatus, writingWorkspaceRoot]);
+
+  const handleOpenRelatedDocument = useCallback(async (link) => {
+    if (link?.path) {
+      await handleOpenFolderFile(link.path);
+      setLeftSidebarMode("structure");
+      setStructureMode("related");
+      return;
+    }
+    showStatus("目标信笺已丢失，可在关联面板中重新关联或移除", "warning");
+    setLeftSidebarMode("structure");
+    setStructureMode("related");
+  }, [handleOpenFolderFile, showStatus]);
+
+  const handleRemoveInternalLink = useCallback((link) => {
+    const position = Number(link?.position);
+    const node = Number.isFinite(position) ? structureWorkEditor?.state.doc.nodeAt(position) : null;
+    if (!node || node.type.name !== "paperInternalLink") {
+      showStatus("关联位置已经失效", "warning");
+      return;
+    }
+    structureWorkEditor.chain().focus().deleteRange({ from: position, to: position + node.nodeSize }).run();
+  }, [showStatus, structureWorkEditor]);
+
+  const handleJumpInternalLinkUsage = useCallback((link) => {
+    const targetDocumentId = link?.targetDocumentId || link?.documentId;
+    const usage = nextInternalLinkUsage(
+      knowledgeReferences.links,
+      targetDocumentId,
+      structureWorkEditor?.state?.selection?.from,
+    );
+    if (!Number.isFinite(usage?.position) || !jumpStructureEditorTo(usage.position)) {
+      showStatus("正文中的关联位置已经失效", "warning");
+      return null;
+    }
+    return usage;
+  }, [jumpStructureEditorTo, knowledgeReferences.links, showStatus, structureWorkEditor]);
+
+  const handleRegenerateDuplicateIdentity = useCallback(async (item) => {
+    try {
+      const result = await resolveLinkTargetIdentity(item, true);
+      showStatus(`已为“${item.title || item.relativePath}”生成新身份`, "success");
+      reconcileIdentityResult(result);
+      await refreshWorkspaceRelationships();
+    } catch (error) {
+      showStatus(error?.message || "生成新身份失败", "warning");
+    }
+  }, [reconcileIdentityResult, refreshWorkspaceRelationships, resolveLinkTargetIdentity, showStatus]);
+
+  useEffect(() => {
+    const handleOpen = async (event) => {
+      const relationships = await refreshWorkspaceRelationships();
+      const target = (relationships.documents || []).find((item) => item.documentId === event.detail?.documentId);
+      if (target?.path) {
+        await handleOpenFolderFile(target.path);
+        setLeftSidebarMode("structure");
+        setStructureMode("related");
+      }
+      else {
+        setLeftSidebarMode("structure");
+        setStructureMode("related");
+        showStatus("目标信笺已丢失，可重新关联或移除", "warning");
+      }
+    };
+    window.addEventListener("paper-internal-link-open", handleOpen);
+    return () => {
+      window.removeEventListener("paper-internal-link-open", handleOpen);
+    };
+  }, [handleOpenFolderFile, refreshWorkspaceRelationships, showStatus]);
+
+  useEffect(() => {
+    const wasImmersive = previousImmersiveModeRef.current;
+    previousImmersiveModeRef.current = immersiveMode;
+    if (immersiveMode && !wasImmersive) {
+      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      openTabsRef.current = snapshot;
+      setOpenTabs(snapshot);
+      immersiveSecondaryPaneLayoutRef.current = aiMode && aiSecondaryPaneLayoutRef.current
+        ? aiSecondaryPaneLayoutRef.current
+        : { workspaceGroups: workspaceGroupsRef.current, activePane };
+      setActivePane("main");
+      return;
+    }
+    if (!immersiveMode && wasImmersive) {
+      const savedLayout = immersiveSecondaryPaneLayoutRef.current;
+      immersiveSecondaryPaneLayoutRef.current = null;
+      if (!savedLayout) return;
+      if (aiMode) {
+        aiSecondaryPaneLayoutRef.current = savedLayout;
+        return;
+      }
+      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
+      openTabsRef.current = snapshot;
+      setOpenTabs(snapshot);
+      commitWorkspaceGroups(savedLayout.workspaceGroups);
+      const primaryView = getActiveWorkspaceView(savedLayout.workspaceGroups, WORKSPACE_GROUP_ID.PRIMARY);
+      const primaryTab = snapshot.find((tab) => tab.id === primaryView?.tabId);
+      if (primaryTab && primaryTab.id !== activeTabIdRef.current) {
+        activeTabIdRef.current = primaryTab.id;
+        setActiveTabId(primaryTab.id);
+        applyDocument(primaryTab.document, primaryTab.path, primaryTab.dirty, { editorJson: primaryTab.editorJson, scrollState: primaryTab.scrollState });
+      }
+      setActivePane(savedLayout.activePane === "right" && savedLayout.workspaceGroups.secondary.views.length ? "right" : "main");
+    }
+  }, [activePane, aiMode, applyDocument, commitWorkspaceGroups, immersiveMode, snapshotLiveTabs]);
+
+  const setImmersive = useCallback(async (nextValue) => {
+    const next = Boolean(nextValue);
+    await bridge.setFullscreen?.(next);
+    setImmersiveMode(next);
+  }, []);
+
+  useEffect(() => bridge.onFullscreenChanged?.((payload) => {
+    setImmersiveMode(Boolean(payload?.fullscreen));
+  }), []);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "F11") {
+        event.preventDefault();
+        setImmersive(!immersiveMode);
+        return;
+      }
+      if (event.defaultPrevented) return;
+      if (event.key !== "Escape") return;
+      if (event.target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+      if (window.document.querySelector("[role='dialog'],[role='alertdialog'],.nav-menu-popover,.tree-context-menu,.template-select-popover")) return;
+      if (internalLinkPicker) {
+        event.preventDefault();
+        setInternalLinkPicker(null);
+        return;
+      }
+      const activeSecondary = getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY);
+      if (activePane === "right" && activeSecondary?.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
+        event.preventDefault();
+        void handleCloseGroupView(WORKSPACE_GROUP_ID.SECONDARY, activeSecondary.viewId);
+        return;
+      }
+      if (!immersiveMode) return;
+      if (aiMode) {
+        event.preventDefault();
+        void requestExitAiMode();
+        return;
+      }
+      event.preventDefault();
+      setImmersive(false);
+    };
+    window.document.addEventListener("keydown", handleKeyDown, true);
+    return () => window.document.removeEventListener("keydown", handleKeyDown, true);
+  }, [activePane, aiMode, handleCloseGroupView, immersiveMode, internalLinkPicker, requestExitAiMode, setImmersive]);
 
   const handleStartAiOptimize = useCallback(async () => {
     if (aiStatus === "streaming") {
       return;
     }
     if (!aiHasUsableProvider) {
-      setAiSettingsOpen(true);
+      openAiSettings();
       showStatus("请先配置模型", "warning");
       return;
     }
@@ -13117,7 +18165,7 @@ export default function App() {
       provider: effectiveAiConfig.provider,
       modelId: effectiveAiConfig.modelId,
       prompt: aiInput.prompt,
-      workspacePath: folderState.path,
+      workspacePath: writingWorkspaceRoot,
       documentPath: currentPath,
     });
     if (!result?.ok) {
@@ -13129,7 +18177,7 @@ export default function App() {
       });
       showStatus(result?.message || "AI 生成启动失败", "warning");
     }
-  }, [aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.model, effectiveAiConfig.modelId, effectiveAiConfig.modelName, effectiveAiConfig.provider, editor, folderState.path, letterTemplates, showStatus, updateOptimizeStateForKey]);
+  }, [aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.model, effectiveAiConfig.modelId, effectiveAiConfig.modelName, effectiveAiConfig.provider, editor, letterTemplates, openAiSettings, showStatus, updateOptimizeStateForKey, writingWorkspaceRoot]);
 
   const handleAiChatPresetSelect = useCallback((preset) => {
     if (preset?.id === "rewrite-selection" && !aiChatSelections.length) {
@@ -13148,7 +18196,7 @@ export default function App() {
       return;
     }
     if (!aiHasUsableProvider) {
-      setAiSettingsOpen(true);
+      openAiSettings();
       showStatus("请先配置模型", "warning");
       return;
     }
@@ -13234,7 +18282,7 @@ export default function App() {
       provider: effectiveAiConfig.provider,
       modelId: effectiveAiConfig.modelId,
       messages,
-      workspacePath: folderState.path,
+      workspacePath: writingWorkspaceRoot,
       documentPath: currentPath,
       codexScope: { ...CODEX_DOCUMENT_ONLY_SCOPE },
       ...(isCodexChat ? {
@@ -13258,7 +18306,7 @@ export default function App() {
       aiRequestMetaRef.current = { kind: "" };
       showStatus(message, "warning");
     }
-  }, [aiChatCodexImageMode, aiChatInput, aiChatSelections, aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.modelId, effectiveAiConfig.provider, effectiveAiConfig.transport, editor, folderState.path, letterTemplates, showStatus, updateChatStateForKey]);
+  }, [aiChatCodexImageMode, aiChatInput, aiChatSelections, aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.modelId, effectiveAiConfig.provider, effectiveAiConfig.transport, editor, letterTemplates, openAiSettings, showStatus, updateChatStateForKey, writingWorkspaceRoot]);
 
   const handleClearAiChat = useCallback(() => {
     if (aiStatus === "streaming") {
@@ -13299,20 +18347,302 @@ export default function App() {
     }
   }, [showStatus]);
 
+  const beginManualAiApply = useCallback((block, blockIndex, blocks, reason = "") => {
+    setManualFallbackAiBlockIndexes((current) => current.includes(blockIndex) ? current : [...current, blockIndex]);
+    setManualAiApply({ block, blockIndex, blocks: Array.isArray(blocks) ? blocks : [] });
+    showStatus(reason || "未能可靠定位，请在左侧选择原文位置；按 Esc 可取消", "warning");
+  }, [showStatus]);
+
+  const commitAiApplyOperation = useCallback((resolved) => {
+    if (!resolved?.ok || !resolved.operation || !resolved.manifest) return { ok: false, stale: true };
+    const currentFingerprint = buildAiApplyBlockManifest(editor.state.doc).documentFingerprint;
+    if (currentFingerprint !== resolved.manifest.documentFingerprint) return { ok: false, stale: true };
+    const applied = editor.chain().focus().insertContentAt(
+      { from: resolved.operation.from, to: resolved.operation.to },
+      resolved.operation.content,
+      { updateSelection: true },
+    ).run();
+    return applied ? { ok: true } : { ok: false, rejected: true };
+  }, [editor]);
+
+  const stageAiApplyPreview = useCallback((resolved, context = {}) => {
+    if (!resolved?.ok || !resolved.operation || !resolved.manifest) return { ok: false, stale: true };
+    const currentFingerprint = buildAiApplyBlockManifest(editor.state.doc).documentFingerprint;
+    if (currentFingerprint !== resolved.manifest.documentFingerprint) return { ok: false, stale: true };
+    const currentComments = getDocumentComments(editor, documentStateRef.current.comments);
+    const overlappingComments = findCommentsOverlappingAiApplyOperation(resolved.operation, currentComments);
+    const actionLabel = resolved.operation.action === "replace"
+      ? `替换 ${resolved.operation.targetBlockIds?.length || 1} 个连续原文块`
+      : (resolved.operation.action === "insert_before" ? "插入到目标之前" : "插入到目标之后");
+    setManualAiApply(null);
+    setAiApplyPreview({
+      id: `${Date.now()}-${context.blockIndex ?? "manual"}`,
+      resolved,
+      actionLabel,
+      targetSummary: summarizeAiApplyTarget(resolved.operation, resolved.manifest),
+      commentCount: overlappingComments.length,
+      block: context.block || null,
+      blockIndex: Number.isInteger(context.blockIndex) ? context.blockIndex : -1,
+      blocks: Array.isArray(context.blocks) ? context.blocks : [],
+    });
+    return { ok: true };
+  }, [editor]);
+
+  const cancelAiApplyPreview = useCallback(() => {
+    setAiApplyPreview(null);
+    showStatus("已取消这次修改，正文保持不变", "success");
+  }, [showStatus]);
+
+  const confirmAiApplyPreview = useCallback(() => {
+    if (!aiApplyPreview) return;
+    const committed = commitAiApplyOperation(aiApplyPreview.resolved);
+    setAiApplyPreview(null);
+    if (committed.ok) {
+      showStatus("已应用修改；按 Ctrl+Z 可完整撤销", "success");
+      return;
+    }
+    if (aiApplyPreview.block && aiApplyPreview.blockIndex >= 0) {
+      beginManualAiApply(
+        aiApplyPreview.block,
+        aiApplyPreview.blockIndex,
+        aiApplyPreview.blocks,
+        "确认前目标位置发生变化，请重新选择原文位置",
+      );
+      return;
+    }
+    showStatus("确认前目标位置发生变化，请重新选择", "warning");
+  }, [aiApplyPreview, beginManualAiApply, commitAiApplyOperation, showStatus]);
+
+  useEffect(() => {
+    if (!editor) return undefined;
+    syncAiApplyPreviewDecorations(editor, aiApplyPreview ? {
+      ...aiApplyPreview,
+      onConfirm: confirmAiApplyPreview,
+      onCancel: cancelAiApplyPreview,
+    } : null);
+    if (!aiApplyPreview) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      cancelAiApplyPreview();
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+      syncAiApplyPreviewDecorations(editor, null);
+    };
+  }, [aiApplyPreview, cancelAiApplyPreview, confirmAiApplyPreview, editor]);
+
+  const handleApplyAiBlock = useCallback(async (block, blockIndex, blocks) => {
+    if (!editor || applyingAiBlockIndex >= 0 || aiApplyInFlightRef.current || aiStatus === "streaming") return;
+    if (aiApplyPreview) {
+      showStatus("请先在左侧正文中确认或取消当前修改", "warning");
+      return;
+    }
+    if (activeTabReadOnly) {
+      showStatus("未来格式信笺为只读，不能直接应用", "warning");
+      return;
+    }
+    if (manualFallbackAiBlockIndexes.includes(blockIndex)) {
+      beginManualAiApply(block, blockIndex, blocks);
+      return;
+    }
+    aiApplyInFlightRef.current = true;
+    setApplyingAiBlockIndex(blockIndex);
+    try {
+      const manifest = buildAiApplyBlockManifest(editor.state.doc);
+      const optimizationContext = buildAiOptimizationContext(blocks, blockIndex);
+      const resolved = await resolveAiDirectApplyWithRepair({
+        resolver: bridge.resolveAiApply,
+        manifest,
+        selectedAiBlock: block,
+        optimizationContext,
+        getCurrentDocument: () => editor.state.doc,
+      });
+      if (resolved.unresolved) {
+        beginManualAiApply(block, blockIndex, blocks, "未能可靠定位，请选择原文位置");
+        return;
+      }
+      if (!resolved.ok) {
+        beginManualAiApply(block, blockIndex, blocks, "未能可靠定位，请选择原文位置");
+        return;
+      }
+      const staged = stageAiApplyPreview(resolved, { block, blockIndex, blocks });
+      if (!staged.ok) beginManualAiApply(block, blockIndex, blocks, "目标位置发生变化，请重新选择原文位置");
+      else showStatus("已在正文中显示修改对比，请确认应用或取消", "success");
+    } catch {
+      beginManualAiApply(block, blockIndex, blocks, "定位模型暂时不可用，已切换为手动选择位置");
+    } finally {
+      aiApplyInFlightRef.current = false;
+      setApplyingAiBlockIndex(-1);
+    }
+  }, [activeTabReadOnly, aiApplyPreview, aiStatus, applyingAiBlockIndex, beginManualAiApply, editor, manualFallbackAiBlockIndexes, showStatus, stageAiApplyPreview]);
+
+  const handleManualAiApplyTarget = useCallback(async (targetBlockId) => {
+    if (!editor || !manualAiApply || activeTabReadOnly) return;
+    const manifest = buildAiApplyBlockManifest(editor.state.doc);
+    const target = manifest.blocks.find((block) => block.id === targetBlockId);
+    if (!target || target.protected) {
+      showStatus("定稿区或受保护结构不能作为应用位置", "warning");
+      return;
+    }
+    const actions = ["replace", "insert_before", "insert_after"];
+    const operations = Object.fromEntries(actions.map((action) => [
+      action,
+      createManualAiDirectApplyOperation(manifest, target.id, action, manualAiApply.block),
+    ]));
+    if (actions.some((action) => !operations[action]?.ok || !operations[action]?.operation)) {
+      showStatus("这个优化块暂时不能应用，请复制后手动粘贴", "warning");
+      setManualAiApply(null);
+      return;
+    }
+    const comments = getDocumentComments(editor, documentStateRef.current.comments);
+    const commentCount = (action) => findCommentsOverlappingAiApplyOperation(operations[action]?.operation, comments).length;
+    const choice = await showConfirmDialog({
+      tone: "default",
+      icon: Check,
+      eyebrow: "选择应用方式",
+      title: "应用到这个原文位置",
+      message: `目标：${summarizeAiApplyTarget(operations.replace.operation, manifest)}`,
+      detail: "选择后会先在正文中显示红蓝对比；括号内会提示可能受影响的评注数量。",
+      actions: [
+        { value: "replace", label: `替换此处${commentCount("replace") ? `（${commentCount("replace")} 条评注）` : ""}`, variant: "primary", autoFocus: true },
+        { value: "insert_before", label: `插入到前面${commentCount("insert_before") ? `（${commentCount("insert_before")} 条评注）` : ""}` },
+        { value: "insert_after", label: `插入到后面${commentCount("insert_after") ? `（${commentCount("insert_after")} 条评注）` : ""}` },
+        { value: "cancel", label: "取消" },
+      ],
+      cancelValue: "cancel",
+    });
+    setManualAiApply(null);
+    if (!actions.includes(choice)) return;
+    const staged = stageAiApplyPreview(operations[choice], manualAiApply);
+    if (staged.ok) {
+      showStatus("已在正文中显示修改对比，请确认应用或取消", "success");
+    } else {
+      showStatus("所选位置已经变化，请重新选择", "warning");
+    }
+  }, [activeTabReadOnly, editor, manualAiApply, showConfirmDialog, showStatus, stageAiApplyPreview]);
+
+  useEffect(() => {
+    if (!editor || !manualAiApply) return undefined;
+    const root = editor.view.dom;
+    let hoverManifest = buildAiApplyBlockManifest(editor.state.doc);
+    let hovered = null;
+    const clearHovered = () => {
+      hovered?.classList?.remove("ai-manual-apply-hover");
+      hovered?.classList?.remove("ai-manual-apply-protected");
+      hovered = null;
+    };
+    const rootChildFromEvent = (event) => {
+      let element = event.target instanceof Element ? event.target : event.target?.parentElement;
+      while (element && element.parentElement !== root) element = element.parentElement;
+      return element?.parentElement === root ? element : null;
+    };
+    const handlePointerMove = (event) => {
+      const next = rootChildFromEvent(event);
+      if (next === hovered) return;
+      clearHovered();
+      hovered = next;
+      if (!hovered) return;
+      const domIndex = Array.prototype.indexOf.call(root.children, hovered);
+      const target = domIndex >= 0 ? hoverManifest.blocks[domIndex] : null;
+      hovered.classList.add(target?.protected ? "ai-manual-apply-protected" : "ai-manual-apply-hover");
+    };
+    const handleClick = (event) => {
+      const located = editor.view.posAtCoords({ left: event.clientX, top: event.clientY });
+      if (!located) return;
+      const manifest = buildAiApplyBlockManifest(editor.state.doc);
+      const target = manifest.blocks.find((block) => located.pos >= block.from && located.pos < block.to)
+        || manifest.blocks.at(-1);
+      if (!target) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (target.protected) {
+        showStatus("定稿区或受保护结构不能作为应用位置", "warning");
+        return;
+      }
+      void handleManualAiApplyTarget(target.id);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setManualAiApply(null);
+      showStatus("已取消选择应用位置", "success");
+    };
+    const refreshHoverManifest = () => {
+      hoverManifest = buildAiApplyBlockManifest(editor.state.doc);
+    };
+    root.classList.add("ai-manual-apply-targeting");
+    root.addEventListener("pointermove", handlePointerMove);
+    root.addEventListener("pointerleave", clearHovered);
+    root.addEventListener("click", handleClick, true);
+    window.addEventListener("keydown", handleKeyDown, true);
+    editor.on("update", refreshHoverManifest);
+    return () => {
+      clearHovered();
+      root.classList.remove("ai-manual-apply-targeting");
+      root.removeEventListener("pointermove", handlePointerMove);
+      root.removeEventListener("pointerleave", clearHovered);
+      root.removeEventListener("click", handleClick, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+      editor.off("update", refreshHoverManifest);
+    };
+  }, [editor, handleManualAiApplyTarget, manualAiApply, showStatus]);
+
+  const measuredWorkSurfaceWidth = workSurfaceWidth || Math.max(1, window.innerWidth - (leftSidebarCollapsed ? 0 : 330));
+  const secondaryGroupOpen = workspaceGroups.secondary.views.length > 0;
+  const secondaryGroupVisible = secondaryGroupOpen && !immersiveMode;
+  const minimumGroupRatio = Math.min(0.5, 320 / Math.max(640, measuredWorkSurfaceWidth));
+  const secondaryPrimaryRatio = Math.min(1 - minimumGroupRatio, Math.max(minimumGroupRatio, workspaceGroups.splitRatio));
+  const secondarySideRatio = 1 - secondaryPrimaryRatio;
+  const secondaryGridStyle = !secondaryGroupVisible
+    ? undefined
+    : { gridTemplateColumns: `minmax(0, ${secondaryPrimaryRatio}fr) minmax(0, ${secondarySideRatio}fr)` };
+  const secondaryPaneWidthPx = secondaryGroupVisible ? measuredWorkSurfaceWidth * secondarySideRatio : 0;
+  const findTargetsPrimaryPane = activePane !== "right";
+  const documentFindStyle = {
+    "--document-find-right": `${findTargetsPrimaryPane ? secondaryPaneWidthPx + 18 : 18}px`,
+    "--document-find-column-width": `${!secondaryGroupVisible
+      ? measuredWorkSurfaceWidth
+      : (findTargetsPrimaryPane ? measuredWorkSurfaceWidth - secondaryPaneWidthPx : secondaryPaneWidthPx)}px`,
+  };
+
   const shellClassName = [
     "desktop-shell",
     printMode ? "print-mode" : "",
     imageExportMode ? "image-export-mode" : "",
     aiMode ? "ai-mode" : "",
     leftSidebarCollapsed ? "left-sidebar-collapsed" : "",
+    immersiveMode ? "immersive-mode" : "",
   ].filter(Boolean).join(" ");
   const appShellClassName = [
     "app-shell",
     leftSidebarCollapsed ? "left-collapsed" : "",
+    aiPageTransition ? "ai-mode-page-enter" : "",
+    aiPageTransition ? `ai-mode-page-${aiPageTransition}` : "",
   ].filter(Boolean).join(" ");
   const activeEditorViewKey = aiMode
     ? `ai-${activeTabId}`
     : (splitPaneActive ? `right-${rightSplitTabId}` : `main-${activeTabId}`);
+  const tabTemplateDocument = tabTemplateDialog.targetTabId === activeTabId
+    ? documentState
+    : (openTabs.find((tab) => tab.id === tabTemplateDialog.targetTabId)?.document || null);
+  const researchWebViewSuspended = Boolean(
+    webSourceDialog.open
+    || webCopyDialog.open
+    || confirmDialog
+    || promptDialog
+    || linkDialog
+    || settingsDialog.open
+    || tabTemplateDialog.open
+    || helpOpen
+    || releaseNotesOpen
+    || exportDialogOpen
+    || internalLinkPicker
+    || citationPicker
+    || footnoteDialog.open
+    || citationSourceDialog.open,
+  );
 
   return (
     <div className={shellClassName}>
@@ -13323,22 +18653,31 @@ export default function App() {
         savedSelectionRef={aiMode ? editorSelectionRef : activeWorkSelectionRef}
         onNew={handleNew}
         onOpen={handleOpen}
+        onImport={handleImportDocument}
         onSave={handleSave}
         onOpenExport={() => setExportDialogOpen(true)}
         onInsertImage={handleInsertImage}
         onInsertAudio={() => handleInsertMedia("audio")}
         onInsertVideo={() => handleInsertMedia("video")}
         onOpenLinkDialog={handleOpenLinkDialog}
+        onInsertInternalLink={handleOpenInternalLinkPicker}
+        onInsertFootnote={handleAddFootnote}
+        onOpenCitationPicker={handleOpenCitationPicker}
         onOpenHelp={openHelpCenter}
+        onOpenSettings={openSettings}
+        settingsTriggerRef={settingsTriggerRef}
+        onOpenSearch={openSearch}
+        workspaceSearchAvailable={Boolean(writingWorkspaceRoot)}
         aiMode={aiMode}
         aiModeKind={aiModeKind}
         aiBusy={aiStatus === "streaming"}
         aiConfigured={aiHasUsableProvider}
-        editorLocked={aiMode && aiStatus === "streaming"}
-        onOpenAiSettings={() => setAiSettingsOpen(true)}
-        onEnterAiOptimize={handleEnterAiOptimize}
-        onEnterAiChat={handleEnterAiChat}
-        onExitAi={exitAiMode}
+        aiModeChooserOpen={aiModeChooserOpen}
+        aiModeTriggerRef={aiModeTriggerRef}
+        editorLocked={(aiMode && aiStatus === "streaming") || Boolean(aiApplyPreview)}
+        onToggleAiModeChooser={toggleAiModeChooser}
+        immersiveMode={immersiveMode}
+        onToggleImmersive={() => setImmersive(!immersiveMode)}
         leftSidebarCollapsed={leftSidebarCollapsed}
         onToggleLeftSidebar={() => setLeftSidebarCollapsed((collapsed) => !collapsed)}
       />
@@ -13346,8 +18685,8 @@ export default function App() {
         {!leftSidebarCollapsed ? (
           <LiveOutlineSidebar
             key={`sidebar-${activeEditorViewKey}`}
-            editor={activeWorkEditor}
-            currentPath={currentPath}
+            editor={structureWorkEditor}
+            currentPath={structureWorkPath}
             folderState={folderState}
             mode={leftSidebarMode}
             expandedFolders={expandedFolders}
@@ -13363,22 +18702,111 @@ export default function App() {
             onMoveEntry={handleMoveTreeEntry}
             onModeChange={setLeftSidebarMode}
             onOutlineItemClick={handleOutlineItemClick}
+            researchPanel={(
+              <ResearchSidebar
+                rootPath={researchRoot?.rootPath || ""}
+                libraryId={researchRoot?.libraryId || ""}
+                currentRelativePath={researchCurrentRelativePath}
+                entries={researchEntries}
+                expandedFolders={researchExpandedFolders}
+                selectedKey={activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH
+                  ? (activeSecondaryView.relativePath || activeSecondaryView.sourceId || "")
+                  : ""}
+                webSources={librarySources.filter((source) => source.type === "web")}
+                webFolders={webTreeState.folders}
+                webPlacements={webTreeState.placements}
+                webScopeKey={webScopeKey}
+                webWorkspaceName={writingWorkspaceIdentity?.workspaceName || ""}
+                webWorkspaceConnected={webWorkspaceConnected}
+                webWorkspaceAvailable={Boolean(writingWorkspaceIdentity?.workspaceId)}
+                webTreeReadOnly={webTreeState.readOnly}
+                loading={researchTreeLoading}
+                error={researchTreeError}
+                busyKeys={researchBusyKeys}
+                onPickRoot={handlePickResearchRoot}
+                onNavigatePath={handleNavigateResearchPath}
+                onToggleFolder={handleToggleResearchFolder}
+                onOpenEntry={openIndependentResearchItem}
+                onCreateFolder={handleCreateResearchFolder}
+                onImportFiles={handleImportResearchFiles}
+                onRenameEntry={handleRenameResearchEntry}
+                onMoveEntry={handleMoveResearchEntry}
+                onTrashEntry={handleTrashResearchEntry}
+                onCopyPath={handleCopyResearchPath}
+                onShowInFolder={handleShowResearchEntry}
+                onAddWeb={handleAddLibraryWeb}
+                onToggleWebWorkspace={handleToggleWebWorkspace}
+                onCopyWebFromGlobal={handleOpenWebCopyDialog}
+                onCreateWebFolder={handleCreateWebFolder}
+                onRenameWebFolder={handleRenameWebFolder}
+                onDeleteWebFolder={handleDeleteWebFolder}
+                onMoveWebFolder={handleMoveWebFolder}
+                onMoveWebSource={handleMoveWebSource}
+                onOpenSource={openIndependentResearchItem}
+                onEditSource={handleEditLibrarySource}
+                onDeleteSource={handleDeleteLibrarySource}
+              />
+            )}
+            renderStructurePanel={(outlineItems) => (
+              <StructureInspector
+                mode={structureMode}
+                onModeChange={setStructureMode}
+                outlineItems={outlineItems}
+                onOutlineItemClick={handleOutlineItemClick}
+                referenceProps={{
+                  footnotes: visibleFootnotes,
+                  sources: citationSourcesForDock,
+                  citationOrder,
+                  pendingPage: pendingCitationPage,
+                  loading: citationLibraryLoading,
+                  onJumpFootnote: handleJumpFootnote,
+                  onEditFootnote: handleEditFootnote,
+                  onDeleteFootnote: handleDeleteFootnote,
+                  onAddCitationSource: handleAddCitationSource,
+                  onEditCitationSource: handleEditCitationSource,
+                  onDeleteCitationSource: handleDeleteCitationSource,
+                  onJumpCitationSource: handleJumpCitationSource,
+                }}
+                relatedProps={{
+                  links: workspaceRelationships.links || [],
+                  backlinks: workspaceRelationships.backlinks || [],
+                  duplicates: workspaceRelationships.duplicates || [],
+                  contextKey: workspaceRelationshipContextKey,
+                  onOpenDocument: handleOpenRelatedDocument,
+                  onRelink: async (link) => {
+                    const target = captureStructureManagementTarget();
+                    if (!target) {
+                      showStatus("当前信笺不可编辑，无法重新关联", "warning");
+                      return;
+                    }
+                    await refreshWorkspaceRelationships();
+                    setInternalLinkPicker({
+                      ...target,
+                      replacingPosition: Number(link.position),
+                    });
+                  },
+                  onRemove: handleRemoveInternalLink,
+                  onJumpUsage: handleJumpInternalLinkUsage,
+                  onGiveNewIdentity: handleRegenerateDuplicateIdentity,
+                }}
+              />
+            )}
           />
         ) : null}
         <section className="workspace">
-          <div className="work-surface">
+          <div className="work-surface" ref={workSurfaceRef}>
             {aiOptimizeMode || aiChatMode ? (
               <div className="ai-mode-top-strip">
                 <DocumentTabs
-                  tabs={tabViewModels}
+                  tabs={primaryGroupTabs.map((view) => ({ id: view.tabId, path: view.path, title: view.title, dirty: view.dirty }))}
                   activeTabId={activeTabId}
-                  rightSplitTabId={rightSplitTabId}
                   onSelectTab={handleSelectTab}
                   onCloseTab={handleCloseTab}
                   onNew={handleNew}
                   closeDisabled
                   newDisabled
                   showNew={false}
+                  compact
                 />
                 {aiOptimizeMode ? (
                   <AiOptimizeToolbar
@@ -13411,26 +18839,92 @@ export default function App() {
                   />
                 ) : null}
               </div>
+            ) : secondaryGroupVisible ? (
+              <div className="editor-groups-top-strip" style={secondaryGridStyle}>
+                <GroupTabStrip
+                  groupId={WORKSPACE_GROUP_ID.PRIMARY}
+                  items={primaryGroupTabs}
+                  activeViewId={workspaceGroups.primary.activeViewId}
+                  focused={activePane === "main"}
+                  onActivate={(viewId) => handleSelectGroupView(WORKSPACE_GROUP_ID.PRIMARY, viewId)}
+                  onClose={(viewId) => handleCloseGroupView(WORKSPACE_GROUP_ID.PRIMARY, viewId)}
+                  onNewDocument={() => handleNew(WORKSPACE_GROUP_ID.PRIMARY)}
+                  onReorder={(viewId, beforeViewId) => handleReorderGroupView(WORKSPACE_GROUP_ID.PRIMARY, viewId, beforeViewId)}
+                  onMoveDocument={handleMoveGroupDocument}
+                  onOpenTemplatePicker={handleOpenGroupTabTemplate}
+                  canMoveDocument={() => workspaceGroups.primary.views.length > 1}
+                />
+                <GroupTabStrip
+                  groupId={WORKSPACE_GROUP_ID.SECONDARY}
+                  items={secondaryGroupTabs}
+                  activeViewId={workspaceGroups.secondary.activeViewId}
+                  focused={activePane === "right"}
+                  onActivate={(viewId) => handleSelectGroupView(WORKSPACE_GROUP_ID.SECONDARY, viewId)}
+                  onClose={(viewId) => handleCloseGroupView(WORKSPACE_GROUP_ID.SECONDARY, viewId)}
+                  onNewDocument={() => handleNew(WORKSPACE_GROUP_ID.SECONDARY)}
+                  onReorder={(viewId, beforeViewId) => handleReorderGroupView(WORKSPACE_GROUP_ID.SECONDARY, viewId, beforeViewId)}
+                  onMoveDocument={handleMoveGroupDocument}
+                  onOpenTemplatePicker={handleOpenGroupTabTemplate}
+                />
+              </div>
             ) : (
-              <DocumentTabs
-                tabs={tabViewModels}
-                activeTabId={activeTabId}
-                rightSplitTabId={rightSplitTabId}
-                onSelectTab={handleSelectTab}
-                onCloseTab={handleCloseTab}
-                onNew={handleNew}
-                onToggleRightSplit={handleToggleRightSplit}
-                onOpenTemplates={handleOpenTabTemplates}
-                disabled={aiMode}
-                onCapacityChange={setTabCapacityFull}
+              <GroupTabStrip
+                groupId={WORKSPACE_GROUP_ID.PRIMARY}
+                items={primaryGroupTabs}
+                activeViewId={workspaceGroups.primary.activeViewId}
+                focused
+                onActivate={(viewId) => handleSelectGroupView(WORKSPACE_GROUP_ID.PRIMARY, viewId)}
+                onClose={(viewId) => handleCloseGroupView(WORKSPACE_GROUP_ID.PRIMARY, viewId)}
+                onNewDocument={() => handleNew(WORKSPACE_GROUP_ID.PRIMARY)}
+                onReorder={(viewId, beforeViewId) => handleReorderGroupView(WORKSPACE_GROUP_ID.PRIMARY, viewId, beforeViewId)}
+                onMoveDocument={handleMoveGroupDocument}
+                onOpenTemplatePicker={handleOpenGroupTabTemplate}
+                canMoveDocument={() => workspaceGroups.primary.views.length > 1}
               />
             )}
+            {searchMode === "document" ? (
+              <DocumentFindWidget
+                query={searchQuery}
+                replaceValue={documentReplaceValue}
+                replaceVisible={documentReplaceVisible}
+                currentIndex={documentSearchState.activeIndex}
+                currentCount={documentSearchState.matches?.length || 0}
+                readOnly={activeWorkReadOnly}
+                style={documentFindStyle}
+                onQueryChange={setSearchQuery}
+                onReplaceValueChange={setDocumentReplaceValue}
+                onReplaceVisibleChange={setDocumentReplaceVisible}
+                onPrevious={() => moveDocumentSearch(-1)}
+                onNext={() => moveDocumentSearch(1)}
+                onReplace={() => replaceDocumentSearchMatches(false)}
+                onReplaceAll={() => replaceDocumentSearchMatches(true)}
+                onClose={closeSearch}
+              />
+            ) : null}
             <div className={[
               "paper-workspace",
               aiMode ? "ai-split-workspace" : "",
-              !aiMode && rightSplitDocument ? "document-split-workspace" : "",
+              !aiMode && secondaryGroupVisible ? "document-split-workspace" : "",
+              !aiMode && activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH ? "research-secondary-workspace" : "",
               aiChatMode ? "chat-mode" : "",
-            ].filter(Boolean).join(" ")}>
+            ].filter(Boolean).join(" ")} style={
+              !aiMode && secondaryGroupVisible
+                ? secondaryGridStyle
+                : undefined
+            }>
+              {manualAiApply ? (
+                <div className="ai-manual-apply-banner" role="status">
+                  <Focus size={15} />
+                  <span>在左侧点选一个可编辑的原文块；按 Esc 取消</span>
+                  <button type="button" onClick={() => setManualAiApply(null)}>取消</button>
+                </div>
+              ) : null}
+              {aiApplyPreview ? (
+                <div className="ai-apply-preview-banner" role="status">
+                  <span><b>红色</b>是待替换原文，<b>蓝色</b>是拟应用内容；请在正文中确认或取消</span>
+                  <button type="button" onClick={cancelAiApplyPreview}>取消对比</button>
+                </div>
+              ) : null}
               <PaperCanvas
                 editor={editor}
                 document={mainCanvasDocument}
@@ -13446,7 +18940,7 @@ export default function App() {
                   !aiMode && activePane === "main" ? "active-pane" : "",
                 ].filter(Boolean).join(" ")}
                 onActivate={() => setActivePane("main")}
-                readOnly={aiMode && aiStatus === "streaming"}
+                readOnly={activeTabReadOnly || (aiMode && aiStatus === "streaming") || Boolean(aiApplyPreview)}
                 aiCaptureEnabled={aiMode && aiChatMode}
                 onCaptureAiSelection={handleCaptureAiChatSelection}
                 comments={aiMode ? [] : documentState.comments}
@@ -13457,31 +18951,66 @@ export default function App() {
                 onEditLink={aiMode ? undefined : handleEditLinkFromCanvas}
                 canvasRef={mainCanvasRef}
               />
-              {!aiMode && rightSplitDocument ? (
-                <div className="right-split-pane">
-                  <button type="button" className="right-split-close" onClick={() => handleToggleRightSplit(rightSplitTabId)} aria-label="取消右分屏" title="取消右分屏">
-                    <X size={15} />
-                  </button>
-                  <PaperCanvas
-                    editor={rightSplitEditor}
-                    document={rightCanvasDocument}
-                    letterTemplates={letterTemplates}
-                    printMode={printMode}
-                    imageExportMode={imageExportMode}
-                    onTitleChange={handleRightSplitTitleChange}
-                    onAuthorChange={handleRightSplitAuthorChange}
-                    onDateChange={handleRightSplitDateChange}
-                    savedSelectionRef={rightSplitSelectionRef}
-                    className={activePane === "right" ? "right-split-canvas active-pane" : "right-split-canvas"}
-                    onActivate={() => setActivePane("right")}
-                    comments={rightSplitDocument.comments}
-                    activeCommentId={commentPanel?.pane === "right" ? commentPanel.commentId : ""}
-                    commentsHidden={aiMode || printMode || imageExportMode}
-                    onCreateComment={(selection, position) => handleStartComment("right", selection, position)}
-                    onOpenComment={(comment, position) => handleOpenComment("right", comment, position)}
-                    onEditLink={handleEditLinkFromCanvas}
-                    canvasRef={rightCanvasRef}
+              {!aiMode && secondaryGroupVisible ? (
+                <div className={activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH ? "right-split-pane research-view-active" : "right-split-pane"}>
+                  <div
+                    className="secondary-pane-resizer workspace-group-resizer"
+                    role="separator"
+                    aria-label="调整左右编辑组宽度"
+                    aria-orientation="vertical"
+                    aria-valuemin={25}
+                    aria-valuemax={75}
+                    aria-valuenow={Math.round(secondaryPrimaryRatio * 100)}
+                    tabIndex={0}
+                    onPointerDown={startDocumentSplitResize}
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                        event.preventDefault();
+                        updateDocumentSplitRatio(workspaceGroups.splitRatio + (event.key === "ArrowRight" ? 0.02 : -0.02));
+                      }
+                    }}
                   />
+                  {activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.DOCUMENT && rightSplitDocument ? (
+                    <PaperCanvas
+                      editor={rightSplitEditor}
+                      document={rightCanvasDocument}
+                      letterTemplates={letterTemplates}
+                      printMode={printMode}
+                      imageExportMode={imageExportMode}
+                      onTitleChange={handleRightSplitTitleChange}
+                      onAuthorChange={handleRightSplitAuthorChange}
+                      onDateChange={handleRightSplitDateChange}
+                      savedSelectionRef={rightSplitSelectionRef}
+                      className={activePane === "right" ? "right-split-canvas active-pane" : "right-split-canvas"}
+                      onActivate={() => setActivePane("right")}
+                      readOnly={Boolean(rightSplitTab?.readOnly || rightSplitDocument?._readOnlyFutureSchema)}
+                      comments={rightSplitDocument.comments}
+                      activeCommentId={commentPanel?.pane === "right" ? commentPanel.commentId : ""}
+                      commentsHidden={aiMode || printMode || imageExportMode}
+                      onCreateComment={(selection, position) => handleStartComment("right", selection, position)}
+                      onOpenComment={(comment, position) => handleOpenComment("right", comment, position)}
+                      onEditLink={handleEditLinkFromCanvas}
+                      canvasRef={rightCanvasRef}
+                    />
+                  ) : activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH ? (
+                    <div className="secondary-research-slot" onPointerDown={() => setActivePane("right")}>
+                  <SecondaryResearchPane
+                    item={activeLibraryItem}
+                    loading={activeResearchLoading}
+                    error={activeResearchError}
+                    pdfLoader={handleLoadIndependentResearchPdf}
+                    previewLoader={handleLoadIndependentResearchPreview}
+                    onOpenExternal={handleOpenIndependentResearchExternal}
+                    onShowInFolder={handleShowResearchEntry}
+                    onEditSource={handleEditLibrarySource}
+                    viewId={activeSecondaryView.viewId}
+                    onActivate={() => setActivePane("right")}
+                    webViewSuspended={researchWebViewSuspended}
+                    viewState={activeSecondaryView.viewState}
+                    onViewStateChange={(viewState) => handleResearchViewStateChange(activeSecondaryView.viewId, viewState)}
+                  />
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {aiOptimizeMode ? (
@@ -13495,6 +19024,11 @@ export default function App() {
                   elapsedSeconds={aiElapsedSeconds}
                   tokenStats={aiTokenStats}
                   onCopyBlock={handleCopyAiBlock}
+                  onApplyBlock={handleApplyAiBlock}
+                  applyingBlockIndex={applyingAiBlockIndex}
+                  previewingBlockIndex={aiApplyPreview?.blockIndex ?? -1}
+                  manualFallbackBlockIndexes={manualFallbackAiBlockIndexes}
+                  resolverLabel={aiApplyResolverLabel}
                 />
               ) : null}
               {aiChatMode ? (
@@ -13518,25 +19052,16 @@ export default function App() {
           </div>
         </section>
       </div>
-      {templateDialogOpen ? (
-        <LetterTemplateDialog
-          document={documentState}
-          letterTemplates={letterTemplates}
-          defaultTemplates={DEFAULT_LETTER_TEMPLATES}
-          userTemplates={userLetterTemplates}
-          userTemplateGroups={userTemplateGroups}
-          newDocumentTemplateId={newDocumentTemplateId}
-          onClose={() => setTemplateDialogOpen(false)}
-          onLetterTemplateChange={handleLetterTemplateChange}
-          onNewDocumentTemplateChange={handleNewDocumentTemplateChange}
-          onCreateUserTemplate={handleCreateUserTemplate}
-          onUpdateUserTemplate={handleUpdateUserTemplate}
-          onDeleteUserTemplate={handleDeleteUserTemplate}
-          onCreateUserTemplateGroup={handleCreateUserTemplateGroup}
-          onRenameUserTemplateGroup={handleRenameUserTemplateGroup}
-          onDeleteUserTemplateGroup={handleDeleteUserTemplateGroup}
-          onReorderUserTemplateGroups={handleReorderUserTemplateGroups}
-          onMoveUserTemplate={handleMoveUserTemplate}
+      {searchMode === "workspace" ? (
+        <WorkspaceSearchPalette
+          query={workspaceSearchQuery}
+          loading={workspaceSearchState.loading}
+          results={workspaceSearchState.results}
+          error={workspaceSearchState.error}
+          folderName={displayNameFromPath(writingWorkspaceRoot) || "当前文件夹"}
+          onQueryChange={setWorkspaceSearchQuery}
+          onOpenResult={handleOpenWorkspaceSearchResult}
+          onClose={closeSearch}
         />
       ) : null}
       <StatusBar
@@ -13544,11 +19069,15 @@ export default function App() {
         editor={activeWorkEditor}
         updatedAt={(activeWorkDocument || documentState).updatedAt}
         dirty={splitPaneActive ? Boolean(rightSplitTab?.dirty) : dirty}
-        version={updateState?.version}
+        version={appVersion}
         cacheSummary={documentCacheSummary}
         updateState={updateState}
         onRunUpdate={handleRunUpdate}
         onClearCache={handleClearDocumentCache}
+        onOpenReleaseNotes={openReleaseNotes}
+        persistenceState={persistenceState}
+        externalVersion={externalVersionDetected}
+        readOnly={activeWorkReadOnly}
       />
       {commentPanel ? (
         <CommentPanel
@@ -13562,19 +19091,76 @@ export default function App() {
           onClose={() => setCommentPanel(null)}
         />
       ) : null}
-      <StatusToast status={status} />
+      <StatusToast status={status} onClose={dismissStatus} />
+      <WebSourceDialog
+        dialog={webSourceDialog}
+        onClose={() => setWebSourceDialog({ open: false, source: null, folderId: "", scopeKey: "global" })}
+        onSubmit={handleSaveLibraryWeb}
+      />
+      <WebCopyDialog
+        dialog={webCopyDialog}
+        sources={librarySources.filter((source) => source.type === "web")}
+        folders={webTreeState.folders}
+        placements={webTreeState.placements}
+        onClose={handleCloseWebCopyDialog}
+        onSubmit={handleCopyWebSelection}
+      />
       <AppConfirmDialog dialog={confirmDialog} onResolve={resolveConfirmDialog} />
       <AppPromptDialog dialog={promptDialog} onResolve={resolvePromptDialog} />
+      <FootnoteDialog
+        dialog={footnoteDialog}
+        onClose={() => setFootnoteDialog({ open: false, footnote: null, insertTarget: null })}
+        onSubmit={handleSaveFootnoteDialog}
+      />
+      <CitationSourceDialog
+        dialog={citationSourceDialog}
+        onClose={handleCloseCitationSourceDialog}
+        onSubmit={handleSaveCitationSourceDialog}
+      />
       <LinkDialog
         dialog={linkDialog}
         onClose={handleCloseLinkDialog}
         onSubmit={handleSubmitLink}
         onRemove={handleRemoveLink}
       />
+      <InternalLinkPicker
+        picker={internalLinkPicker}
+        documents={workspaceRelationships.documents || []}
+        onSelect={handleChooseInternalLink}
+        onClose={closeInternalLinkPicker}
+      />
+      <CitationPickerDialog
+        picker={citationPicker}
+        sources={citationPickerSources}
+        loading={citationLibraryLoading}
+        defaultPageForSource={defaultPdfPageForCitationSource}
+        initialPage={citationPicker?.initialPage || ""}
+        onSelect={handleChooseCitationSource}
+        onAddAndSelect={handleAddAndInsertCitationSource}
+        onClose={() => setCitationPicker(null)}
+      />
+      <KnowledgeReferencePopover popover={knowledgeReferencePopover} onClose={closeKnowledgeReferencePopover} />
+      <AiModeChooser
+        open={aiModeChooserOpen}
+        anchorRef={aiModeTriggerRef}
+        activeMode={aiModeKind}
+        configured={aiHasUsableProvider}
+        onSelectMode={requestAiModeChange}
+        onExitMode={requestExitAiMode}
+        onOpenSettings={openAiSettings}
+        onClose={() => setAiModeChooserOpen(false)}
+      />
+      <SettingsCenter
+        open={settingsDialog.open}
+        anchorRef={settingsTriggerRef}
+        onSelectSection={openSettingsSection}
+        onClose={closeSettings}
+      />
       <AiSettingsDialog
-        open={aiSettingsOpen}
+        open={settingsDialog.section === "ai"}
+        returnFocusRef={settingsTriggerRef}
         config={aiConfig}
-        onClose={() => setAiSettingsOpen(false)}
+        onClose={closeSettings}
         onSave={handleSaveAiConfig}
         onCreateProvider={handleCreateAiProvider}
         onDeleteProvider={handleDeleteAiProvider}
@@ -13583,9 +19169,60 @@ export default function App() {
         onRefreshCodex={handleRefreshCodexCli}
         onLoginCodex={handleLoginCodexCli}
       />
+      {tabTemplateDialog.open && tabTemplateDocument ? (
+        <LetterTemplateDialog
+          key={`tab-template-${tabTemplateDialog.targetTabId}`}
+          mode="select"
+          returnFocusRef={tabTemplateReturnFocusRef}
+          document={tabTemplateDocument}
+          letterTemplates={letterTemplates}
+          defaultTemplates={DEFAULT_LETTER_TEMPLATES}
+          userTemplates={userLetterTemplates}
+          userTemplateGroups={userTemplateGroups}
+          newDocumentTemplateId={newDocumentTemplateId}
+          onClose={closeTabTemplateDialog}
+          onLetterTemplateChange={handleTabTemplateChange}
+          onNewDocumentTemplateChange={handleNewDocumentTemplateChange}
+          onCreateUserTemplate={handleCreateUserTemplate}
+          onUpdateUserTemplate={handleUpdateUserTemplate}
+          onDeleteUserTemplate={handleDeleteUserTemplate}
+          onCreateUserTemplateGroup={handleCreateUserTemplateGroup}
+          onRenameUserTemplateGroup={handleRenameUserTemplateGroup}
+          onDeleteUserTemplateGroup={handleDeleteUserTemplateGroup}
+          onReorderUserTemplateGroups={handleReorderUserTemplateGroups}
+          onMoveUserTemplate={handleMoveUserTemplate}
+        />
+      ) : null}
+      {settingsDialog.section === "template" ? (
+          <LetterTemplateDialog
+            mode="manage"
+            returnFocusRef={settingsTriggerRef}
+            document={{ letterTemplateId: newDocumentTemplateId }}
+            letterTemplates={letterTemplates}
+            defaultTemplates={DEFAULT_LETTER_TEMPLATES}
+            userTemplates={userLetterTemplates}
+            userTemplateGroups={userTemplateGroups}
+            newDocumentTemplateId={newDocumentTemplateId}
+            onClose={closeSettings}
+            onNewDocumentTemplateChange={handleNewDocumentTemplateChange}
+            onCreateUserTemplate={handleCreateUserTemplate}
+            onUpdateUserTemplate={handleUpdateUserTemplate}
+            onDeleteUserTemplate={handleDeleteUserTemplate}
+            onCreateUserTemplateGroup={handleCreateUserTemplateGroup}
+            onRenameUserTemplateGroup={handleRenameUserTemplateGroup}
+            onDeleteUserTemplateGroup={handleDeleteUserTemplateGroup}
+            onReorderUserTemplateGroups={handleReorderUserTemplateGroups}
+            onMoveUserTemplate={handleMoveUserTemplate}
+          />
+      ) : null}
       <HelpCenterDialog
         open={helpOpen}
         onClose={closeHelpCenter}
+      />
+      <ReleaseNotesDialog
+        open={releaseNotesOpen}
+        currentVersion={appVersion}
+        onClose={closeReleaseNotes}
       />
       <ExportDialog
         open={exportDialogOpen}
@@ -13593,6 +19230,7 @@ export default function App() {
         onClose={() => setExportDialogOpen(false)}
         onExportPdf={handleExportPdf}
         onExportImages={handleExportImages}
+        onExportEditable={handleExportEditable}
       />
     </div>
   );

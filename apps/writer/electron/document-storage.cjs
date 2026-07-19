@@ -1,7 +1,8 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
-const { Transform } = require("node:stream");
+const { Transform, Writable } = require("node:stream");
+const { pipeline } = require("node:stream/promises");
 
 const DEFAULT_ARCHIVE_LIMITS = Object.freeze({
   maxArchiveBytes: 512 * 1024 * 1024,
@@ -287,25 +288,24 @@ async function readZipEntryBufferLimited(entry, {
   maxBytes = DEFAULT_ARCHIVE_LIMITS.maxAssetBytes,
   maxRatio = DEFAULT_ARCHIVE_LIMITS.maxAssetRatio,
 } = {}) {
-  const { sizes, maximumOutputBytes } = zipEntryRuntimeLimit(entry, { maxBytes, maxRatio });
-  const stream = entry.nodeStream("nodebuffer");
   const chunks = [];
   let actualBytes = 0;
-  try {
-    for await (const chunk of stream) {
+
+  const sink = new Writable({
+    write(chunk, _encoding, callback) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       actualBytes += bytes.length;
-      if (actualBytes > maximumOutputBytes) {
-        stream.destroy();
-        throw new Error(`信笺资源解压后超过安全上限：${entry?.name || "asset"}`);
-      }
       chunks.push(bytes);
-    }
-  } catch (error) {
-    stream.destroy();
-    throw error;
-  }
-  assertActualZipEntrySize(entry, sizes, actualBytes, maxRatio);
+      callback();
+    },
+  });
+
+  await pipeline(
+    entry.nodeStream("nodebuffer"),
+    createZipEntryLimitTransform(entry, { maxBytes, maxRatio }),
+    sink,
+  );
+
   return Buffer.concat(chunks, actualBytes);
 }
 

@@ -19,6 +19,40 @@ export function replaceEditorContentWithoutHistory(editor, content) {
   return true;
 }
 
+export function readEditorSelectionState(editor) {
+  const selection = editor?.state?.selection;
+  if (!selection || !Number.isFinite(selection.from) || !Number.isFinite(selection.to)) {
+    return null;
+  }
+  return {
+    from: selection.from,
+    to: selection.to,
+  };
+}
+
+export function restoreEditorSelectionWithoutHistory(editor, selectionState) {
+  if (!editor?.view || !editor?.state?.doc) return false;
+  const requestedFrom = Number(selectionState?.from);
+  const requestedTo = Number(selectionState?.to);
+  if (!Number.isFinite(requestedFrom) || !Number.isFinite(requestedTo)) return false;
+
+  const maximumPosition = Math.max(0, editor.state.doc.content.size);
+  const from = Math.max(0, Math.min(maximumPosition, Math.floor(Math.min(requestedFrom, requestedTo))));
+  const to = Math.max(from, Math.min(maximumPosition, Math.floor(Math.max(requestedFrom, requestedTo))));
+  const nextSelection = TextSelection.between(
+    editor.state.doc.resolve(from),
+    editor.state.doc.resolve(to),
+    1,
+  );
+  editor.view.dispatch(
+    editor.state.tr
+      .setSelection(nextSelection)
+      .setMeta("addToHistory", false)
+      .setMeta("preventUpdate", true),
+  );
+  return true;
+}
+
 export function normalizeDocumentPath(value) {
   return String(value || "")
     .replace(/\//g, "\\")

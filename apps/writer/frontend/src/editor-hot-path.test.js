@@ -6,14 +6,24 @@ import { fileURLToPath } from "node:url";
 const source = fs.readFileSync(fileURLToPath(new URL("./App.jsx", import.meta.url)), "utf8");
 
 test("editor update handlers do not serialize or publish the complete document", () => {
-  const mainStart = source.indexOf("onUpdate: () => {", source.indexOf("const mainEditorOptions"));
+  const mainStart = source.indexOf("onUpdate: ({ transaction }) => {", source.indexOf("const mainEditorOptions"));
   const mainEnd = source.indexOf("const rightEditorOptions", mainStart);
-  const rightStart = source.indexOf("onUpdate: () => {", mainEnd);
+  const rightStart = source.indexOf("onUpdate: ({ transaction }) => {", mainEnd);
   const rightEnd = source.indexOf("const rightSplitTab", rightStart);
   assert.ok(mainStart > 0 && mainEnd > mainStart && rightStart > mainEnd && rightEnd > rightStart);
   for (const updateHandler of [source.slice(mainStart, mainEnd), source.slice(rightStart, rightEnd)]) {
     assert.doesNotMatch(updateHandler, /getHTML|getJSON|setDocumentState|document:\s*\{/);
+    assert.match(updateHandler, /paperKnowledgeDerived/);
   }
+});
+
+test("knowledge synchronization cannot re-enter through its own derived transactions", () => {
+  const start = source.indexOf("const synchronize = createKnowledgeUpdateGuard(");
+  const end = source.indexOf('activeWorkEditor.on("update", synchronize)', start);
+  const synchronizationSource = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(synchronizationSource, /createKnowledgeUpdateGuard/);
+  assert.match(synchronizationSource, /synchronizeKnowledgeReferences/);
 });
 
 test("document switches rebuild editor state so undo cannot cross tab boundaries", () => {
@@ -31,12 +41,13 @@ test("autosave includes unnamed tabs and keeps recovery paths separate", () => {
   assert.match(source, /autosaveRunningRef\.current/);
 });
 
-test("a full tab strip refuses new tabs without evicting an existing document", () => {
+test("editor groups accept additional tabs without evicting an existing document", () => {
   const start = source.indexOf("const addOrActivateDocumentTab");
   const end = source.indexOf("useEffect(() =>", start);
   const addTabSource = source.slice(start, end);
-  assert.match(addTabSource, /if \(tabCapacityFull && !canReplaceBlank\)/);
-  assert.match(addTabSource, /return ""/);
+  assert.match(addTabSource, /const nextTabs = canReplaceBlank \? \[tab\] : \[\.\.\.snapshot, tab\]/);
+  assert.match(addTabSource, /openWorkspaceDocument\(workspaceGroupsRef\.current, requestedGroup/);
+  assert.doesNotMatch(addTabSource, /tabCapacityFull/);
   assert.doesNotMatch(addTabSource, /snapshot\.slice\(1\)/);
 });
 
@@ -71,13 +82,34 @@ test("status metrics subscribe to primitive fields instead of rerendering the wh
   assert.match(source.slice(metricStart, statusStart), /stats\[field\]/);
   const statusSource = source.slice(statusStart, statusEnd);
   assert.doesNotMatch(statusSource, /selector:/);
-  for (const field of ["words", "paragraphs", "pages", "images", "quotes"]) {
+  for (const field of ["words", "paragraphs", "pages", "images"]) {
     assert.match(statusSource, new RegExp(`field="${field}"`));
   }
+  assert.doesNotMatch(statusSource, /field="quotes"|label="引用"/);
 });
 
-test("closing the right split uses the lifecycle snapshot boundary", () => {
-  assert.match(source, /className="right-split-close" onClick=\{\(\) => handleToggleRightSplit\(rightSplitTabId\)\}/);
+test("closing a right-group document uses the lifecycle snapshot boundary", () => {
+  assert.match(source, /<GroupTabStrip[\s\S]*groupId=\{WORKSPACE_GROUP_ID\.SECONDARY\}/);
+  assert.match(source, /onClose=\{\(viewId\) => handleCloseGroupView\(WORKSPACE_GROUP_ID\.SECONDARY, viewId\)\}/);
+  const closeStart = source.indexOf("const handleCloseTab");
+  const closeEnd = source.indexOf("const handleCloseGroupView", closeStart);
+  assert.match(source.slice(closeStart, closeEnd), /snapshotLiveTabs\(\{ includeEditorJson: true \}\)/);
+  assert.doesNotMatch(source, /className="right-split-close"/);
+});
+
+test("reopening a document secondary pane restores its selection and scroll snapshot", () => {
+  const applyStart = source.indexOf("if (!rightSplitEditor || !rightSplitTabId)");
+  const applyEnd = source.indexOf("activeDocumentKeyRef.current = activeDocumentKey", applyStart);
+  const applySource = source.slice(applyStart, applyEnd);
+  assert.match(applySource, /restoreEditorSelectionWithoutHistory\(rightSplitEditor, splitTab\?\.selectionState\)/);
+  assert.match(applySource, /rightSplitSelectionRef\.current = readEditorSelectionState\(rightSplitEditor\)/);
+  assert.match(applySource, /restoreCanvasScrollState\(rightCanvasRef\.current, splitTab\?\.scrollState\)/);
+
+  const snapshotStart = source.indexOf("const snapshotLiveTabs");
+  const snapshotEnd = source.indexOf("const openSearch", snapshotStart);
+  const snapshotSource = source.slice(snapshotStart, snapshotEnd);
+  assert.match(snapshotSource, /selectionState: readEditorSelectionState\(rightSplitEditor\)/);
+  assert.match(snapshotSource, /scrollState: readCanvasScrollState\(rightCanvasRef\.current\)/);
 });
 
 test("comment overlays avoid empty-state transaction renders and coalesce layout work", () => {

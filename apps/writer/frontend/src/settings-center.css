@@ -1,0 +1,282 @@
+.settings-center-overlay {
+  position: fixed;
+  inset: var(--desktop-titlebar-height, 40px) 0 0;
+  z-index: 190;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(47, 42, 36, 0.3);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  -webkit-app-region: no-drag;
+  animation: settingsCenterScrimIn 170ms ease-out;
+}
+
+.settings-center-dialog {
+  position: relative;
+  width: min(680px, calc(100vw - 40px));
+  padding: 30px;
+  overflow: hidden;
+  border: 1px solid rgba(99, 86, 67, 0.2);
+  border-radius: 18px;
+  color: #332f2a;
+  background:
+    radial-gradient(circle at 50% -30%, rgba(255, 255, 255, 0.98), transparent 52%),
+    #fffaf2;
+  box-shadow:
+    0 30px 84px rgba(47, 40, 30, 0.27),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  animation: settingsCenterDialogIn 190ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.settings-center-heading {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding-right: 48px;
+}
+
+.settings-center-heading-icon {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(139, 92, 61, 0.18);
+  border-radius: 13px;
+  color: #8b573d;
+  background: rgba(255, 252, 247, 0.88);
+  box-shadow: 0 6px 16px rgba(79, 58, 39, 0.08);
+}
+
+.settings-center-heading h2,
+.settings-center-heading p {
+  margin: 0;
+}
+
+.settings-center-heading h2 {
+  color: #39332d;
+  font-size: 20px;
+  font-weight: 760;
+  line-height: 1.3;
+}
+
+.settings-center-heading p {
+  margin-top: 3px;
+  color: #887d71;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-center-destinations {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 26px;
+}
+
+.settings-center-destination {
+  position: relative;
+  min-width: 0;
+  min-height: 188px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 24px 22px 20px;
+  border: 1px solid rgba(118, 94, 73, 0.16);
+  border-radius: 15px;
+  color: #554a40;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(249, 239, 226, 0.78));
+  box-shadow:
+    0 10px 26px rgba(79, 58, 39, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.86);
+  cursor: pointer;
+  text-align: left;
+  touch-action: manipulation;
+  transition:
+    color 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.settings-center-destination-icon {
+  width: 58px;
+  height: 58px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(151, 94, 57, 0.16);
+  border-radius: 17px;
+  color: #9a5b38;
+  background: rgba(255, 250, 242, 0.9);
+  box-shadow: 0 7px 18px rgba(91, 61, 40, 0.08);
+  transition: color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.settings-center-destination-template .settings-center-destination-icon {
+  color: #70604f;
+}
+
+.settings-center-destination-copy {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  margin-top: 20px;
+}
+
+.settings-center-destination-copy strong {
+  color: #3f3831;
+  font-size: 17px;
+  font-weight: 740;
+  line-height: 1.3;
+}
+
+.settings-center-destination-copy small {
+  color: #8a7e71;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.settings-center-destination-arrow {
+  position: absolute;
+  right: 20px;
+  bottom: 18px;
+  display: inline-grid;
+  place-items: center;
+  color: #a89787;
+  transition: color 180ms ease, transform 180ms ease;
+}
+
+.settings-center-destination:hover {
+  border-color: rgba(177, 101, 59, 0.34);
+  color: #7e492f;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(247, 228, 207, 0.9));
+  box-shadow:
+    0 16px 34px rgba(91, 61, 40, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  transform: translateY(-2px);
+}
+
+.settings-center-destination:hover .settings-center-destination-icon {
+  color: #a15531;
+  background: #fff8ef;
+  transform: translateY(-1px);
+}
+
+.settings-center-destination:hover .settings-center-destination-arrow {
+  color: #a15531;
+  transform: translateX(3px);
+}
+
+.settings-center-destination:active {
+  transform: translateY(0) scale(0.988);
+}
+
+.settings-center-destination:focus-visible,
+.settings-center-close:focus-visible {
+  outline: 3px solid rgba(176, 96, 54, 0.7);
+  outline-offset: 3px;
+}
+
+.settings-center-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(112, 85, 65, 0.14);
+  border-radius: 11px;
+  color: #8d6752;
+  background: rgba(255, 252, 247, 0.88);
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.settings-center-close:hover {
+  border-color: rgba(166, 84, 50, 0.28);
+  color: #9a4f33;
+  background: #fff7ee;
+  transform: translateY(-1px);
+}
+
+@keyframes settingsCenterScrimIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes settingsCenterDialogIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.986);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 620px) {
+  .settings-center-overlay {
+    align-items: start;
+    overflow-y: auto;
+    padding: 12px;
+  }
+
+  .settings-center-dialog {
+    width: 100%;
+    margin: auto 0;
+    padding: 22px;
+    border-radius: 15px;
+  }
+
+  .settings-center-heading {
+    padding-right: 44px;
+  }
+
+  .settings-center-destinations {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-top: 20px;
+  }
+
+  .settings-center-destination {
+    min-height: 132px;
+    padding: 18px;
+  }
+
+  .settings-center-destination-icon {
+    width: 50px;
+    height: 50px;
+    border-radius: 14px;
+  }
+
+  .settings-center-destination-copy {
+    margin-top: 14px;
+  }
+
+  .settings-center-close {
+    top: 14px;
+    right: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-center-overlay,
+  .settings-center-dialog,
+  .settings-center-destination,
+  .settings-center-destination-icon,
+  .settings-center-destination-arrow,
+  .settings-center-close {
+    animation: none;
+    transition-duration: 0.01ms;
+  }
+}

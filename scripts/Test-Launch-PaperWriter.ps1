@@ -32,6 +32,8 @@ $requiredPatterns = @(
   'Test-ExpectedFrontendProcess',
   'Ensure-FrontendBuild',
   'Start-ElectronAndVerify',
+  'Get-ActiveDependencyUsers',
+  'dependencies need repair, but active project processes are using node_modules',
   '-FilePath \$node',
   'npm ci --no-audit --no-fund'
 )
@@ -45,6 +47,27 @@ foreach ($forbiddenPattern in @('function\s+Stop-ProjectProcesses', 'function\s+
   if ($source -match $forbiddenPattern) {
     throw "Unsafe legacy launcher routine is still present: $forbiddenPattern"
   }
+}
+
+$dependencyGuard = [Regex]::Match(
+  $source,
+  '(?s)function Ensure-NpmDependencies\s*\{(?<body>.*?)(?=\r?\nfunction Get-FrontendBuildInputs)'
+)
+if (-not $dependencyGuard.Success) {
+  throw "Could not inspect Ensure-NpmDependencies."
+}
+$dependencyGuardBody = $dependencyGuard.Groups['body'].Value
+$treeValidationIndex = $dependencyGuardBody.IndexOf('Test-NpmDependencyTree', [StringComparison]::Ordinal)
+$cleanInstallIndex = $dependencyGuardBody.IndexOf('npm ci --no-audit --no-fund', [StringComparison]::Ordinal)
+$activeUserGuardIndex = $dependencyGuardBody.IndexOf('Get-ActiveDependencyUsers', [StringComparison]::Ordinal)
+if (
+  $treeValidationIndex -lt 0 -or
+  $cleanInstallIndex -lt 0 -or
+  $activeUserGuardIndex -lt 0 -or
+  $treeValidationIndex -gt $cleanInstallIndex -or
+  $activeUserGuardIndex -gt $cleanInstallIndex
+) {
+  throw "Dependency validation and active-process protection must run before npm ci."
 }
 
 $developmentCleanupCalls = [Regex]::Matches(

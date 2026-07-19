@@ -153,6 +153,19 @@ test("rejects a forged central-directory entry count before JSZip allocation", a
   assert.throws(() => preflightZipBuffer(buffer), /过多资源/);
 });
 
+test("reads the real JSZip node stream even though it has no async iterator", async () => {
+  const documentJson = JSON.stringify({ title: "真实压缩流", html: "<p>正文</p>" });
+  const zip = new JSZip();
+  zip.file("document.json", documentJson);
+  const buffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  const loaded = await JSZip.loadAsync(buffer);
+  const entry = loaded.file("document.json");
+
+  assert.equal(typeof entry.nodeStream("nodebuffer")[Symbol.asyncIterator], "undefined");
+  const result = await readZipEntryBufferLimited(entry, { maxBytes: 1024 });
+  assert.equal(result.toString("utf8"), documentJson);
+});
+
 test("bounds actual decompression output and rejects forged declared sizes", async () => {
   const oversized = fakeZipEntry({ declaredBytes: 4, chunks: [Buffer.alloc(7)] });
   await assert.rejects(

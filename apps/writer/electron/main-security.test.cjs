@@ -47,6 +47,38 @@ test("defers update installation until the renderer completes its close-save flo
   assert.match(closeReadyHandler, /quitAndInstall/);
 });
 
+test("restores a minimized close confirmation and requests Windows taskbar attention", async () => {
+  const source = await mainSource();
+  const revealHelper = between(source, "function revealCloseConfirmation", "function createWindow");
+  const closeHandler = between(source, 'mainWindow.on("close"', 'mainWindow.on("focus"');
+  const focusHandler = between(source, 'mainWindow.on("focus"', 'mainWindow.on("blur"');
+  const cancelHandler = between(source, 'ipcMain.handle("app:close-canceled"', 'app.whenReady()');
+
+  assert.match(revealHelper, /mainWindow\.flashFrame\(true\)/);
+  assert.match(revealHelper, /mainWindow\.isMinimized\(\).*mainWindow\.restore\(\)/s);
+  assert.match(revealHelper, /mainWindow\.isVisible\(\).*mainWindow\.show\(\)/s);
+  assert.match(revealHelper, /mainWindow\.focus\(\)/);
+  assert.match(closeHandler, /revealCloseConfirmation\(\)/);
+  assert.match(focusHandler, /stopCloseAttention\(\)/);
+  assert.match(cancelHandler, /stopCloseAttention\(\)/);
+  assert.match(source, /mainWindow\.flashFrame\(false\)/);
+});
+
+test("an unavailable renderer cannot trap the native window close handshake", async () => {
+  const source = await mainSource();
+  const unavailableHelper = between(source, "function markRendererUnavailable", "function createWindow");
+  const closeHandler = between(source, 'mainWindow.on("close"', 'mainWindow.on("unresponsive"');
+
+  assert.match(source, /webContents\.on\("render-process-gone"/);
+  assert.match(source, /mainWindow\.on\("unresponsive"/);
+  assert.match(source, /mainWindow\.on\("responsive"/);
+  assert.match(unavailableHelper, /closeRequestInFlight/);
+  assert.match(unavailableHelper, /forceCloseWindow\s*=\s*true/);
+  assert.match(unavailableHelper, /mainWindow\.close\(\)/);
+  assert.match(closeHandler, /!rendererCanConfirmClose/);
+  assert.match(closeHandler, /mainWindow\.webContents\.isDestroyed\(\)/);
+});
+
 test("does not expose internal app paths or the selected image source path", async () => {
   const source = await mainSource();
   const getPathsHandler = between(source, 'ipcMain.handle("app:get-paths"', 'ipcMain.handle("debug:log"');
@@ -142,6 +174,21 @@ test("resolves AI providers with own-property checks", async () => {
   const source = await mainSource();
   const resolver = between(source, "function resolveAiProvider", "async function readAiConfig");
   assert.match(resolver, /Object\.prototype\.hasOwnProperty\.call\(normalized\.providers, provider\)/);
+});
+
+test("task models validate explicit assignments and fall back only when unconfigured", async () => {
+  const source = await mainSource();
+  const saver = between(source, "function mergeAndValidateAiTaskModels", "async function saveAiConfigUnlocked");
+  assert.match(saver, /exactAiProviderConfig\(existing, assignment\.providerId, assignment\.modelId\)/);
+  assert.match(saver, /resolver\.apiKey \|\| !resolver\.testedOk/);
+  assert.match(saver, /codexRuntimeStatus\.ready/);
+  assert.match(saver, /validateAiRequestParamsPatch\(source\.requestParams \|\| \{\}\)/);
+  assert.match(saver, /Codex CLI 任务模型不支持 HTTP 请求参数/);
+  const resolver = between(source, 'ipcMain.handle("ai:resolve-apply"', 'ipcMain.handle("ai:cancel"');
+  assert.match(resolver, /taskAiProviderConfig\(config, taskModel\)/);
+  assert.match(resolver, /hasExplicitTaskModel \? taskModel\.requestParams : \{\}/);
+  assert.match(resolver, /AI 配置 → 任务模型/);
+  assert.match(resolver, /默认模型不可用/);
 });
 
 test("drops stale AI test results before they can overwrite a newer configuration", async () => {

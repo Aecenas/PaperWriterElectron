@@ -261,6 +261,20 @@ function Test-NpmDependencyTree {
   }
 }
 
+function Get-ActiveDependencyUsers {
+  param([string]$Directory)
+
+  $nodeModulesPath = [IO.Path]::GetFullPath((Join-Path $Directory "node_modules"))
+  return @(
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.ProcessId -ne $PID -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.CommandLine) -and
+        ([string]$_.CommandLine).IndexOf($nodeModulesPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
+      }
+  )
+}
+
 function Ensure-NpmDependencies {
   param(
     [string]$Directory,
@@ -280,29 +294,33 @@ function Ensure-NpmDependencies {
     -not (Test-Path -LiteralPath $_)
   } | Select-Object -First 1)
 
-  if ($requiredPathsPresent -and $recordedFingerprint -eq $fingerprint) {
+  # A changed package/lock fingerprint does not by itself mean the installed
+  # dependency tree is unusable. Reuse a valid tree so production startup does
+  # not try to remove binaries that an active Vite preview may be using.
+  if ($requiredPathsPresent -and (Test-NpmDependencyTree -Directory $Directory)) {
+    if ($recordedFingerprint -ne $fingerprint) {
+      Set-Content -LiteralPath $stampPath -Value $fingerprint -Encoding UTF8 -NoNewline
+    }
     return
   }
 
-  $needsCleanInstall = -not $requiredPathsPresent -or (
-    $recordedFingerprint -and $recordedFingerprint -ne $fingerprint
-  )
-
-  if (-not $needsCleanInstall -and -not (Test-NpmDependencyTree -Directory $Directory)) {
-    $needsCleanInstall = $true
+  $activeDependencyUsers = @(Get-ActiveDependencyUsers -Directory $Directory)
+  if ($activeDependencyUsers.Count -gt 0) {
+    $processSummary = ($activeDependencyUsers | ForEach-Object {
+      "$($_.Name) (PID $($_.ProcessId))"
+    }) -join ", "
+    throw "$Name dependencies need repair, but active project processes are using node_modules: $processSummary. Close the PaperWriter preview/development process and try again."
   }
 
-  if ($needsCleanInstall) {
-    Write-Host "Restoring $Name dependencies from package-lock.json..."
-    Push-Location $Directory
-    try {
-      & $npm ci --no-audit --no-fund
-      if ($LASTEXITCODE -ne 0) {
-        throw "$Name npm ci failed."
-      }
-    } finally {
-      Pop-Location
+  Write-Host "Restoring $Name dependencies from package-lock.json..."
+  Push-Location $Directory
+  try {
+    & $npm ci --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) {
+      throw "$Name npm ci failed."
     }
+  } finally {
+    Pop-Location
   }
 
   if (-not (Test-NpmDependencyTree -Directory $Directory)) {

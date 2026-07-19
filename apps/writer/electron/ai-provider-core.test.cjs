@@ -1,12 +1,41 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  aiApplyResolverRequestParams,
   buildAiRequest,
+  exactAiProviderConfig,
   extractAiStreamEvent,
+  mergeAiRequestParams,
   mergeAiUsage,
   normalizeAiConfig,
+  normalizeAiRequestParams,
   publicAiConfig,
+  taskAiProviderConfig,
 } = require("./ai-provider-core.cjs");
+
+test("uses each built-in resolver's full output allowance and forces JSON mode only for built-ins", () => {
+  assert.deepEqual(aiApplyResolverRequestParams("deepseek", "openai", {
+    max_tokens: 384000,
+    response_format: { type: "text" },
+    temperature: 0.4,
+  }), {
+    max_tokens: 384000,
+    response_format: { type: "json_object" },
+    temperature: 0.4,
+  });
+  assert.deepEqual(aiApplyResolverRequestParams("gemini", "openai", { max_tokens: 512, temperature: 0.8 }), {
+    max_tokens: 65536,
+    response_format: { type: "json_object" },
+    temperature: 0.8,
+  });
+  assert.deepEqual(aiApplyResolverRequestParams("custom-provider", "openai", { temperature: 0.2 }), {
+    max_tokens: 1024,
+    temperature: 0.2,
+  });
+  assert.deepEqual(aiApplyResolverRequestParams("custom-anthropic", "anthropic", { max_tokens: 512 }), {
+    max_tokens: 512,
+  });
+});
 
 test("migrates legacy provider config and keeps built-ins", () => {
   const config = normalizeAiConfig({
@@ -21,6 +50,57 @@ test("migrates legacy provider config and keeps built-ins", () => {
   assert.ok(config.providers["codex-cli"]);
   assert.equal(config.providers["codex-cli"].transport, "codex-cli");
   assert.deepEqual(config.providers["codex-cli"].models, []);
+});
+
+test("keeps explicit task assignments exact and uses the active model only when the task is unconfigured", () => {
+  const configured = normalizeAiConfig({
+    activeProvider: "gemini",
+    activeModelId: "gemini-main",
+    providers: {
+      gemini: {
+        apiKey: "gemini-key",
+        activeModelId: "gemini-main",
+        models: [{ id: "gemini-main", name: "Main", model: "gemini-main", testedOk: true }],
+      },
+      deepseek: {
+        apiKey: "deepseek-key",
+        activeModelId: "deepseek-resolver",
+        models: [{ id: "deepseek-resolver", name: "Resolver", model: "deepseek-resolver", testedOk: true }],
+      },
+    },
+    taskModels: {
+      applyResolver: {
+        providerId: "deepseek",
+        modelId: "deepseek-resolver",
+        reasoningEffort: "high",
+        requestParams: { thinking: { type: "enabled" }, max_tokens: 2048 },
+      },
+    },
+  });
+  assert.deepEqual(configured.taskModels.applyResolver, {
+    providerId: "deepseek",
+    modelId: "deepseek-resolver",
+    requestParams: { thinking: { type: "enabled" }, max_tokens: 2048 },
+  });
+  assert.equal(exactAiProviderConfig(configured, "deepseek", "deepseek-resolver").model, "deepseek-resolver");
+
+  const stale = normalizeAiConfig({
+    ...configured,
+    taskModels: { applyResolver: { providerId: "removed-provider", modelId: "removed-model", requestParams: { temperature: 0.2 } } },
+  });
+  assert.deepEqual(stale.taskModels.applyResolver, { providerId: "removed-provider", modelId: "removed-model", requestParams: { temperature: 0.2 } });
+  assert.equal(exactAiProviderConfig(stale, "removed-provider", "removed-model"), null);
+
+  const empty = normalizeAiConfig({ ...configured, taskModels: {} });
+  assert.deepEqual(empty.taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
+  assert.equal(taskAiProviderConfig(empty, empty.taskModels.applyResolver).modelId, "gemini-main");
+  assert.equal(taskAiProviderConfig(configured, configured.taskModels.applyResolver).modelId, "deepseek-resolver");
+  assert.equal(taskAiProviderConfig(stale, stale.taskModels.applyResolver), null);
+  const unsafe = normalizeAiConfig({
+    ...configured,
+    taskModels: { applyResolver: { providerId: "__proto__", modelId: "invented" } },
+  });
+  assert.deepEqual(unsafe.taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
 });
 
 test("publishes Codex runtime readiness without credentials", () => {
@@ -91,6 +171,88 @@ test("builds OpenAI-compatible chat completion requests", () => {
   assert.equal("stream_options" in request.body, false);
 });
 
+test("HTTP providers send only explicit request parameters and ignore legacy reasoning effort", () => {
+  const openAi = buildAiRequest({
+    provider: "gemini",
+    protocol: "openai",
+    builtin: true,
+    baseUrl: "https://gateway.example/v1",
+    apiKey: "key",
+    model: "gemini-test",
+    reasoningEffort: "high",
+    requestParams: { reasoning_effort: "medium", service_tier: "standard" },
+  }, [{ role: "user", content: "你好" }]);
+  assert.equal(openAi.body.reasoning_effort, "medium");
+  assert.equal(openAi.body.service_tier, "standard");
+
+  const deepseek = buildAiRequest({
+    provider: "deepseek",
+    protocol: "openai",
+    builtin: true,
+    baseUrl: "https://api.deepseek.com",
+    apiKey: "key",
+    model: "deepseek-test",
+    reasoningEffort: "low",
+  }, [{ role: "user", content: "你好" }]);
+  assert.equal("reasoning_effort" in deepseek.body, false);
+  assert.equal("thinking" in deepseek.body, false);
+  assert.equal("temperature" in deepseek.body, false);
+
+  const anthropic = buildAiRequest({
+    provider: "custom-anthropic",
+    protocol: "anthropic",
+    builtin: false,
+    baseUrl: "https://api.anthropic.com/v1",
+    apiKey: "key",
+    model: "claude-test",
+    reasoningEffort: "medium",
+    requestParams: { thinking: { type: "enabled", budget_tokens: 4096 }, max_tokens: 12000 },
+  }, [{ role: "user", content: "你好" }]);
+  assert.deepEqual(anthropic.body.thinking, { type: "enabled", budget_tokens: 4096 });
+  assert.equal(anthropic.body.max_tokens, 12000);
+  assert.equal(buildAiRequest({
+    provider: "custom-anthropic",
+    protocol: "anthropic",
+    baseUrl: "https://api.anthropic.com/v1",
+    apiKey: "key",
+    model: "claude-test",
+    requestParams: { max_tokens: 12000 },
+  }, [{ role: "user", content: "test" }], { test: true }).body.max_tokens, 8);
+});
+
+test("task request parameters override model parameters without allowing core fields", () => {
+  const merged = mergeAiRequestParams(
+    { temperature: 0.3, max_tokens: 4096, metadata: { source: "model" } },
+    { temperature: 0.8, response_format: { type: "json_object" }, model: "escape" },
+  );
+  assert.deepEqual(merged, {
+    temperature: 0.8,
+    max_tokens: 4096,
+    metadata: { source: "model" },
+    response_format: { type: "json_object" },
+  });
+  const request = buildAiRequest({
+    provider: "custom",
+    protocol: "openai",
+    baseUrl: "https://gateway.example/v1",
+    apiKey: "key",
+    model: "actual-model",
+    requestParams: merged,
+  }, [{ role: "user", content: "你好" }]);
+  assert.equal(request.body.model, "actual-model");
+  assert.equal(request.body.temperature, 0.8);
+});
+
+test("request parameter normalization keeps JSON values and strips unsafe entries", () => {
+  const input = JSON.parse('{"temperature":0.4,"enabled":true,"metadata":{"tags":["a",null]},"model":"escape","stream":true,"__proto__":{"polluted":true}}');
+  assert.deepEqual(normalizeAiRequestParams(input), {
+    temperature: 0.4,
+    enabled: true,
+    metadata: { tags: ["a", null] },
+  });
+  assert.equal({}.polluted, undefined);
+});
+
 test("builds Anthropic requests and separates system content", () => {
   const request = buildAiRequest({
     provider: "custom",
@@ -143,7 +305,7 @@ test("rejects prototype-like provider ids without mutating object prototypes", (
   assert.equal({}.polluted, undefined);
 });
 
-test("bounds custom providers, models, reasoning options and metadata", () => {
+test("bounds custom providers, models, request parameters and metadata", () => {
   const providers = {};
   for (let providerIndex = 0; providerIndex < 70; providerIndex += 1) {
     providers[`custom-${providerIndex}`] = {
@@ -154,6 +316,7 @@ test("bounds custom providers, models, reasoning options and metadata", () => {
         name: "N".repeat(300),
         model: `gpt-${modelIndex}-${"m".repeat(300)}`,
         description: "D".repeat(3000),
+        requestParams: Object.fromEntries(Array.from({ length: 80 }, (__, paramIndex) => [`param_${paramIndex}`, paramIndex])),
         supportedReasoningEfforts: Array.from({ length: 40 }, () => ({
           reasoningEffort: "e".repeat(100),
           description: "x".repeat(1000),
@@ -172,7 +335,7 @@ test("bounds custom providers, models, reasoning options and metadata", () => {
   assert.equal(first.models[0].name.length, 256);
   assert.equal(first.models[0].model.length, 256);
   assert.equal(first.models[0].description.length, 2000);
-  assert.equal(first.models[0].supportedReasoningEfforts.length, 32);
-  assert.equal(first.models[0].supportedReasoningEfforts[0].reasoningEffort.length, 64);
-  assert.equal(first.models[0].supportedReasoningEfforts[0].description.length, 500);
+  assert.equal(first.models[0].reasoningEffort, "");
+  assert.equal(first.models[0].supportedReasoningEfforts.length, 0);
+  assert.equal(Object.keys(first.models[0].requestParams).length, 64);
 });
