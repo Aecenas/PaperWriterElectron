@@ -150,6 +150,21 @@ test("typing a complete URL and pasting a URL over text create atomic links", ()
   pasted.destroy();
 });
 
+test("pasting ordinary single-token prose is not converted into a link", () => {
+  const plugin = StructuredInlineBehavior.config.addProseMirrorPlugins()[0];
+  const editor = createEditor({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "原文" }] }] });
+  let prevented = false;
+  const handled = plugin.props.handlePaste({ state: editor.state }, {
+    preventDefault() { prevented = true; },
+    clipboardData: { getData: (type) => type === "text/plain" ? "复盘方法" : "" },
+  }, null);
+
+  assert.equal(handled, false);
+  assert.equal(prevented, false);
+  assert.equal(editor.state.doc.firstChild.firstChild.type.name, "text");
+  editor.destroy();
+});
+
 test("image-reference clipboard scope accepts only complete same-document metadata", () => {
   const element = (sourceDocumentId, imageId = IMAGE_ONE) => ({
     getAttribute(name) {
@@ -168,6 +183,7 @@ test("the copy-reference control is gated by both image-caption template flags",
   assert.match(app, /className="image-copy-reference"/);
   assert.match(app, /function paperCanvasViewModel[\s\S]*documentId: normalizeDocumentId\(document\.documentId\)/);
   assert.match(app, /data-paper-document-id=\{normalizeDocumentId\(document\.documentId\)\}/);
+  assert.match(css, /\.image-size-tools button \{[\s\S]*display: grid;[\s\S]*place-items: center;[\s\S]*justify-self: center;[\s\S]*text-align: center;/);
   assert.match(css, /\.image-size-tools \.image-copy-reference \{[\s\S]*display: none;/);
   assert.match(css, /\.paper-sheet\.shows-image-captions\.numbers-image-captions \.image-size-tools \.image-copy-reference \{[\s\S]*display: flex;/);
 });

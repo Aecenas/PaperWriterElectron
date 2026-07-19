@@ -1455,6 +1455,21 @@ const browserBridge = {
     await navigator.clipboard?.writeText?.(folderPath || "");
     return { ok: Boolean(folderPath) };
   },
+  writeClipboardContent: async (payload = {}) => {
+    const text = typeof payload.text === "string" ? payload.text : "";
+    const html = typeof payload.html === "string" ? payload.html : "";
+    if (!text && !html) return { ok: false, message: "没有可复制的内容" };
+    if (html && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+      await navigator.clipboard.write([new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([text], { type: "text/plain" }),
+      })]);
+      return { ok: true };
+    }
+    if (!navigator.clipboard?.writeText) throw new Error("当前环境不支持写入剪贴板");
+    await navigator.clipboard.writeText(text);
+    return { ok: true, plainTextOnly: Boolean(html) };
+  },
   showFolder: async () => ({ ok: false }),
   createFolder: async () => ({ ok: false, canceled: true }),
   createDocumentInFolder: async () => ({ ok: false, canceled: true }),

@@ -298,6 +298,7 @@ test("browser bridge exposes the desktop feature surface with explicit browser f
     "watchResearchLibrary", "onResearchLibraryChanged", "onResearchLibraryWatchError",
     "showResearchWebView", "updateResearchWebViewBounds", "hideResearchWebView", "controlResearchWebView",
     "destroyResearchWebView", "onResearchWebViewState",
+    "writeClipboardContent",
     "setFullscreen", "getFullscreen", "onFullscreenChanged", "onWorkspaceChanged", "onWindowFocus", "onWindowBlur",
   ]) {
     assert.match(source, new RegExp(`\\b${capability}:`), capability);

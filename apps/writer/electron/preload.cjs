@@ -122,6 +122,7 @@ contextBridge.exposeInMainWorld("paperWriter", {
   pickImage: () => ipcRenderer.invoke("asset:pick-image"),
   pickAudio: () => ipcRenderer.invoke("asset:pick-audio"),
   pickVideo: () => ipcRenderer.invoke("asset:pick-video"),
+  writeClipboardContent: (payload) => ipcRenderer.invoke("clipboard:write-content", payload && typeof payload === "object" ? payload : {}),
   copyImageReference: (payload) => ipcRenderer.invoke("clipboard:write-image-reference", payload && typeof payload === "object" ? payload : {}),
   openExternal: (url) => ipcRenderer.invoke("external:open", url),
   showResearchWebView: (payload) => ipcRenderer.invoke("research:web-view-show", payload || {}),

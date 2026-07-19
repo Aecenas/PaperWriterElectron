@@ -96,6 +96,10 @@ function clipboardPlainText(slice) {
 function singlePastedUrl(event) {
   const text = String(event?.clipboardData?.getData?.("text/plain") || "").trim();
   if (!text || /\s/.test(text)) return null;
+  // Do not treat arbitrary single-token prose (including Chinese text) as a URL.
+  // Bare domains can still be inserted through the explicit link dialog, while
+  // automatic paste conversion is limited to unmistakable URL prefixes.
+  if (!/^(?:(?:https?:\/\/)|(?:www\.)|(?:mailto:))/i.test(text)) return null;
   const href = normalizeExternalLinkUrl(text);
   return href ? { href, label: text.slice(0, MAX_LINK_TEXT) } : null;
 }

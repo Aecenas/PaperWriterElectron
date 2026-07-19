@@ -309,3 +309,16 @@ test("image references use a validated rich clipboard IPC contract", async () =>
   await preload.api.copyImageReference(payload);
   assert.deepEqual(JSON.parse(JSON.stringify(preload.invocations.at(-1))), ["clipboard:write-image-reference", payload]);
 });
+
+test("AI rich text copy uses the bounded native clipboard IPC contract", async () => {
+  const main = await sourceOf("main.cjs");
+  const handler = between(main, 'ipcMain.handle("clipboard:write-content"', 'ipcMain.handle("clipboard:write-image-reference"');
+  assert.match(handler, /safeClipboardContent\(payload\?\.text, 2_000_000\)/);
+  assert.match(handler, /safeClipboardContent\(payload\?\.html, 4_000_000\)/);
+  assert.match(handler, /clipboard\.write\(html \? \{ text, html \} : \{ text \}\)/);
+
+  const preload = loadPreloadApi(await sourceOf("preload.cjs"));
+  const payload = { text: "优化结果", html: "<p>优化结果</p>" };
+  await preload.api.writeClipboardContent(payload);
+  assert.deepEqual(JSON.parse(JSON.stringify(preload.invocations.at(-1))), ["clipboard:write-content", payload]);
+});

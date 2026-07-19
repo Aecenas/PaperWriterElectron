@@ -115,7 +115,7 @@ button:disabled {
 
 .top-nav {
   position: relative;
-  z-index: 15;
+  z-index: 30;
   min-width: 0;
   display: grid;
   grid-template-columns: max-content minmax(18px, 1fr) max-content minmax(18px, 1fr) minmax(0, max-content);
@@ -7000,13 +7000,19 @@ button:disabled {
 }
 
 .image-size-tools button {
+  display: grid;
+  place-items: center;
+  justify-self: center;
   width: 30px;
   height: 26px;
+  padding: 0;
   border: 0;
   border-radius: 6px;
   color: #5f5a52;
   background: transparent;
   font-size: 12px;
+  line-height: 1;
+  text-align: center;
 }
 
 .image-size-tools button:hover,

@@ -2459,16 +2459,8 @@ function formatElapsedSeconds(value) {
 async function copyAiBlockToClipboard(block) {
   const html = aiBlockHtml(block);
   const text = aiBlockPlainText(block);
-  if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        "text/html": new Blob([html], { type: "text/html" }),
-        "text/plain": new Blob([text], { type: "text/plain" }),
-      }),
-    ]);
-    return;
-  }
-  await navigator.clipboard?.writeText?.(text);
+  const result = await bridge.writeClipboardContent?.({ html, text });
+  if (!result?.ok) throw new Error(result?.message || "复制失败");
 }
 
 function chatMessagesToMarkdown(document, messages) {

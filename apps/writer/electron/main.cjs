@@ -4186,6 +4186,18 @@ function safeClipboardUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ? id : "";
 }
 
+function safeClipboardContent(value, maximumLength) {
+  return typeof value === "string" ? value.slice(0, maximumLength) : "";
+}
+
+ipcMain.handle("clipboard:write-content", async (_event, payload = {}) => {
+  const text = safeClipboardContent(payload?.text, 2_000_000);
+  const html = safeClipboardContent(payload?.html, 4_000_000);
+  if (!text && !html) return { ok: false, message: "没有可复制的内容" };
+  clipboard.write(html ? { text, html } : { text });
+  return { ok: true };
+});
+
 ipcMain.handle("clipboard:write-image-reference", async (_event, payload = {}) => {
   const documentId = safeClipboardUuid(payload?.documentId);
   const imageId = safeClipboardUuid(payload?.imageId);

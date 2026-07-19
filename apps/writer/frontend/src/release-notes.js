@@ -7,6 +7,19 @@ export const RELEASE_PHASE_DEFINITIONS = [
 
 export const RELEASE_NOTES = [
   {
+    version: "0.9.9",
+    phaseId: "research-workspace",
+    scale: "minor",
+    date: "2026-07-19",
+    title: "剪贴板与分屏交互修复",
+    changes: [
+      "修复从正文复制普通文字后，粘贴时被误识别为网页链接的问题；自动链接仅在内容具有明确网址前缀时触发。",
+      "AI 优化结果改由桌面端原生剪贴板复制，修复点击复制按钮时提示没有写入权限的问题。",
+      "图片尺寸菜单的小、中、大、满选项改为居中显示，统一弹出菜单的视觉对齐。",
+      "修复分屏模式下导航栏右侧功能下拉框被标签栏遮挡的问题。",
+    ],
+  },
+  {
     version: "0.9.8",
     phaseId: "research-workspace",
     scale: "major",
