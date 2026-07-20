@@ -12,8 +12,10 @@ test("image export measures the same hidden clone that Electron captures", () =>
   const source = appSource.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.ok(source.indexOf("stage.append(clone)") < source.indexOf("getFlowExportSegments(clone)"));
+  assert.ok(source.indexOf("await waitForImageExportAssets(clone)") < source.indexOf("getFlowExportSegments(clone)"));
   assert.doesNotMatch(source, /getFlowExportSegments\(sheet\)/);
   assert.match(source, /const cloneRect = clone\.getBoundingClientRect\(\)/);
+  assert.match(appSource, /const pageRects = await prepareImageExportRects\(\)/);
 });
 
 test("PDF print mode hides current workspace chrome and paints the complete page background", () => {

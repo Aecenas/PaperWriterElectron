@@ -216,6 +216,7 @@ import {
   SAFE_EMBED_WIDTHS,
   toSafeCssImageUrl,
 } from "./resource-safety.js";
+import { waitForImageExportAssets } from "./image-export-readiness.js";
 
 const COLOR_OPTIONS = [
   { label: "默认墨色", value: "" },
@@ -12119,7 +12120,7 @@ function getFlowExportSegments(sheet) {
     .filter((segment) => segment.bottom - segment.top >= 80);
 }
 
-function prepareImageExportRects() {
+async function prepareImageExportRects() {
   cleanupImageExportStage();
   const sheet = window.document.querySelector(".paper-sheet");
   if (!sheet) {
@@ -12138,8 +12139,8 @@ function prepareImageExportRects() {
   clone.style.width = `${sheetRect.width}px`;
   clone.style.minWidth = `${sheetRect.width}px`;
   clone.style.margin = "0";
-  clone.querySelectorAll("img").forEach((image) => image.setAttribute("decoding", "async"));
   stage.append(clone);
+  await waitForImageExportAssets(clone);
 
   const cloneRect = clone.getBoundingClientRect();
   const segments = getFlowExportSegments(clone);
@@ -15743,7 +15744,7 @@ export default function App() {
       }
       window.scrollTo(0, 0);
       await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
-      const pageRects = prepareImageExportRects();
+      const pageRects = await prepareImageExportRects();
       await new Promise((resolve) => window.requestAnimationFrame(resolve));
       if (!pageRects.length) {
         showStatus("没有可导出的内容", "warning");

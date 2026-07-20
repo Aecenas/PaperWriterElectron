@@ -7,6 +7,17 @@ export const RELEASE_PHASE_DEFINITIONS = [
 
 export const RELEASE_NOTES = [
   {
+    version: "0.9.10",
+    phaseId: "research-workspace",
+    scale: "minor",
+    date: "2026-07-20",
+    title: "分页图片导出修复",
+    changes: [
+      "修复导出分页图片时，正文插图偶尔只剩边框和标题、实际图像不可见的问题。",
+      "导出现在会等待所有原图完成加载与解码后再截图；资源加载失败或超时时会明确提示，不再生成空白图片。",
+    ],
+  },
+  {
     version: "0.9.9",
     phaseId: "research-workspace",
     scale: "minor",
