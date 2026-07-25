@@ -14,6 +14,7 @@ import {
   snapshotRevisionIsCurrent,
   snapshotTabsWithRevisions,
 } from "./editor-lifecycle.js";
+import { createDocumentRuntimeKernel } from "./document-workspace/document-runtime-kernel.js";
 
 const schema = new Schema({
   nodes: {
@@ -94,6 +95,37 @@ test("tab snapshots freeze each document together with its revision", () => {
   assert.equal(snapshots[1].snapshotRevision, 7);
   assert.equal(snapshotRevisionIsCurrent(snapshots[0], revisions), true);
   assert.equal(snapshotRevisionIsCurrent(snapshots[1], revisions), false);
+});
+
+test("snapshot and autosave lifecycle boundaries consume opaque runtime ports", async () => {
+  let releaseCommit;
+  const kernel = createDocumentRuntimeKernel({
+    deferCommit: () => new Promise((resolve) => {
+      releaseCommit = resolve;
+    }),
+  });
+  kernel.tabRuntimePort.register("tab-a", {
+    dirty: true,
+    liveRevision: 3,
+  });
+  const snapshots = snapshotTabsWithRevisions([
+    { id: "tab-a", dirty: true, document: { html: "A" } },
+  ], kernel.revisionPort);
+
+  assert.equal(snapshots[0].snapshotRevision, 3);
+  assert.equal(snapshotRevisionIsCurrent(snapshots[0], kernel.revisionPort), true);
+  const queued = kernel.saveQueuePort.enqueue("tab-a", () => "saved");
+  assert.deepEqual(
+    selectAutosaveSnapshotTabs(snapshots, kernel.saveQueuePort, new Set()),
+    [],
+  );
+  assert.equal(await queued, "saved");
+  await Promise.resolve();
+  releaseCommit();
+  await kernel.saveQueuePort.wait("tab-a");
+
+  kernel.revisionPort.recordMutation("tab-a");
+  assert.equal(snapshotRevisionIsCurrent(snapshots[0], kernel.revisionPort), false);
 });
 
 test("recovery cleanup is best effort after a successful document save", async () => {

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createDocumentId } from "./document-schema-v2.js";
 import { createKnowledgeDocumentPort } from "./document-workspace/knowledge-document-port.js";
+import { createDocumentRuntimeKernel } from "./document-workspace/document-runtime-kernel.js";
 import {
   WORKSPACE_GROUP_ID,
   createDocumentWorkspaceView,
@@ -108,13 +109,13 @@ function createPortFixture(options = {}) {
   const rightSplitTabIdRef = { current: secondaryTab.id };
   const currentPathRef = { current: primaryTab.path };
   const dirtyRef = { current: false };
-  const liveRevisionByTabRef = {
-    current: new Map([
-      [primaryTab.id, 7],
-      [secondaryTab.id, 11],
-    ]),
-  };
-  const diskRevisionByTabRef = { current: new Map() };
+  const documentRuntimeKernel = createDocumentRuntimeKernel();
+  const {
+    revisionPort: documentRevisionPort,
+    tabRuntimePort: documentTabRuntimePort,
+  } = documentRuntimeKernel;
+  documentTabRuntimePort.register(primaryTab.id, { liveRevision: 7 });
+  documentTabRuntimePort.register(secondaryTab.id, { liveRevision: 11 });
   const writingWorkspaceRootRef = { current: "C:\\workspace" };
   const mainEditor = createEditor("main");
   const secondaryEditor = createEditor("secondary", { from: 8, to: 8 });
@@ -130,19 +131,15 @@ function createPortFixture(options = {}) {
     activeWorkReadOnly: Boolean(options.activeWorkReadOnly),
     currentPathRef,
     dirtyRef,
-    diskRevisionByTabRef,
+    documentRevisionPort,
     documentStateRef,
     editor: mainEditor,
     handleOpenFolderFile: async () => {},
     letterTemplates: undefined,
-    liveRevisionByTabRef,
     openTabsRef,
     recordTabMutation(tabId, updatedAt) {
       mutations.push({ tabId, updatedAt });
-      liveRevisionByTabRef.current.set(
-        tabId,
-        (liveRevisionByTabRef.current.get(tabId) || 0) + 1,
-      );
+      documentRevisionPort.recordMutation(tabId, { updatedAt });
     },
     rightSplitDocument: secondaryDocument,
     rightSplitEditor: secondaryEditor,
@@ -172,10 +169,11 @@ function createPortFixture(options = {}) {
     activeTabIdRef,
     currentPathRef,
     dirtyRef,
-    diskRevisionByTabRef,
+    documentRevisionPort,
+    documentRuntimeKernel,
+    documentTabRuntimePort,
     documentStateRef,
     documentStates,
-    liveRevisionByTabRef,
     mainEditor,
     mutations,
     openTabsRef,
@@ -211,9 +209,9 @@ test("captured knowledge targets retain group, tab, selection, revision, and wor
   );
   assert.equal(fixture.port.resolveTarget(target)?.editor, fixture.mainEditor);
 
-  fixture.liveRevisionByTabRef.current.set(target.documentTabId, 8);
+  fixture.documentRevisionPort.recordMutation(target.documentTabId);
   assert.equal(fixture.port.resolveTarget(target), null, "a changed revision invalidates the target");
-  fixture.liveRevisionByTabRef.current.set(target.documentTabId, 7);
+  fixture.documentTabRuntimePort.register(target.documentTabId, { liveRevision: 7 });
 
   fixture.writingWorkspaceRootRef.current = "C:\\other-workspace";
   assert.equal(fixture.port.resolveTarget(target), null, "a workspace switch invalidates the target");
@@ -280,7 +278,7 @@ test("the citation fallback may tolerate only revision drift and still records a
     }),
   });
   const target = fixture.port.captureInsertTarget();
-  fixture.liveRevisionByTabRef.current.set(target.documentTabId, target.revision + 1);
+  fixture.documentRevisionPort.recordMutation(target.documentTabId);
 
   const updater = (document) => ({
     ...document,
@@ -323,7 +321,7 @@ test("identity reconciliation updates only clean cached tabs and the clean activ
   assert.equal(fixture.openTabsRef.current[0].document, nextDocument);
   assert.equal(fixture.documentStateRef.current.documentId, nextDocument.documentId);
   assert.deepEqual(
-    fixture.diskRevisionByTabRef.current.get(fixture.primaryTab.id),
+    fixture.documentRevisionPort.readDiskRevision(fixture.primaryTab.id),
     diskRevision,
   );
 

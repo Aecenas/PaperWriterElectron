@@ -19,12 +19,11 @@ export function createKnowledgeDocumentPort({
   activeWorkReadOnly,
   currentPathRef,
   dirtyRef,
-  diskRevisionByTabRef,
+  documentRevisionPort,
   documentStateRef,
   editor,
   handleOpenFolderFile,
   letterTemplates,
-  liveRevisionByTabRef,
   openTabsRef,
   recordTabMutation,
   rightSplitDocument,
@@ -111,7 +110,7 @@ export function createKnowledgeDocumentPort({
       groupId: context.groupId,
       documentTabId: context.tab.id,
       selection: { from: selection.from, to: selection.to },
-      revision: liveRevisionByTabRef.current.get(context.tab.id) || 0,
+      revision: documentRevisionPort.readLiveRevision(context.tab.id),
       workspaceRoot: writingWorkspaceRootRef.current || "",
     };
   };
@@ -128,7 +127,10 @@ export function createKnowledgeDocumentPort({
     if (state[location.groupId]?.activeViewId !== location.view.viewId) return null;
     const tab = openTabsRef.current.find((candidate) => candidate.id === target.documentTabId);
     if (!tab || tab.readOnly || tab.document?._readOnlyFutureSchema) return null;
-    if (!options.allowRevisionChange && (liveRevisionByTabRef.current.get(tab.id) || 0) !== target.revision) return null;
+    if (
+      !options.allowRevisionChange
+      && documentRevisionPort.readLiveRevision(tab.id) !== target.revision
+    ) return null;
     const targetEditor = location.groupId === WORKSPACE_GROUP_ID.SECONDARY ? rightSplitEditor : editor;
     if (!targetEditor) return null;
     if (location.groupId === WORKSPACE_GROUP_ID.PRIMARY && activeTabIdRef.current !== tab.id) return null;
@@ -236,7 +238,10 @@ export function createKnowledgeDocumentPort({
     if (!result?.path || !result?.documentId) return;
     const nextTabs = openTabsRef.current.map((tab) => {
       if (!sameDocumentPath(tab.path, result.path) || tab.dirty) return tab;
-      diskRevisionByTabRef.current.set(tab.id, result.diskRevision || tab.diskRevision || null);
+      documentRevisionPort.commitDiskRevision(
+        tab.id,
+        result.diskRevision || tab.diskRevision || null,
+      );
       return {
         ...tab,
         document: result.document || {
@@ -259,7 +264,12 @@ export function createKnowledgeDocumentPort({
       );
       documentStateRef.current = nextDocument;
       setDocumentState(nextDocument);
-      if (result.diskRevision) diskRevisionByTabRef.current.set(activeTabIdRef.current, result.diskRevision);
+      if (result.diskRevision) {
+        documentRevisionPort.commitDiskRevision(
+          activeTabIdRef.current,
+          result.diskRevision,
+        );
+      }
     }
   };
 

@@ -162,7 +162,7 @@ test("discard-close aborts when a document changes while confirmation is open", 
   assert.match(closeSource, /latestSnapshot = snapshotLiveTabs\(\)/);
   assert.match(closeSource, /bridge\.closeCanceled/);
   assert.match(closeSource, /sessionClosePendingRef\.current = true/);
-  assert.match(closeSource, /Promise\.all\(\[\.\.\.saveQueueByTabRef\.current\.values\(\)\]\)/);
+  assert.match(closeSource, /await documentSaveQueuePort\.waitAll\(\)/);
 });
 
 test("single-tab close also rechecks the document revision after confirmation", () => {
@@ -170,7 +170,7 @@ test("single-tab close also rechecks the document revision after confirmation", 
   const end = source.indexOf("const handleNew", start);
   const closeSource = source.slice(start, end);
   assert.match(closeSource, /promptedRevision/);
-  assert.match(closeSource, /liveRevisionByTabRef\.current\.get\(tabId\)/);
+  assert.match(closeSource, /documentRevisionPort\.readLiveRevision\(tabId\)/);
   assert.match(closeSource, /snapshot = snapshotLiveTabs\(\{ includeEditorJson: true \}\)/);
   assert.match(closeSource, /tabClosePendingIdsRef\.current\.add\(tabId\)/);
   assert.match(closeSource, /await waitForTabSave\(tabId\)/);
@@ -198,28 +198,30 @@ test("successful saves commit clean state before best-effort recovery cleanup", 
 test("multi-tab save boundaries use revisions captured with the document snapshots", () => {
   const snapshotStart = source.indexOf("const snapshotLiveTabs");
   const snapshotEnd = source.indexOf("const activeSessionPath", snapshotStart);
-  assert.match(source.slice(snapshotStart, snapshotEnd), /snapshotTabsWithRevisions\(documentSnapshots, liveRevisionByTabRef\.current\)/);
+  assert.match(source.slice(snapshotStart, snapshotEnd), /snapshotTabsWithRevisions\(documentSnapshots, documentRevisionPort\)/);
 
   const closeStart = source.indexOf("bridge.onCloseRequest");
   const autosaveStart = source.indexOf("const timer = window.setInterval", closeStart);
   const closeSource = source.slice(closeStart, autosaveStart);
   assert.match(closeSource, /tab\.snapshotRevision/);
-  assert.match(closeSource, /snapshotRevisionIsCurrent\(tab, liveRevisionByTabRef\.current\)/);
-  assert.doesNotMatch(closeSource, /const revision = liveRevisionByTabRef\.current\.get\(tab\.id\)/);
+  assert.match(closeSource, /snapshotRevisionIsCurrent\(tab, documentRevisionPort\)/);
+  assert.doesNotMatch(closeSource, /RevisionByTabRef/);
 
   const autosaveEnd = source.indexOf("const handleKeyDown", autosaveStart);
   const autosaveSource = source.slice(autosaveStart, autosaveEnd);
   assert.match(autosaveSource, /snapshotRevision: tab\.snapshotRevision/);
-  assert.match(autosaveSource, /snapshotRevisionIsCurrent\(tab, liveRevisionByTabRef\.current\)/);
-  assert.doesNotMatch(autosaveSource, /const revision = liveRevisionByTabRef\.current\.get\(tab\.id\)/);
+  assert.match(autosaveSource, /snapshotRevisionIsCurrent\(tab, documentRevisionPort\)/);
+  assert.doesNotMatch(autosaveSource, /RevisionByTabRef/);
 });
 
 test("autosave never queues an old target while Save As is pending", () => {
   const start = source.indexOf("const timer = window.setInterval");
   const end = source.indexOf("const handleKeyDown", start);
   const autosaveSource = source.slice(start, end);
-  assert.match(autosaveSource, /selectAutosaveSnapshotTabs\([\s\S]*saveQueueByTabRef\.current/);
-  assert.match(autosaveSource, /if \(saveQueueByTabRef\.current\.has\(tab\.id\)/);
+  assert.match(autosaveSource, /selectAutosaveSnapshotTabs\([\s\S]*documentSaveQueuePort/);
+  assert.match(autosaveSource, /documentSaveQueuePort\.hasPending\(tab\.id\)/);
   assert.match(autosaveSource, /sourcePath: tab\.path \|\| ""/);
   assert.match(autosaveSource, /targetUnchanged/);
+  assert.match(autosaveSource, /appliedUpdates\.set\(tab\.id, update\)/);
+  assert.match(autosaveSource, /appliedUpdates\.forEach\(\(update, tabId\)/);
 });

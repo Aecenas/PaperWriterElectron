@@ -219,6 +219,7 @@ import {
   isGlobalShortcutBlocked,
 } from "./ui-interactions.js";
 import { readCanvasScrollState, restoreCanvasScrollState } from "./document-workspace/canvas-state.js";
+import { useDocumentRuntimeKernel } from "./document-workspace/document-runtime-kernel.js";
 import { listFolderWithTimeout } from "./document-workspace/folder-listing.js";
 import {
   activeSecondaryDocumentTabId,
@@ -460,12 +461,15 @@ export default function App() {
   const workSurfaceRef = useRef(null);
   const currentPathRef = useRef(currentPath);
   const dirtyRef = useRef(dirty);
-  const dirtyTabIdsRef = useRef(new Set(openTabs.filter((tab) => tab.dirty).map((tab) => tab.id)));
-  const liveUpdatedAtByTabRef = useRef(new Map());
-  const liveRevisionByTabRef = useRef(new Map());
-  const diskRevisionByTabRef = useRef(new Map());
-  const lastEditAtByTabRef = useRef(new Map());
-  const liveEditorSourceByTabRef = useRef(new Map());
+  const documentRuntimeKernel = useDocumentRuntimeKernel({
+    deferCommit: () => new Promise((resolve) => window.setTimeout(resolve, 0)),
+  });
+  const {
+    dirtyPort: documentDirtyPort,
+    revisionPort: documentRevisionPort,
+    saveQueuePort: documentSaveQueuePort,
+    tabRuntimePort: documentTabRuntimePort,
+  } = documentRuntimeKernel;
   const documentStateRef = useRef(documentState);
   const updateAutoCheckedRef = useUpdateAutoCheckRef();
   const getSaveDocumentRef = useRef(null);
@@ -497,7 +501,6 @@ export default function App() {
     promptDialogResolverRef,
   } = usePromiseDialogResolverRefs();
   const syncAiStreamChatMessages = useAiStreamChatMessagesSlot(aiStreamRegistry);
-  const saveQueueByTabRef = useRef(new Map());
   const autosaveRunningRef = useRef(false);
   const autosaveErrorAtRef = useRef(0);
   const tabClosePendingIdsRef = useRef(new Set());
@@ -531,16 +534,14 @@ export default function App() {
 
   const recordTabMutation = useCallback((tabId, updatedAt = new Date().toISOString()) => {
     if (!tabId) return false;
-    liveUpdatedAtByTabRef.current.set(tabId, updatedAt);
-    lastEditAtByTabRef.current.set(tabId, Date.now());
-    liveRevisionByTabRef.current.set(tabId, (liveRevisionByTabRef.current.get(tabId) || 0) + 1);
-    const becameDirty = !dirtyTabIdsRef.current.has(tabId);
-    dirtyTabIdsRef.current.add(tabId);
+    const mutation = documentRevisionPort.recordMutation(tabId, { updatedAt });
+    const { becameDirty } = mutation;
     if (tabId === activeTabIdRef.current) {
       dirtyRef.current = true;
       if (becameDirty) setDirty(true);
     }
-    const recoveryBecameStale = openTabsRef.current.some((tab) => tab.id === tabId && tab.recoveryRevision != null);
+    const recoveryBecameStale = mutation.recoveryBecameStale
+      || openTabsRef.current.some((tab) => tab.id === tabId && tab.recoveryRevision != null);
     if (becameDirty || recoveryBecameStale) {
       const nextTabs = openTabsRef.current.map((tab) => (
         tab.id === tabId ? { ...tab, dirty: true, recoveryRevision: null } : tab
@@ -552,34 +553,15 @@ export default function App() {
   }, []);
 
   const releaseTabRuntimeState = useCallback((tabId) => {
-    dirtyTabIdsRef.current.delete(tabId);
-    liveUpdatedAtByTabRef.current.delete(tabId);
-    liveRevisionByTabRef.current.delete(tabId);
-    diskRevisionByTabRef.current.delete(tabId);
-    lastEditAtByTabRef.current.delete(tabId);
-    liveEditorSourceByTabRef.current.delete(tabId);
-    saveQueueByTabRef.current.delete(tabId);
+    documentTabRuntimePort.release(tabId);
   }, []);
 
   const queueTabSave = useCallback(async (tabId, operation) => {
-    const previous = saveQueueByTabRef.current.get(tabId) || Promise.resolve();
-    const queued = previous.catch(() => {}).then(operation);
-    // Keep the tracked promise alive through the caller's state-update
-    // continuation. A close/discard action waiting on this queue must observe
-    // the committed dirty/recovery state, not merely the completed IPC write.
-    const tracked = queued.then(() => undefined, () => undefined)
-      .then(() => new Promise((resolve) => window.setTimeout(resolve, 0)));
-    saveQueueByTabRef.current.set(tabId, tracked);
-    tracked.finally(() => {
-      if (saveQueueByTabRef.current.get(tabId) === tracked) {
-        saveQueueByTabRef.current.delete(tabId);
-      }
-    });
-    return queued;
+    return documentSaveQueuePort.enqueue(tabId, operation);
   }, []);
 
   const waitForTabSave = useCallback(async (tabId) => {
-    await (saveQueueByTabRef.current.get(tabId) || Promise.resolve());
+    await documentSaveQueuePort.wait(tabId);
   }, []);
 
   const mainEditorExtensions = useMemo(() => createPaperEditorExtensions(), []);
@@ -606,7 +588,7 @@ export default function App() {
       if (transaction?.getMeta?.("paperKnowledgeDerived") || transaction?.getMeta?.("paperStructuredDerived")) return;
       if (applyingRef.current) return;
       const tabId = activeTabIdRef.current;
-      liveEditorSourceByTabRef.current.set(tabId, "main");
+      documentTabRuntimePort.setEditorSource(tabId, "main");
       recordTabMutation(tabId);
     },
   }), [mainEditorExtensions, recordTabMutation]);
@@ -630,7 +612,7 @@ export default function App() {
       if (rightSplitApplyingRef.current) return;
       const splitId = rightSplitTabIdRef.current;
       if (!splitId) return;
-      liveEditorSourceByTabRef.current.set(splitId, "right");
+      documentTabRuntimePort.setEditorSource(splitId, "right");
       recordTabMutation(splitId);
     },
   }), [recordTabMutation, rightEditorExtensions]);
@@ -661,7 +643,7 @@ export default function App() {
   const activeWorkTab = openTabs.find((tab) => tab.id === activeWorkTabId) || null;
   const activeWorkPersistenceState = deriveTabPersistenceState(
     activeWorkTab,
-    liveRevisionByTabRef.current.get(activeWorkTabId) || 0,
+    documentRevisionPort.readLiveRevision(activeWorkTabId),
   );
   const activeWorkSelectionRef = splitPaneActive ? rightSplitSelectionRef : editorSelectionRef;
   const {
@@ -927,8 +909,15 @@ export default function App() {
 
   useEffect(() => {
     openTabsRef.current = openTabs;
-    dirtyTabIdsRef.current = new Set(openTabs.filter((tab) => tab.dirty).map((tab) => tab.id));
-    if (dirty && activeTabId) dirtyTabIdsRef.current.add(activeTabId);
+    openTabs.forEach((tab) => {
+      documentTabRuntimePort.syncReactMirror(tab.id, {
+        dirty: tab.dirty,
+        diskRevision: tab.diskRevision,
+        liveUpdatedAt: tab.document?.updatedAt,
+        recoveryRevision: tab.recoveryRevision,
+      });
+    });
+    if (dirty && activeTabId) documentDirtyPort.markDirty(activeTabId);
   }, [activeTabId, dirty, openTabs]);
 
   useEffect(() => {
@@ -1275,7 +1264,8 @@ export default function App() {
   const snapshotLiveTabs = useCallback(({ includeEditorJson = false } = {}) => {
     const activeId = activeTabIdRef.current;
     const splitId = rightSplitTabIdRef.current;
-    const activeUsesRightEditor = splitId === activeId && liveEditorSourceByTabRef.current.get(activeId) === "right";
+    const activeUsesRightEditor = splitId === activeId
+      && documentTabRuntimePort.readEditorSource(activeId) === "right";
     const activeDocument = activeUsesRightEditor
       ? (getRightSplitSaveDocumentRef.current?.() || documentStateRef.current)
       : (getSaveDocumentRef.current?.() || documentStateRef.current);
@@ -1294,7 +1284,7 @@ export default function App() {
       if (splitDocument) {
         liveTabs.set(splitId, {
           document: splitDocument,
-          dirty: dirtyTabIdsRef.current.has(splitId),
+          dirty: documentDirtyPort.isDirty(splitId),
           editorJson: includeEditorJson ? (rightSplitEditor?.getJSON?.() || null) : undefined,
           scrollState: readCanvasScrollState(rightCanvasRef.current),
           selectionState: readEditorSelectionState(rightSplitEditor),
@@ -1314,7 +1304,7 @@ export default function App() {
         editorJsonBytes: includeEditorJson ? estimateSerializedBytes(nextEditorJson) : tab.editorJsonBytes,
       };
     });
-    return snapshotTabsWithRevisions(documentSnapshots, liveRevisionByTabRef.current);
+    return snapshotTabsWithRevisions(documentSnapshots, documentRevisionPort);
   }, [editor, rightSplitEditor]);
 
   const openSearch = useCallback((scope = "document", options = {}) => {
@@ -1411,7 +1401,7 @@ export default function App() {
     const checks = snapshotLiveTabs().filter((tab) => tab.path).map((tab) => ({
       id: tab.id,
       path: tab.path,
-      expected: diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null,
+      expected: documentRevisionPort.readDiskRevision(tab.id) || tab.diskRevision || null,
     }));
     const outcomes = await Promise.all(checks.map(async (check) => {
       try {
@@ -1428,13 +1418,13 @@ export default function App() {
     const nextTabs = openTabsRef.current.map((tab) => {
       const outcome = outcomeById.get(tab.id);
       if (!outcome || !sameDocumentPath(tab.path, outcome.path)) return tab;
-      const currentExpected = diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null;
+      const currentExpected = documentRevisionPort.readDiskRevision(tab.id) || tab.diskRevision || null;
       const expectedStillCurrent = outcome.expected
         ? Boolean(currentExpected && sameDiskRevision(currentExpected, outcome.expected))
         : !currentExpected;
       if (!expectedStillCurrent) return tab;
       if (!outcome.expected && outcome.actual && !outcome.failed) {
-        diskRevisionByTabRef.current.set(tab.id, outcome.actual);
+        documentRevisionPort.commitDiskRevision(tab.id, outcome.actual);
       }
       const externalChanged = Boolean(
         outcome.expected
@@ -1605,10 +1595,10 @@ export default function App() {
       currentPathRef.current = nextPath;
       dirtyRef.current = nextDirty;
       const activeId = activeTabIdRef.current;
-      liveEditorSourceByTabRef.current.set(activeId, "main");
-      liveUpdatedAtByTabRef.current.set(activeId, normalized.updatedAt);
-      if (nextDirty) dirtyTabIdsRef.current.add(activeId);
-      else dirtyTabIdsRef.current.delete(activeId);
+      documentTabRuntimePort.setEditorSource(activeId, "main");
+      documentRevisionPort.commitLiveUpdatedAt(activeId, normalized.updatedAt);
+      if (nextDirty) documentDirtyPort.markDirty(activeId);
+      else documentDirtyPort.markClean(activeId);
       setDocumentState(normalized);
       setCurrentPath(nextPath);
       setDirty(nextDirty);
@@ -1662,7 +1652,8 @@ export default function App() {
       title,
       html,
       comments: getDocumentComments(editor, sourceDocument.comments),
-      updatedAt: liveUpdatedAtByTabRef.current.get(activeTabIdRef.current) || sourceDocument.updatedAt,
+      updatedAt: documentRevisionPort.readLiveUpdatedAt(activeTabIdRef.current)
+        || sourceDocument.updatedAt,
     }, letterTemplates);
   }, [editor, letterTemplates]);
 
@@ -1682,7 +1673,8 @@ export default function App() {
       title,
       html,
       comments: getDocumentComments(rightSplitEditor, sourceDocument.comments),
-      updatedAt: liveUpdatedAtByTabRef.current.get(splitId) || sourceDocument.updatedAt,
+      updatedAt: documentRevisionPort.readLiveUpdatedAt(splitId)
+        || sourceDocument.updatedAt,
     }, letterTemplates);
   }, [letterTemplates, rightSplitDocument, rightSplitEditor]);
 
@@ -1957,8 +1949,13 @@ export default function App() {
         && !currentPath
         && !dirty;
       const tab = createDocumentTab(normalized, nextPath, nextDirty, options);
-      if (options.diskRevision) diskRevisionByTabRef.current.set(tab.id, options.diskRevision);
-      if (nextDirty) lastEditAtByTabRef.current.set(tab.id, Date.now());
+      documentTabRuntimePort.ensure(tab.id, {
+        dirty: nextDirty,
+        diskRevision: options.diskRevision,
+        lastEditAt: nextDirty ? Date.now() : null,
+        liveUpdatedAt: normalized.updatedAt,
+        recoveryRevision: tab.recoveryRevision,
+      });
       const nextTabs = canReplaceBlank ? [tab] : [...snapshot, tab];
       openTabsRef.current = nextTabs;
       setOpenTabs(nextTabs);
@@ -2161,9 +2158,16 @@ export default function App() {
           }
         }
         if (isActiveRestore() && restoredTabs.length) {
-          restoredTabs.forEach((tab) => { if (tab.diskRevision) diskRevisionByTabRef.current.set(tab.id, tab.diskRevision); });
-          dirtyTabIdsRef.current = new Set(restoredTabs.filter((tab) => tab.dirty).map((tab) => tab.id));
-          restoredTabs.filter((tab) => tab.dirty).forEach((tab) => lastEditAtByTabRef.current.set(tab.id, Date.now()));
+          const restoredAt = Date.now();
+          restoredTabs.forEach((tab) => {
+            documentTabRuntimePort.ensure(tab.id, {
+              dirty: tab.dirty,
+              diskRevision: tab.diskRevision,
+              lastEditAt: tab.dirty ? restoredAt : null,
+              liveUpdatedAt: tab.document?.updatedAt,
+              recoveryRevision: tab.recoveryRevision,
+            });
+          });
           const legacyActiveTab = restoredTabs.find((tab) => sameDocumentPath(tab.path || tab.recoveryPath, activePath)) || restoredTabs[0];
           let fallbackGroups = createWorkspaceGroupsState(workspaceDocumentView(restoredTabs[0]), {
             splitRatio: workspaceGroupsRef.current.splitRatio,
@@ -2351,7 +2355,7 @@ export default function App() {
         : tabId === activeTabId;
       const isDirty = closingTab.dirty;
       if (isDirty) {
-        const promptedRevision = liveRevisionByTabRef.current.get(tabId) || 0;
+        const promptedRevision = documentRevisionPort.readLiveRevision(tabId);
         const decision = await showConfirmDialog({
           tone: "warning",
           icon: FileText,
@@ -2368,7 +2372,7 @@ export default function App() {
         if (decision !== "close") {
           return;
         }
-        if ((liveRevisionByTabRef.current.get(tabId) || 0) !== promptedRevision) {
+        if (documentRevisionPort.readLiveRevision(tabId) !== promptedRevision) {
           showStatus("关闭确认期间信笺又有修改，请再次确认", "warning");
           return;
         }
@@ -2883,7 +2887,7 @@ export default function App() {
       const nextTabs = openTabsRef.current.map((tab) => {
         if (tab.id !== sourceTab.id) return tab;
         const document = mergePersistedDocumentIdentity(tab.document, result.sourceDocument);
-        diskRevisionByTabRef.current.set(tab.id, result.sourceDiskRevision);
+        documentRevisionPort.commitDiskRevision(tab.id, result.sourceDiskRevision);
         return { ...tab, document, diskRevision: result.sourceDiskRevision };
       });
       openTabsRef.current = nextTabs;
@@ -2912,7 +2916,10 @@ export default function App() {
       const affectedTabs = snapshot.filter((tab) => pathIsSameOrInside(tab.path, entry.path));
       const dirtyAffectedTabs = affectedTabs.filter((tab) => tab.dirty);
       const promptedRevisions = new Map(
-        dirtyAffectedTabs.map((tab) => [tab.id, liveRevisionByTabRef.current.get(tab.id) || 0]),
+        dirtyAffectedTabs.map((tab) => [
+          tab.id,
+          documentRevisionPort.readLiveRevision(tab.id),
+        ]),
       );
       const label = entry.type === "file" ? (entry.displayName || entry.name) : entry.name;
       const scope = entry.type === "folder" ? "这个文件夹及其内部内容" : "这个信笺";
@@ -2940,7 +2947,9 @@ export default function App() {
         ],
       });
       if (decision !== "delete") return;
-      if ([...promptedRevisions].some(([tabId, revision]) => (liveRevisionByTabRef.current.get(tabId) || 0) !== revision)) {
+      if ([...promptedRevisions].some(([tabId, revision]) => (
+        documentRevisionPort.readLiveRevision(tabId) !== revision
+      ))) {
         showStatus("删除确认期间信笺又有修改，请再次确认", "warning");
         return;
       }
@@ -3134,12 +3143,14 @@ export default function App() {
           showStatus("此信笺使用未来格式，当前版本只能只读打开", "warning");
           return;
         }
-        const revision = liveRevisionByTabRef.current.get(targetTab.id) || 0;
+        const revision = documentRevisionPort.readLiveRevision(targetTab.id);
         const previousDocumentKey = documentRuntimeKey(targetTab.path, targetTab.id);
         const reservedPaths = openTabsRef.current
           .filter((tab) => tab.id !== targetTab.id && tab.path)
           .map((tab) => tab.path);
-        const expectedRevision = diskRevisionByTabRef.current.get(targetTab.id) || targetTab.diskRevision || null;
+        const expectedRevision = documentRevisionPort.readDiskRevision(targetTab.id)
+          || targetTab.diskRevision
+          || null;
         let result = await queueTabSave(targetTab.id, () => (
           bridge.saveDocument(nextDocument, targetTab.path, saveAs, reservedPaths, expectedRevision)
         ));
@@ -3185,8 +3196,9 @@ export default function App() {
           } else if (decision === "reload") {
             const reloaded = await bridge.openDocumentPath(targetTab.path);
             if (!reloaded?.canceled && reloaded?.document) {
-              diskRevisionByTabRef.current.set(targetTab.id, reloaded.diskRevision);
-              dirtyTabIdsRef.current.delete(targetTab.id);
+              documentRevisionPort.commitDiskRevision(targetTab.id, reloaded.diskRevision);
+              documentDirtyPort.markClean(targetTab.id);
+              documentDirtyPort.commitRecoveryRevision(targetTab.id, null);
               const normalizedReload = normalizeDocument(reloaded.document, letterTemplates);
               const nextTabs = openTabsRef.current.map((tab) => tab.id === targetTab.id ? {
                 ...tab,
@@ -3230,9 +3242,11 @@ export default function App() {
         }
         if (result?.canceled) return;
         if (!result?.path) throw new Error("保存完成后没有返回文件路径");
-        const unchanged = (liveRevisionByTabRef.current.get(targetTab.id) || 0) === revision;
+        const unchanged = documentRevisionPort.readLiveRevision(targetTab.id) === revision;
         const savedDocument = normalizeDocument(result.document || nextDocument, letterTemplates);
-        if (result.diskRevision) diskRevisionByTabRef.current.set(targetTab.id, result.diskRevision);
+        if (result.diskRevision) {
+          documentRevisionPort.commitDiskRevision(targetTab.id, result.diskRevision);
+        }
         migrateAiRequestDocumentKey(previousDocumentKey, documentRuntimeKey(result.path, targetTab.id));
         const latestSnapshot = unchanged ? openTabsRef.current : snapshotLiveTabs({ includeEditorJson: true });
         const latestTargetTab = latestSnapshot.find((tab) => tab.id === targetTab.id) || targetTab;
@@ -3242,7 +3256,8 @@ export default function App() {
         let recoveryWrite = null;
         let recoveryWriteError = null;
         if (unchanged) {
-          dirtyTabIdsRef.current.delete(targetTab.id);
+          documentDirtyPort.markClean(targetTab.id);
+          documentDirtyPort.commitRecoveryRevision(targetTab.id, null);
         } else {
           try {
             recoveryWrite = await queueTabSave(targetTab.id, () => bridge.saveTempDocument?.(
@@ -3284,6 +3299,11 @@ export default function App() {
         ));
         openTabsRef.current = nextTabs;
         setOpenTabs(nextTabs);
+        const committedTargetRuntime = nextTabs.find((tab) => tab.id === targetTab.id);
+        documentDirtyPort.commitRecoveryRevision(
+          targetTab.id,
+          committedTargetRuntime?.recoveryRevision,
+        );
         if (targetTab.id === activeTabIdRef.current) {
           currentPathRef.current = result.path;
           setCurrentPath(result.path);
@@ -3320,7 +3340,7 @@ export default function App() {
       sessionClosePendingRef.current = true;
       let closeCommitted = false;
       try {
-      await Promise.all([...saveQueueByTabRef.current.values()]);
+      await documentSaveQueuePort.waitAll();
       const snapshot = snapshotLiveTabs();
       const dirtyTabs = snapshot.filter((tab) => tab.dirty);
       const promptedRevisions = new Map(
@@ -3376,7 +3396,7 @@ export default function App() {
           const savedTabs = [];
           try {
             for (const tab of finalTabs) {
-              if (!snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) {
+              if (!snapshotRevisionIsCurrent(tab, documentRevisionPort)) {
                 showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
                 await bridge.closeCanceled?.(payload);
                 return;
@@ -3386,7 +3406,15 @@ export default function App() {
                 continue;
               }
               const result = await queueTabSave(tab.id, () => (tab.path
-                ? bridge.saveDocument(tab.document, tab.path, false, [], diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null)
+                ? bridge.saveDocument(
+                    tab.document,
+                    tab.path,
+                    false,
+                    [],
+                    documentRevisionPort.readDiskRevision(tab.id)
+                      || tab.diskRevision
+                      || null,
+                  )
                 : bridge.saveTempDocument?.(tab.document, recoveryTabId(tab))));
               if (result?.conflict) {
                 throw new Error(`检测到外部版本；内存稿已保存为冲突副本：${result.conflictCopyPath}`);
@@ -3395,8 +3423,10 @@ export default function App() {
                 await bridge.closeCanceled?.(payload);
                 return;
               }
-              if (tab.path && result.diskRevision) diskRevisionByTabRef.current.set(tab.id, result.diskRevision);
-              if (!snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) {
+              if (tab.path && result.diskRevision) {
+                documentRevisionPort.commitDiskRevision(tab.id, result.diskRevision);
+              }
+              if (!snapshotRevisionIsCurrent(tab, documentRevisionPort)) {
                 showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
                 await bridge.closeCanceled?.(payload);
                 return;
@@ -3418,7 +3448,8 @@ export default function App() {
             const savedSnapshotById = new Map(savedTabs.map((tab) => [tab.id, tab]));
             const changedAfterSaving = openTabsRef.current.some((tab) => {
               const savedSnapshot = savedSnapshotById.get(tab.id);
-              return !savedSnapshot || !snapshotRevisionIsCurrent(savedSnapshot, liveRevisionByTabRef.current);
+              return !savedSnapshot
+                || !snapshotRevisionIsCurrent(savedSnapshot, documentRevisionPort);
             });
             if (changedAfterSaving) {
               showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
@@ -3456,13 +3487,16 @@ export default function App() {
         const snapshot = snapshotLiveTabs();
         const dirtyTabs = selectAutosaveSnapshotTabs(
           snapshot,
-          saveQueueByTabRef.current,
+          documentSaveQueuePort,
           tabClosePendingIdsRef.current,
         );
         if (!dirtyTabs.length) return;
         const updates = new Map();
         for (const tab of dirtyTabs) {
-          if (saveQueueByTabRef.current.has(tab.id) || !snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) {
+          if (
+            documentSaveQueuePort.hasPending(tab.id)
+            || !snapshotRevisionIsCurrent(tab, documentRevisionPort)
+          ) {
             continue;
           }
           try {
@@ -3471,7 +3505,10 @@ export default function App() {
             updates.set(tab.id, {
               path: result.path,
               sourcePath: tab.path || "",
-              baseRevision: normalizeSessionDiskRevision(diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision),
+              baseRevision: normalizeSessionDiskRevision(
+                documentRevisionPort.readDiskRevision(tab.id)
+                  || tab.diskRevision,
+              ),
               recoveryId: result.recoveryId || recoveryTabId(tab),
               snapshotRevision: tab.snapshotRevision,
             });
@@ -3484,11 +3521,13 @@ export default function App() {
           }
         }
         if (!updates.size) return;
+        const appliedUpdates = new Map();
         const nextTabs = openTabsRef.current.map((tab) => {
           const update = updates.get(tab.id);
           if (!update) return tab;
           const targetUnchanged = sameDocumentPath(tab.path || "", update.sourcePath);
           if (!targetUnchanged) return tab;
+          appliedUpdates.set(tab.id, update);
           return {
             ...tab,
             recoveryPath: update.path,
@@ -3502,6 +3541,12 @@ export default function App() {
         });
         openTabsRef.current = nextTabs;
         setOpenTabs(nextTabs);
+        appliedUpdates.forEach((update, tabId) => {
+          documentDirtyPort.commitRecoveryRevision(
+            tabId,
+            update.snapshotRevision,
+          );
+        });
         const activeId = activeTabIdRef.current;
         persistSession({
           activePath: nextTabs.find((tab) => tab.id === activeId)?.path
@@ -3522,11 +3567,16 @@ export default function App() {
     const now = Date.now();
     const snapshot = snapshotLiveTabs();
     const candidates = snapshot.filter((tab) => tab.path && tab.dirty && !tab.readOnly && !tab.externalChanged
-      && (!idleOnly || now - (lastEditAtByTabRef.current.get(tab.id) || now) >= 5 * 60 * 1000));
+      && (!idleOnly || now - (documentRevisionPort.readLastEditAt(tab.id) || now) >= 5 * 60 * 1000));
     for (const tab of candidates) {
-      if (saveQueueByTabRef.current.has(tab.id) || !snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) continue;
+      if (
+        documentSaveQueuePort.hasPending(tab.id)
+        || !snapshotRevisionIsCurrent(tab, documentRevisionPort)
+      ) continue;
       try {
-        const expectedRevision = diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null;
+        const expectedRevision = documentRevisionPort.readDiskRevision(tab.id)
+          || tab.diskRevision
+          || null;
         const result = await queueTabSave(tab.id, () => bridge.saveDocument(tab.document, tab.path, false, [], expectedRevision));
         if (result?.conflict) {
           setOpenTabs((previous) => {
@@ -3538,9 +3588,12 @@ export default function App() {
           continue;
         }
         if (!result?.path) continue;
-        if (result.diskRevision) diskRevisionByTabRef.current.set(tab.id, result.diskRevision);
-        if (!snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) continue;
-        dirtyTabIdsRef.current.delete(tab.id);
+        if (result.diskRevision) {
+          documentRevisionPort.commitDiskRevision(tab.id, result.diskRevision);
+        }
+        if (!snapshotRevisionIsCurrent(tab, documentRevisionPort)) continue;
+        documentDirtyPort.markClean(tab.id);
+        documentDirtyPort.commitRecoveryRevision(tab.id, null);
         const nextTabs = openTabsRef.current.map((item) => item.id === tab.id ? {
           ...item,
           document: result.document || tab.document,
@@ -3932,12 +3985,11 @@ export default function App() {
     activeWorkReadOnly,
     currentPathRef,
     dirtyRef,
-    diskRevisionByTabRef,
+    documentRevisionPort,
     documentStateRef,
     editor,
     handleOpenFolderFile,
     letterTemplates,
-    liveRevisionByTabRef,
     openTabsRef,
     recordTabMutation,
     rightSplitDocument,

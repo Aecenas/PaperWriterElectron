@@ -72,16 +72,23 @@ export function sessionTabSignature(activePath, tabs = []) {
   return values.map((value) => `${value.length}:${value}`).join("|");
 }
 
-export function snapshotTabsWithRevisions(tabs = [], revisionByTab) {
+function readLiveRevision(revisionSource, tabId) {
+  const revision = typeof revisionSource?.readLiveRevision === "function"
+    ? revisionSource.readLiveRevision(tabId)
+    : revisionSource?.get?.(tabId);
+  return Math.max(0, Math.floor(Number(revision) || 0));
+}
+
+export function snapshotTabsWithRevisions(tabs = [], revisionSource) {
   return tabs.map((tab) => ({
     ...tab,
-    snapshotRevision: Math.max(0, Math.floor(Number(revisionByTab?.get?.(tab?.id)) || 0)),
+    snapshotRevision: readLiveRevision(revisionSource, tab?.id),
   }));
 }
 
-export function snapshotRevisionIsCurrent(tab, revisionByTab) {
+export function snapshotRevisionIsCurrent(tab, revisionSource) {
   if (!tab) return false;
-  const currentRevision = Math.max(0, Math.floor(Number(revisionByTab?.get?.(tab.id)) || 0));
+  const currentRevision = readLiveRevision(revisionSource, tab.id);
   return currentRevision === Math.max(0, Math.floor(Number(tab.snapshotRevision) || 0));
 }
 
@@ -98,7 +105,9 @@ export async function deleteRecoveryBestEffort(deleteTempDocument, recoveryId) {
 export function selectAutosaveSnapshotTabs(tabs = [], pendingSaves, pendingCloses) {
   return tabs.filter((tab) => (
     Boolean(tab?.dirty)
-    && !pendingSaves?.has?.(tab.id)
+    && !(typeof pendingSaves?.hasPending === "function"
+      ? pendingSaves.hasPending(tab.id)
+      : pendingSaves?.has?.(tab.id))
     && !pendingCloses?.has?.(tab.id)
   ));
 }

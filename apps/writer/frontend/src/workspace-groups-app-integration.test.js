@@ -30,10 +30,11 @@ test("element pickers retain a document, group, selection and revision boundary"
   assert.match(appSource, /useKnowledgeDocumentPort\(\{/);
   assert.match(knowledgeDocumentPortSource, /documentTabId: context\.tab\.id/);
   assert.match(knowledgeDocumentPortSource, /selection: \{ from: selection\.from, to: selection\.to \}/);
-  assert.match(knowledgeDocumentPortSource, /revision: liveRevisionByTabRef\.current\.get\(context\.tab\.id\) \|\| 0/);
+  assert.match(knowledgeDocumentPortSource, /revision: documentRevisionPort\.readLiveRevision\(context\.tab\.id\)/);
   assert.match(knowledgeDocumentPortSource, /target\.workspaceRoot[\s\S]*writingWorkspaceRootRef\.current/);
   assert.match(knowledgeDocumentPortSource, /location\.groupId !== target\.groupId/);
-  assert.match(knowledgeDocumentPortSource, /liveRevisionByTabRef\.current\.get\(tab\.id\)[\s\S]*!== target\.revision/);
+  assert.match(knowledgeDocumentPortSource, /documentRevisionPort\.readLiveRevision\(tab\.id\) !== target\.revision/);
+  assert.doesNotMatch(knowledgeDocumentPortSource, /(?:live|disk)RevisionByTabRef/);
   assert.match(knowledgeReferenceActionsSource, /documentPort\.insertAt\(resolved, \{[\s\S]*type: "paperFootnoteReference"/);
   assert.match(knowledgeReferenceActionsSource, /handleInsertCitationAtTarget\(citationPicker, source, page\)/);
 });

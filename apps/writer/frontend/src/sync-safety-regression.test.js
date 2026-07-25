@@ -54,18 +54,22 @@ test("recovery sessions persist the workspace base revision and mark stale resto
   assert.match(source, /externalVersion=\{Boolean\(activeWorkTab\?\.externalChanged\)\}/);
 
   const recoveryAutosave = between("const timer = window.setInterval(async () =>", "const flushDirtyWorkspaceTabs");
-  assert.match(recoveryAutosave, /baseRevision:\s*normalizeSessionDiskRevision\(diskRevisionByTabRef\.current\.get\(tab\.id\) \|\| tab\.diskRevision\)/);
+  assert.match(
+    recoveryAutosave,
+    /baseRevision:\s*normalizeSessionDiskRevision\(\s*documentRevisionPort\.readDiskRevision\(tab\.id\)\s*\|\|\s*tab\.diskRevision,\s*\)/,
+  );
   assert.match(recoveryAutosave, /recoverySourcePath:\s*update\.sourcePath/);
   assert.match(recoveryAutosave, /recoveryBaseRevision:\s*update\.baseRevision/);
+  assert.match(recoveryAutosave, /appliedUpdates\.forEach\(\(update, tabId\)/);
   assert.match(recoveryAutosave, /persistSession\(\{[\s\S]*tabs:\s*summarizeSessionTabs\(nextTabs\)/);
 });
 
 test("a manual save that races with continued editing keeps a fresh recovery cache", () => {
   const save = between("const handleSave = useCallback", "bridge.onCloseRequest");
-  assert.match(save, /const unchanged = \(liveRevisionByTabRef\.current\.get\(targetTab\.id\) \|\| 0\) === revision/);
+  assert.match(save, /const unchanged = documentRevisionPort\.readLiveRevision\(targetTab\.id\) === revision/);
   assert.match(save, /const latestSnapshot = unchanged \? openTabsRef\.current : snapshotLiveTabs\(\{ includeEditorJson: true \}\)/);
   assert.match(save, /mergePersistedDocumentIdentity\(latestTargetTab\.document \|\| nextDocument, savedDocument\)/);
-  assert.match(save, /if \(unchanged\) \{\s*dirtyTabIdsRef\.current\.delete\(targetTab\.id\);\s*\} else \{[\s\S]*bridge\.saveTempDocument\?\.\([\s\S]*livePersistedDocument/s);
+  assert.match(save, /if \(unchanged\) \{\s*documentDirtyPort\.markClean\(targetTab\.id\);\s*documentDirtyPort\.commitRecoveryRevision\(targetTab\.id, null\);\s*\} else \{[\s\S]*bridge\.saveTempDocument\?\.\([\s\S]*livePersistedDocument/s);
   assert.match(save, /recoveryPath:\s*unchanged \? "" : \(recoveryWrite\?\.path \|\| tab\.recoveryPath \|\| ""\)/);
   assert.match(save, /recoveryBaseRevision:\s*unchanged \? null : \(recoveryWrite\?\.path \? normalizeSessionDiskRevision\(result\.diskRevision\)/);
   assert.match(save, /dirty:\s*!unchanged/);
@@ -75,14 +79,15 @@ test("a manual save that races with continued editing keeps a fresh recovery cac
 test("successful workspace writes advance diskRevision before any stale-snapshot early exit", () => {
   const save = between("const handleSave = useCallback", "bridge.onCloseRequest");
   ordered(save, [
-    "if (result.diskRevision) diskRevisionByTabRef.current.set(targetTab.id, result.diskRevision)",
+    "documentRevisionPort.commitDiskRevision(targetTab.id, result.diskRevision)",
     "if (unchanged) {",
   ]);
 
   const flush = between("const flushDirtyWorkspaceTabs = useCallback", "useEffect(() => {\n    const timer = window.setInterval(() => flushDirtyWorkspaceTabs");
   ordered(flush, [
-    "if (result.diskRevision) diskRevisionByTabRef.current.set(tab.id, result.diskRevision)",
-    "if (!snapshotRevisionIsCurrent(tab, liveRevisionByTabRef.current)) continue",
+    "documentRevisionPort.commitDiskRevision(tab.id, result.diskRevision)",
+    "if (!snapshotRevisionIsCurrent(tab, documentRevisionPort)) continue",
+    "documentDirtyPort.markClean(tab.id)",
   ]);
   assert.match(flush, /diskRevision:\s*result\.diskRevision/);
   assert.match(flush, /recoveryBaseRevision:\s*null/);
