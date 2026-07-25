@@ -12576,7 +12576,6 @@ button:disabled {
 .desktop-shell.print-mode .ai-mode-top-strip,
 .desktop-shell.print-mode .document-find-widget,
 .desktop-shell.print-mode .secondary-pane-resizer,
-.desktop-shell.print-mode .right-split-pane,
 .desktop-shell.print-mode .sidebar,
 .desktop-shell.print-mode .statusbar,
 .desktop-shell.print-mode .status-toast,
@@ -12589,6 +12588,7 @@ button:disabled {
 .desktop-shell.print-mode .app-shell,
 .desktop-shell.print-mode .workspace,
 .desktop-shell.print-mode .work-surface,
+.desktop-shell.print-mode .paper-workspace,
 .desktop-shell.print-mode .canvas,
 .desktop-shell.print-mode .paper-viewport {
   display: block;
@@ -12598,6 +12598,19 @@ button:disabled {
   overflow: visible;
   padding: 0;
   background: var(--print-paper-repeat-bg, none) center top / 794px auto repeat-y, var(--print-paper-base, #ffffff);
+}
+
+.desktop-shell.print-mode.export-main-pane .right-split-pane,
+.desktop-shell.print-mode.export-right-pane .paper-workspace > .canvas {
+  display: none;
+}
+
+.desktop-shell.print-mode.export-right-pane .right-split-pane {
+  display: block;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
 }
 
 .desktop-shell.print-mode .paper-sheet {

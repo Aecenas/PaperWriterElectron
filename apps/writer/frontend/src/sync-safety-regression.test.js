@@ -37,7 +37,9 @@ test("recovery sessions persist the workspace base revision and mark stale resto
   assert.match(restore, /!sourceMatches\s*\|\|\s*!recoveryBaseRevision\s*\|\|\s*!sameDiskRevision\(currentDiskRevision, recoveryBaseRevision\)/s);
   assert.match(restore, /diskRevision:\s*recoveryBaseRevision/);
   assert.match(restore, /externalChanged/);
-  assert.match(restore, /setPersistenceState\(activeTab\.externalChanged \? "external"/);
+  assert.match(source, /const activeWorkPersistenceState = deriveTabPersistenceState\(/);
+  assert.match(source, /persistenceState=\{activeWorkPersistenceState\}/);
+  assert.match(source, /externalVersion=\{Boolean\(activeWorkTab\?\.externalChanged\)\}/);
 
   const recoveryAutosave = between("const timer = window.setInterval(async () =>", "const flushDirtyWorkspaceTabs");
   assert.match(recoveryAutosave, /baseRevision:\s*normalizeSessionDiskRevision\(diskRevisionByTabRef\.current\.get\(tab\.id\) \|\| tab\.diskRevision\)/);

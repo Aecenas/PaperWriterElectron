@@ -1,5 +1,5 @@
 export const HIDDEN_RESEARCH_NAMES = new Set([".jianjian"]);
-export const RESEARCH_PREVIEW_KINDS = new Set(["document", "pdf", "markdown", "text", "table", "image", "unsupported"]);
+export const RESEARCH_PREVIEW_KINDS = new Set(["document", "pdf", "docx", "markdown", "text", "table", "image", "unsupported"]);
 
 export const RESEARCH_CONTEXT_ACTIONS = Object.freeze({
   folder: ["createFolder", "importFiles", "rename", "move", "copyPath", "showInFolder", "trash"],
@@ -84,6 +84,7 @@ export function researchPreviewKind(item) {
   const name = String(item?.fileName || item?.name || item?.relativePath || item?.path || "").toLocaleLowerCase("en-US");
   if (/\.(?:letterpaper|paperdoc)$/.test(name)) return "document";
   if (/\.pdf$/.test(name)) return "pdf";
+  if (/\.docx$/.test(name)) return "docx";
   if (/\.(?:md|markdown)$/.test(name)) return "markdown";
   if (/\.(?:txt|log)$/.test(name)) return "text";
   if (/\.(?:csv|tsv)$/.test(name)) return "table";

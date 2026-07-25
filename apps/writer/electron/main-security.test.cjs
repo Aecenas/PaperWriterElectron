@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 async function mainSource() {
   return fs.readFile(path.join(__dirname, "main.cjs"), "utf8");
@@ -13,6 +14,14 @@ function between(source, startMarker, endMarker) {
   assert.notEqual(start, -1, `missing marker: ${startMarker}`);
   assert.notEqual(end, -1, `missing marker: ${endMarker}`);
   return source.slice(start, end);
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 test("keeps the renderer sandboxed and gates every registered IPC handler", async () => {
@@ -209,4 +218,92 @@ test("always gives Codex a fresh isolated scope", async () => {
   const streamer = between(source, "async function streamCodexForPayload", "function sanitizeName");
   assert.match(streamer, /resolveCodexScopeDirectory/);
   assert.doesNotMatch(streamer, /workspacePath|documentPath|fs\.stat/);
+});
+
+test("checks Codex cancellation around async preparation and suppresses stale deltas", async () => {
+  const source = await mainSource();
+  const streamer = between(source, "async function streamCodexForPayload", "function sanitizeName");
+  const abortChecks = streamer.match(/throwIfAiAborted\(controller\.signal\)/g) || [];
+  assert.equal(abortChecks.length, 3);
+  assert.ok(
+    streamer.indexOf("throwIfAiAborted(controller.signal)") < streamer.indexOf("resolveCodexScopeDirectory"),
+    "the initial abort check must happen before scope preparation",
+  );
+  assert.match(streamer, /resolvedScope[\s\S]*try\s*\{\s*throwIfAiAborted\(controller\.signal\)/);
+  assert.match(streamer, /await materializeCodexImageAttachments[\s\S]*throwIfAiAborted\(controller\.signal\)/);
+  assert.match(streamer, /onDelta:\s*\(delta\)\s*=>\s*\{\s*if \(controller\.signal\.aborted\) return;\s*sendRendererEvent/);
+});
+
+test("workspace watcher setup ignores older requests and requests invalidated by stop", async () => {
+  const source = await mainSource();
+  const watcherSource = between(source, "function stopWorkspaceWatcher", 'ipcMain.handle("folder:search"');
+  const gates = new Map();
+  const createdWatchers = [];
+  const api = vm.runInNewContext(
+    `
+      let activeWorkspaceWatcher = null;
+      let activeWorkspaceWatchRoot = "";
+      let activeWorkspaceWatchTimer = null;
+      let activeWorkspaceWatchGeneration = 0;
+      ${watcherSource}
+      ({
+        startWorkspaceWatcher,
+        stopWorkspaceWatcher,
+        activeRoot: () => activeWorkspaceWatchRoot,
+      });
+    `,
+    {
+      assertAuthorizedDirectory: async (folderPath) => {
+        const gate = gates.get(folderPath);
+        if (gate) {
+          gate.started.resolve();
+          await gate.release.promise;
+        }
+        return folderPath;
+      },
+      clearTimeout,
+      getWorkspaceSearchIndex: async () => ({ index: { refresh: async () => {} } }),
+      mainWindow: null,
+      nativeFs: {
+        watch(rootPath) {
+          const watcher = {
+            rootPath,
+            closed: false,
+            close() { this.closed = true; },
+            on() { return this; },
+          };
+          createdWatchers.push(watcher);
+          return watcher;
+        },
+      },
+      sendRendererEvent: () => {},
+      setTimeout,
+      writeAiDebugLog: async () => {},
+    },
+    { filename: "workspace-watcher-race-extract.cjs" },
+  );
+
+  const olderGate = { started: deferred(), release: deferred() };
+  gates.set("older", olderGate);
+  const older = api.startWorkspaceWatcher("older");
+  await olderGate.started.promise;
+  await api.startWorkspaceWatcher("newer");
+  olderGate.release.resolve();
+  await older;
+
+  assert.deepEqual(createdWatchers.map((watcher) => watcher.rootPath), ["newer"]);
+  assert.equal(createdWatchers[0].closed, false);
+  assert.equal(api.activeRoot(), "newer");
+
+  const stoppedGate = { started: deferred(), release: deferred() };
+  gates.set("stopped", stoppedGate);
+  const stopped = api.startWorkspaceWatcher("stopped");
+  await stoppedGate.started.promise;
+  api.stopWorkspaceWatcher();
+  stoppedGate.release.resolve();
+  await stopped;
+
+  assert.deepEqual(createdWatchers.map((watcher) => watcher.rootPath), ["newer"]);
+  assert.equal(createdWatchers[0].closed, true);
+  assert.equal(api.activeRoot(), "");
 });

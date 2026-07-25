@@ -7,6 +7,7 @@ const source = fs.readFileSync(fileURLToPath(new URL("./SettingsCenter.jsx", imp
 const css = fs.readFileSync(fileURLToPath(new URL("./settings-center.css", import.meta.url)), "utf8");
 const appCss = fs.readFileSync(fileURLToPath(new URL("./styles.css", import.meta.url)), "utf8");
 const appSource = fs.readFileSync(fileURLToPath(new URL("./App.jsx", import.meta.url)), "utf8");
+const uiInteractionsSource = fs.readFileSync(fileURLToPath(new URL("./ui-interactions.js", import.meta.url)), "utf8");
 
 test("settings center is a first-level launcher with two destinations", () => {
   assert.match(source, /AI 配置/);
@@ -60,7 +61,7 @@ test("the launcher exits before opening a standalone second-level panel", () => 
 });
 
 test("standalone second-level panels trap focus and return to the settings trigger", () => {
-  assert.match(appSource, /function dialogFocusableElements/);
+  assert.match(uiInteractionsSource, /export function dialogFocusableElements/);
   assert.match(appSource, /closeButtonRef\.current\?\.focus\(\{ preventScroll: true \}\)/);
   assert.match(appSource, /returnFocusRef\?\.current \|\| previouslyFocused/);
   assert.match(appSource, /className=\{embedded \? "template-dialog-embed" : "template-dialog-overlay dialog-scrim dialog-scrim--large"\}[\s\S]*?event\.target === event\.currentTarget/);

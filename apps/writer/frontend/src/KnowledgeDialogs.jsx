@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { formatCitationSource } from "./knowledge-extensions.js";
+import { isTopModalDialog, useModalFocusTrap } from "./ui-interactions.js";
 import "./knowledge-dialogs.css";
 
 const CITATION_TYPES = [
@@ -176,29 +177,14 @@ function KnowledgeDatePicker({ label, value, onChange }) {
 
 function DialogFrame({ title, eyebrow, icon: Icon, busy, onClose, onSubmit, children, actions, className = "" }) {
   const dialogRef = useRef(null);
-  const previousFocusRef = useRef(null);
-  useEffect(() => {
-    previousFocusRef.current = window.document.activeElement;
-    return () => {
-      const previousFocus = previousFocusRef.current;
-      if (previousFocus?.isConnected) window.requestAnimationFrame(() => previousFocus.focus?.());
-    };
-  }, []);
+  useModalFocusTrap(true, dialogRef);
   useEffect(() => {
     const handleKeyDown = (event) => {
-      if (event.key === "Escape" && !busy) {
+      if (event.key === "Escape" && !busy && isTopModalDialog(dialogRef)) {
         if (dialogRef.current?.querySelector('[data-knowledge-popup-open="true"]')) return;
         event.preventDefault();
         onClose?.();
         return;
-      }
-      if (event.key === "Tab") {
-        const focusable = [...(dialogRef.current?.querySelectorAll?.('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])];
-        if (!focusable.length) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (event.shiftKey && window.document.activeElement === first) { event.preventDefault(); last.focus(); }
-        else if (!event.shiftKey && window.document.activeElement === last) { event.preventDefault(); first.focus(); }
       }
     };
     window.document.addEventListener("keydown", handleKeyDown, true);

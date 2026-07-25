@@ -15,13 +15,15 @@ test("image export measures the same hidden clone that Electron captures", () =>
   assert.ok(source.indexOf("await waitForImageExportAssets(clone)") < source.indexOf("getFlowExportSegments(clone)"));
   assert.doesNotMatch(source, /getFlowExportSegments\(sheet\)/);
   assert.match(source, /const cloneRect = clone\.getBoundingClientRect\(\)/);
-  assert.match(appSource, /const pageRects = await prepareImageExportRects\(\)/);
+  assert.match(appSource, /const pageRects = await prepareImageExportRects\(targetCanvas\.querySelector\("\.paper-sheet"\)\)/);
 });
 
 test("PDF print mode hides current workspace chrome and paints the complete page background", () => {
   assert.match(stylesSource, /\.desktop-shell\.print-mode \.group-tabs,/);
   assert.match(stylesSource, /\.desktop-shell\.print-mode \.editor-groups-top-strip,/);
-  assert.match(stylesSource, /\.desktop-shell\.print-mode \.right-split-pane,/);
+  assert.match(stylesSource, /\.desktop-shell\.print-mode\.export-main-pane \.right-split-pane,/);
+  assert.match(stylesSource, /\.desktop-shell\.print-mode\.export-right-pane \.paper-workspace > \.canvas/);
+  assert.match(stylesSource, /\.desktop-shell\.print-mode\.export-right-pane \.right-split-pane/);
   assert.match(stylesSource, /\.desktop-shell\.print-mode \{[^}]*--print-paper-repeat-bg/s);
   assert.match(stylesSource, /@media print[\s\S]*?html,[\s\S]*?#root \{[^}]*--print-paper-repeat-bg/s);
   assert.match(appSource, /function applyPrintPaperBackground[\s\S]*?--paper-repeat-bg/);

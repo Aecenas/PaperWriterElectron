@@ -94,6 +94,7 @@ export function ReferencesPane({
   pendingPage,
   loading = false,
   error = "",
+  readOnly = false,
   onJumpFootnote,
   onEditFootnote,
   onDeleteFootnote,
@@ -124,8 +125,8 @@ export function ReferencesPane({
                     <strong className="structure-order-number" aria-label={`脚注 ${index + 1}`}>{index + 1}</strong>
                     <span className="structure-footnote-summary">{summarizeFootnoteText(footnote.text)}</span>
                   </button>
-                  {onEditFootnote ? <button type="button" className="structure-item-delete structure-item-action" aria-label={`编辑脚注 ${footnote.label || index + 1}`} title="编辑脚注" onClick={() => onEditFootnote(footnote)}><Pencil size={13} /></button> : null}
-                  <button type="button" className="structure-item-delete" aria-label={`删除脚注 ${footnote.label || ""}`} title="删除脚注" onClick={() => onDeleteFootnote?.(footnote)}><Trash2 size={13} /></button>
+                  {!readOnly && onEditFootnote ? <button type="button" className="structure-item-delete structure-item-action" aria-label={`编辑脚注 ${footnote.label || index + 1}`} title="编辑脚注" onClick={() => onEditFootnote(footnote)}><Pencil size={13} /></button> : null}
+                  {!readOnly && onDeleteFootnote ? <button type="button" className="structure-item-delete" aria-label={`删除脚注 ${footnote.label || ""}`} title="删除脚注" onClick={() => onDeleteFootnote(footnote)}><Trash2 size={13} /></button> : null}
                 </article>
               )) : <p className="structure-compact-empty">正文还没有脚注。请从顶部“元素”菜单添加。</p>}
             </div>
@@ -135,7 +136,7 @@ export function ReferencesPane({
 
       <section aria-labelledby="structure-citations-heading">
         <ReferenceSectionHeading id="structure-citations-heading" label="参考文献来源" count={sources.length} icon={BookOpen} expanded={sourcesExpanded} onToggle={() => setSourcesExpanded((value) => !value)}>
-          <button type="button" className="structure-reference-add" onClick={onAddCitationSource} aria-label="新增参考文献来源" title="新增参考文献来源"><Plus size={14} /></button>
+          {!readOnly && onAddCitationSource ? <button type="button" className="structure-reference-add" onClick={onAddCitationSource} aria-label="新增参考文献来源" title="新增参考文献来源"><Plus size={14} /></button> : null}
         </ReferenceSectionHeading>
         {sourcesExpanded ? (
           <div id="structure-citations-heading-content" className="structure-reference-section-body">
@@ -163,8 +164,8 @@ export function ReferencesPane({
                       <span>{isUsed ? `已引用 [${number + 1}] · ${details}` : `未使用 · ${details}`}</span>
                     </span>
                   </button>
-                  {onEditCitationSource ? <button type="button" className="structure-item-delete structure-item-action" aria-label={`编辑参考文献来源 ${source.title || ""}`} title="编辑来源" onClick={() => onEditCitationSource(source)}><Pencil size={13} /></button> : null}
-                  <button type="button" className="structure-item-delete" aria-label={`移除参考文献来源 ${source.title || ""}`} title="移除参考文献来源" onClick={() => onDeleteCitationSource?.(source)}><Trash2 size={13} /></button>
+                  {!readOnly && onEditCitationSource ? <button type="button" className="structure-item-delete structure-item-action" aria-label={`编辑参考文献来源 ${source.title || ""}`} title="编辑来源" onClick={() => onEditCitationSource(source)}><Pencil size={13} /></button> : null}
+                  {!readOnly && onDeleteCitationSource ? <button type="button" className="structure-item-delete" aria-label={`移除参考文献来源 ${source.title || ""}`} title="移除参考文献来源" onClick={() => onDeleteCitationSource(source)}><Trash2 size={13} /></button> : null}
                 </article>
               );
                 }) : <p className="structure-compact-empty">还没有结构化参考文献来源。</p>}

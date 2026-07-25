@@ -88,6 +88,16 @@ test("explicit browser visual preview exposes bounded PDF and static fixtures wi
     assert.equal(table.previewKind, "table");
     assert.match(table.text, /研究任务 01/);
     assert.equal(Object.hasOwn(table, "path"), false);
+
+    globalThis.window.location.search = "?researchPreview=1&researchKind=docx";
+    const docxList = await browserBridge.listResearchFolder(root.libraryId, "");
+    assert.equal(docxList.entries[0].relativePath, "阅读示例.docx");
+    assert.equal(docxList.entries[0].previewKind, "docx");
+    const docxPreview = await browserBridge.readResearchPreview(root.libraryId, docxList.entries[0].relativePath);
+    assert.equal(docxPreview.previewKind, "docx");
+    assert.equal(docxPreview.mime, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    assert.match(docxPreview.html, /DOCX 资料示例/);
+    assert.equal(Object.hasOwn(docxPreview, "path"), false);
   } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });

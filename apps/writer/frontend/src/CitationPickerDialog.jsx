@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, FilePlus2, Search, X } from "lucide-react";
+import { isTopModalDialog, useModalFocusTrap } from "./ui-interactions.js";
 import "./citation-picker.css";
 
 function searchableSourceText(source) {
@@ -25,22 +26,23 @@ export default function CitationPickerDialog({
   onClose,
 }) {
   const searchRef = useRef(null);
+  const dialogRef = useRef(null);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [page, setPage] = useState("");
+  useModalFocusTrap(Boolean(picker), dialogRef, searchRef, picker?.returnFocusElement);
 
   useEffect(() => {
     if (!picker) return;
     setQuery("");
     setSelectedId("");
     setPage(String(initialPage || ""));
-    window.setTimeout(() => searchRef.current?.focus(), 0);
   }, [initialPage, picker]);
 
   useEffect(() => {
     if (!picker) return undefined;
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && isTopModalDialog(dialogRef)) {
         event.preventDefault();
         onClose?.();
       }
@@ -65,7 +67,7 @@ export default function CitationPickerDialog({
 
   return (
     <div className="citation-picker-overlay dialog-scrim" role="presentation" onMouseDown={() => onClose?.()}>
-      <section className="citation-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="citation-picker-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={dialogRef} className="citation-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="citation-picker-title" onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <span className="citation-picker-mark"><BookOpen size={20} aria-hidden="true" /></span>
           <div>

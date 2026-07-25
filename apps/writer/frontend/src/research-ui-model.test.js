@@ -62,13 +62,13 @@ test("flattened rows include only expanded, safe descendants", () => {
 test("research item routing uses the explicit static-preview whitelist", () => {
   assert.equal(researchItemKind({ type: "file", relativePath: "甲/论文.PDF" }), "pdf");
   assert.equal(researchItemKind({ kind: "file", name: "没有扩展名", isPdf: true }), "pdf");
-  assert.equal(researchItemKind({ type: "file", name: "提纲.docx" }), "unsupported");
+  assert.equal(researchItemKind({ type: "file", name: "提纲.docx" }), "docx");
   assert.equal(researchPreviewKind({ type: "file", name: "信笺.letterpaper" }), "document");
   assert.equal(researchPreviewKind({ type: "file", name: "说明.markdown" }), "markdown");
   assert.equal(researchPreviewKind({ type: "file", name: "记录.LOG" }), "text");
   assert.equal(researchPreviewKind({ type: "file", name: "数据.tsv" }), "table");
   assert.equal(researchPreviewKind({ type: "file", name: "照片.webp" }), "image");
-  assert.equal(canOpenResearchItem({ type: "file", name: "提纲.docx" }), false);
+  assert.equal(canOpenResearchItem({ type: "file", name: "提纲.docx" }), true);
   assert.equal(canOpenResearchItem({ type: "file", name: "说明.md" }), true);
   assert.equal(researchItemKind({ kind: "url", url: "https://example.com" }), "web");
   assert.equal(researchItemKind({ type: "note" }), "empty");

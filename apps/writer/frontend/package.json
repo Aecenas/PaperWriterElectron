@@ -1,12 +1,14 @@
 {
   "name": "paperwriter-frontend",
-  "version": "0.9.10",
+  "version": "0.9.11",
   "private": true,
   "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5174",
     "test": "node --test src/*.test.js",
+    "test:e2e": "npm run build && playwright test",
+    "test:e2e:install": "playwright install chromium",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4174"
   },
@@ -31,5 +33,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "vite": "^7.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.0"
   }
 }

@@ -13,10 +13,16 @@ import {
   safeBrowserProviderId,
 } from "./browser-ai-config.js";
 import { normalizeCitationResearchIdentity } from "./document-schema-v2.js";
+import {
+  getLastStorageIssue,
+  safeStorageGetItem,
+  safeStorageRemoveItem,
+  safeStorageSetItem,
+} from "./safe-storage.js";
 
 function readJson(key, fallback) {
   try {
-    const value = localStorage.getItem(key);
+    const value = safeStorageGetItem(key);
     return value ? JSON.parse(value) : fallback;
   } catch {
     return fallback;
@@ -24,7 +30,22 @@ function readJson(key, fallback) {
 }
 
 function writeJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  const serialized = JSON.stringify(value);
+  if (!safeStorageSetItem(key, serialized)) {
+    const issue = getLastStorageIssue();
+    throw new Error(issue?.message
+      ? `浏览器存储写入失败：${issue.message}`
+      : "浏览器存储不可用，无法可靠保存");
+  }
+}
+
+function removeJson(key) {
+  if (!safeStorageRemoveItem(key)) {
+    const issue = getLastStorageIssue();
+    throw new Error(issue?.message
+      ? `浏览器存储清理失败：${issue.message}`
+      : "浏览器存储不可用，无法可靠清理");
+  }
 }
 
 function validateBrowserAiRequestParamsPatch(value) {
@@ -674,7 +695,7 @@ function listBrowserCitations(workspacePath) {
 function saveBrowserSources(workspacePath, sources) {
   if (sources.length > BROWSER_SOURCE_LIMIT) throw new Error("工作区资料与参考文献来源数量已达上限");
   writeJson(browserSourcesKey(workspacePath), sources);
-  localStorage.removeItem(legacyBrowserResearchKey(workspacePath));
+  safeStorageRemoveItem(legacyBrowserResearchKey(workspacePath));
   emitBrowserEvent(browserWorkspaceChangedListeners, { rootPath: workspacePath || "", kind: "sources" });
 }
 
@@ -946,6 +967,7 @@ const BROWSER_RESEARCH_PREVIEW_LIBRARY_ID = "9f4d2b8b-9ab1-4c0d-8f60-0b50c8137f9
 const BROWSER_RESEARCH_PREVIEW_PDF_PATH = "阅读示例.pdf";
 const BROWSER_RESEARCH_PREVIEW_TEXT_PATH = "阅读示例.txt";
 const BROWSER_RESEARCH_PREVIEW_MARKDOWN_PATH = "scene.md";
+const BROWSER_RESEARCH_PREVIEW_DOCX_PATH = "阅读示例.docx";
 const BROWSER_RESEARCH_PREVIEW_TABLE_PATH = "新建 Microsoft Excel 工作表.csv";
 
 function browserResearchPreviewEnabled() {
@@ -959,7 +981,7 @@ function browserResearchPreviewEnabled() {
 function browserResearchPreviewKind() {
   try {
     const requested = new URLSearchParams(globalThis.window?.location?.search || "").get("researchKind") || "pdf";
-    return ["pdf", "markdown", "text", "table"].includes(requested) ? requested : "pdf";
+    return ["pdf", "docx", "markdown", "text", "table"].includes(requested) ? requested : "pdf";
   } catch {
     return "pdf";
   }
@@ -993,6 +1015,10 @@ function browserResearchPreviewFixture() {
   if (kind === "markdown") {
     const html = "<h1>场景资料</h1><p>这份 Markdown 示例用于检查资料搜索、缩放和排版。</p><h2>人物关系</h2><ul><li>林青负责整理场景。</li><li>周遥负责补充资料引用。</li></ul><blockquote>搜索“资料”可以在当前页面定位匹配内容。</blockquote>";
     return { kind, path: BROWSER_RESEARCH_PREVIEW_MARKDOWN_PATH, mime: "text/markdown; charset=utf-8", html, size: new TextEncoder().encode(html).byteLength };
+  }
+  if (kind === "docx") {
+    const html = "<h1>DOCX 资料示例</h1><p>这份 Word 文档用于检查资料区的 DOCX 阅读、搜索和缩放。</p><h2>章节内容</h2><ul><li>保留标题与段落层级。</li><li>转换后的内容经过安全清洗。</li></ul><table><tbody><tr><th>格式</th><th>状态</th></tr><tr><td>DOCX</td><td>可阅读</td></tr></tbody></table>";
+    return { kind, path: BROWSER_RESEARCH_PREVIEW_DOCX_PATH, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", html, size: new TextEncoder().encode(html).byteLength };
   }
   if (kind === "text") {
     const text = Array.from({ length: 48 }, (_, index) => `第 ${index + 1} 行：这是一段用于检查文本搜索、缩放和滚动的资料内容。`).join("\n");
@@ -1499,7 +1525,7 @@ const browserBridge = {
     return { canceled: false, path: `browser-preview-${tabId || "temp"}.letterpaper` };
   },
   deleteTempDocument: async (tabId = "temp") => {
-    localStorage.removeItem(`paperwriter.preview.temp.${tabId || "temp"}`);
+    removeJson(`paperwriter.preview.temp.${tabId || "temp"}`);
     return { ok: true };
   },
   pickExportPath: async (format, suggestedName = "未命名信笺") => {
@@ -1963,7 +1989,7 @@ const browserBridge = {
     return { path: "localStorage:paperwriter.autosave" };
   },
   clearAutosave: async () => {
-    localStorage.removeItem("paperwriter.autosave");
+    removeJson("paperwriter.autosave");
     return { ok: true };
   },
   getUpdateState: async () => ({ status: "browser", message: "浏览器预览不支持更新" }),

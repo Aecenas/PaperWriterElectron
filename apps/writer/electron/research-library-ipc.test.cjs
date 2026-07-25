@@ -138,9 +138,12 @@ test("preview and document opening resolve only independent-library capabilities
   const main = await sourceOf("main.cjs");
   const preview = between(main, 'ipcMain.handle("research:preview-read"', 'ipcMain.handle("research:document-open"');
   assert.match(preview, /readPreview\(payload\.libraryId, payload\.relativePath\)/);
+  assert.match(preview, /preview\.previewKind === "docx"/);
+  assert.match(preview, /documentInterchange\.importDocument\(\{[\s\S]*format:\s*"docx"[\s\S]*sourcePath:\s*preview\.path[\s\S]*buffer:\s*preview\.bytes/);
   assert.match(preview, /decodeResearchPreviewText/);
   assert.match(preview, /sanitizeImportedHtml/);
   assert.doesNotMatch(preview, /payload\.(?:path|filePath|absolutePath)/);
+  assert.ok(preview.indexOf('preview.previewKind === "docx"') < preview.indexOf("decodeResearchPreviewText(preview.bytes)"));
   const document = between(main, 'ipcMain.handle("research:document-open"', 'ipcMain.handle("research:watch"');
   assert.match(document, /copyEntryPath\(payload\.libraryId, payload\.relativePath\)/);
   assert.match(document, /isSupportedDocument\(resolved\.path\)/);

@@ -26,12 +26,14 @@ const WEB_FOLDER_MAX_DEPTH = 16;
 const DIRECTORY_ENTRY_LIMIT = 5000;
 const IMPORT_FILE_MAX_BYTES = 512 * 1024 * 1024;
 const PDF_READ_MAX_BYTES = 128 * 1024 * 1024;
+const DOCX_PREVIEW_MAX_BYTES = 64 * 1024 * 1024;
 const TEXT_PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
 const IMAGE_PREVIEW_MAX_BYTES = 64 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SOURCE_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
 const SOURCE_TYPES = new Set(["file", "web"]);
 const DOCUMENT_PREVIEW_EXTENSIONS = new Set([".letterpaper", ".paperdoc"]);
+const DOCX_PREVIEW_EXTENSIONS = new Set([".docx"]);
 const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".markdown"]);
 const TEXT_PREVIEW_EXTENSIONS = new Set([".txt", ".log"]);
 const TABLE_PREVIEW_EXTENSIONS = new Set([".csv", ".tsv"]);
@@ -39,6 +41,7 @@ const IMAGE_PREVIEW_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".web
 const SAFE_EXTERNAL_EXTENSIONS = new Set([
   ...DOCUMENT_PREVIEW_EXTENSIONS,
   ".pdf",
+  ...DOCX_PREVIEW_EXTENSIONS,
   ...MARKDOWN_PREVIEW_EXTENSIONS,
   ...TEXT_PREVIEW_EXTENSIONS,
   ...TABLE_PREVIEW_EXTENSIONS,
@@ -368,6 +371,7 @@ function previewKindFromExtension(extension) {
   const normalized = String(extension || "").toLocaleLowerCase("en-US");
   if (DOCUMENT_PREVIEW_EXTENSIONS.has(normalized)) return "document";
   if (normalized === ".pdf") return "pdf";
+  if (DOCX_PREVIEW_EXTENSIONS.has(normalized)) return "docx";
   if (MARKDOWN_PREVIEW_EXTENSIONS.has(normalized)) return "markdown";
   if (TEXT_PREVIEW_EXTENSIONS.has(normalized)) return "text";
   if (TABLE_PREVIEW_EXTENSIONS.has(normalized)) return "table";
@@ -377,6 +381,7 @@ function previewKindFromExtension(extension) {
 
 function previewMimeFromExtension(extension) {
   switch (String(extension || "").toLocaleLowerCase("en-US")) {
+    case ".docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     case ".md":
     case ".markdown": return "text/markdown; charset=utf-8";
     case ".txt":
@@ -427,6 +432,13 @@ function createResearchLibraryManager({
   let configuredRootPath = "";
   let unavailableReason = "";
   let watcher = null;
+  let watchGeneration = 0;
+
+  const invalidateWatcher = () => {
+    watchGeneration += 1;
+    watcher?.close?.();
+    watcher = null;
+  };
 
   const persistConfig = async (rootPath = "") => {
     const config = { version: CONFIG_VERSION, rootPath: rootPath ? pathApi.resolve(rootPath) : "" };
@@ -435,6 +447,7 @@ function createResearchLibraryManager({
   };
 
   const registerRoot = (workspace) => {
+    invalidateWatcher();
     libraryRoots.clear();
     libraryRoots.set(workspace.manifest.libraryId, workspace.root);
     current = {
@@ -525,8 +538,7 @@ function createResearchLibraryManager({
   };
 
   const clearRoot = async () => {
-    watcher?.close?.();
-    watcher = null;
+    invalidateWatcher();
     await persistConfig("");
     libraryRoots.clear();
     current = null;
@@ -1334,16 +1346,18 @@ function createResearchLibraryManager({
     const paths = await contextFor(libraryId);
     const entry = await assertSafeExistingPath(paths, relativePath, "file");
     const classification = classifyEntry(entry.relativePath);
-    if (!["markdown", "text", "table", "image"].includes(classification.previewKind)) {
+    if (!["docx", "markdown", "text", "table", "image"].includes(classification.previewKind)) {
       throw new Error("该文件类型不支持静态资料预览");
     }
-    const maximumBytes = classification.previewKind === "image"
-      ? IMAGE_PREVIEW_MAX_BYTES
-      : TEXT_PREVIEW_MAX_BYTES;
+    const maximumBytes = classification.previewKind === "docx"
+      ? DOCX_PREVIEW_MAX_BYTES
+      : (classification.previewKind === "image" ? IMAGE_PREVIEW_MAX_BYTES : TEXT_PREVIEW_MAX_BYTES);
     if (entry.stat.size > maximumBytes) {
-      throw new Error(classification.previewKind === "image"
-        ? "图片超过 64MB 内嵌预览上限"
-        : "文本资料超过 8MB 内嵌预览上限");
+      throw new Error(classification.previewKind === "docx"
+        ? "DOCX 超过 64MB 内嵌预览上限"
+        : (classification.previewKind === "image"
+          ? "图片超过 64MB 内嵌预览上限"
+          : "文本资料超过 8MB 内嵌预览上限"));
     }
     const snapshot = await readFileSnapshot(entry.path, { fsApi, maxBytes: maximumBytes });
     if (!snapshot) throw new Error("资料文件已不存在");
@@ -1370,12 +1384,18 @@ function createResearchLibraryManager({
   };
 
   const watchLibrary = async (libraryId, { onChange, onError, watchFactory } = {}) => {
+    const generation = watchGeneration + 1;
+    watchGeneration = generation;
     const paths = await contextFor(libraryId);
+    const activeLibraryId = paths.manifest.libraryId;
+    if (generation !== watchGeneration) return { ok: true, libraryId: activeLibraryId };
     watcher?.close?.();
+    watcher = null;
     const factory = watchFactory || nativeFsApi.watch?.bind(nativeFsApi);
     if (typeof factory !== "function") throw new Error("当前系统不支持资料目录监听");
-    const activeLibraryId = paths.manifest.libraryId;
-    watcher = factory(paths.root, { recursive: true }, (eventType, fileName) => {
+    let nextWatcher = null;
+    nextWatcher = factory(paths.root, { recursive: true }, (eventType, fileName) => {
+      if (watcher !== nextWatcher) return;
       const raw = fileName == null ? "" : String(fileName).replace(/\\/g, "/");
       let relativePath = "";
       try {
@@ -1394,13 +1414,16 @@ function createResearchLibraryManager({
       }
       onChange?.({ libraryId: activeLibraryId, eventType: String(eventType || "change"), relativePath, changedAt: Date.now() });
     });
-    watcher.on?.("error", (error) => onError?.({ libraryId: activeLibraryId, message: error?.message || "资料目录监听失败" }));
+    watcher = nextWatcher;
+    nextWatcher.on?.("error", (error) => {
+      if (watcher !== nextWatcher) return;
+      onError?.({ libraryId: activeLibraryId, message: error?.message || "资料目录监听失败" });
+    });
     return { ok: true, libraryId: activeLibraryId };
   };
 
   const closeWatcher = () => {
-    watcher?.close?.();
-    watcher = null;
+    invalidateWatcher();
   };
 
   return {
@@ -1552,6 +1575,8 @@ module.exports = {
   CONFIG_FILE,
   DIRECTORY_ENTRY_LIMIT,
   DOCUMENT_PREVIEW_EXTENSIONS,
+  DOCX_PREVIEW_EXTENSIONS,
+  DOCX_PREVIEW_MAX_BYTES,
   IMAGE_PREVIEW_EXTENSIONS,
   IMAGE_PREVIEW_MAX_BYTES,
   IMPORT_FILE_MAX_BYTES,

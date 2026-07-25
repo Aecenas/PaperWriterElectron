@@ -7,6 +7,7 @@ const { EventEmitter } = require("node:events");
 
 const {
   CONFIG_FILE,
+  DOCX_PREVIEW_MAX_BYTES,
   IMAGE_PREVIEW_MAX_BYTES,
   PDF_READ_MAX_BYTES,
   TEXT_PREVIEW_MAX_BYTES,
@@ -20,6 +21,16 @@ const {
   normalizeRelativePath,
   normalizeWebScopeKey,
 } = require("./research-library.cjs");
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
 
 async function withLibrary(run, options = {}) {
   const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "jianjian-library-"));
@@ -245,7 +256,7 @@ test("reads only PDFs within the 128MB policy and blocks unsafe external types",
   assert.equal((await manager.openEntryExternal(selected.libraryId, "说明.txt", async (value) => { opened = value; return ""; })).ok, true);
   assert.equal(opened, await fs.realpath(path.join(rootPath, "说明.txt")));
   await assert.rejects(() => manager.openEntryExternal(selected.libraryId, "程序.exe", async () => ""), /不能从笺间直接启动/);
-  assert.equal(externalOpenAllowed("x.docx"), false);
+  assert.equal(externalOpenAllowed("x.docx"), true);
   assert.equal(externalOpenAllowed("x.markdown"), true);
   assert.equal(externalOpenAllowed("x.cmd"), false);
   assert.equal(PDF_READ_MAX_BYTES, 128 * 1024 * 1024);
@@ -257,12 +268,12 @@ test("classifies the static preview whitelist and reads bounded text and image b
     ["手稿.LETTERPAPER", "document"],
     ["旧稿.paperdoc", "document"],
     ["论文.pdf", "pdf"],
+    ["文档.docx", "docx"],
     ["说明.markdown", "markdown"],
     ["记录.LOG", "text"],
     ["数据.tsv", "table"],
     ["照片.webp", "image"],
     ["网页.html", "unsupported"],
-    ["文档.docx", "unsupported"],
   ]);
   for (const name of expected.keys()) await fs.writeFile(path.join(rootPath, name), name.endsWith(".webp") ? Buffer.from([1, 2, 3]) : "内容");
   const listed = await manager.listFolder(selected.libraryId, "");
@@ -281,20 +292,29 @@ test("classifies the static preview whitelist and reads bounded text and image b
   const text = await manager.readPreview(selected.libraryId, "记录.LOG");
   assert.equal(text.previewKind, "text");
   assert.equal(text.bytes.toString("utf8"), "内容");
+  const docxPreview = await manager.readPreview(selected.libraryId, "文档.docx");
+  assert.equal(docxPreview.previewKind, "docx");
+  assert.equal(docxPreview.mime, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  assert.equal(docxPreview.bytes.toString("utf8"), "内容");
   const image = await manager.readPreview(selected.libraryId, "照片.webp");
   assert.equal(image.mime, "image/webp");
   assert.deepEqual([...image.bytes], [1, 2, 3]);
   await assert.rejects(() => manager.readPreview(selected.libraryId, "网页.html"), /不支持静态资料预览/);
   const oversizedTextPath = path.join(rootPath, "过大.txt");
   const oversizedImagePath = path.join(rootPath, "过大.png");
+  const oversizedDocxPath = path.join(rootPath, "过大.docx");
   await fs.writeFile(oversizedTextPath, "");
   await fs.writeFile(oversizedImagePath, "");
+  await fs.writeFile(oversizedDocxPath, "");
   await fs.truncate(oversizedTextPath, TEXT_PREVIEW_MAX_BYTES + 1);
   await fs.truncate(oversizedImagePath, IMAGE_PREVIEW_MAX_BYTES + 1);
+  await fs.truncate(oversizedDocxPath, DOCX_PREVIEW_MAX_BYTES + 1);
   await assert.rejects(() => manager.readPreview(selected.libraryId, "过大.txt"), /超过 8MB/);
   await assert.rejects(() => manager.readPreview(selected.libraryId, "过大.png"), /超过 64MB/);
+  await assert.rejects(() => manager.readPreview(selected.libraryId, "过大.docx"), /DOCX 超过 64MB/);
   assert.equal(TEXT_PREVIEW_MAX_BYTES, 8 * 1024 * 1024);
   assert.equal(IMAGE_PREVIEW_MAX_BYTES, 64 * 1024 * 1024);
+  assert.equal(DOCX_PREVIEW_MAX_BYTES, 64 * 1024 * 1024);
 }));
 
 test("watch replaces the active watcher and emits only safe relative changes", async () => withLibrary(async ({ rootPath, manager }) => {
@@ -319,6 +339,85 @@ test("watch replaces the active watcher and emits only safe relative changes", a
   watchers[1].listener("change", ".jianjian\\research-library\\sources\\x.json");
   assert.deepEqual(changes.map((item) => item.relativePath), ["子目录/资料.pdf", ""]);
 }));
+
+test("a slower research watch request cannot replace a newer watcher", async () => {
+  let delayedRoot = "";
+  let delayNextRootStat = false;
+  const firstBlocked = deferred();
+  const releaseFirst = deferred();
+  const delayedFs = {
+    ...fs,
+    async lstat(targetPath) {
+      if (delayNextRootStat && delayedRoot && path.resolve(targetPath) === path.resolve(delayedRoot)) {
+        delayNextRootStat = false;
+        firstBlocked.resolve();
+        await releaseFirst.promise;
+      }
+      return fs.lstat(targetPath);
+    },
+  };
+
+  await withLibrary(async ({ rootPath, manager }) => {
+    delayedRoot = rootPath;
+    const selected = await manager.selectRoot(rootPath);
+    const watchers = [];
+    const createWatcher = (label) => (_root, _options, listener) => {
+      const emitter = new EventEmitter();
+      emitter.label = label;
+      emitter.closed = false;
+      emitter.close = () => { emitter.closed = true; };
+      emitter.listener = listener;
+      watchers.push(emitter);
+      return emitter;
+    };
+
+    delayNextRootStat = true;
+    const older = manager.watchLibrary(selected.libraryId, { watchFactory: createWatcher("older") });
+    await firstBlocked.promise;
+    await manager.watchLibrary(selected.libraryId, { watchFactory: createWatcher("newer") });
+    releaseFirst.resolve();
+    await older;
+
+    assert.deepEqual(watchers.map((watcher) => watcher.label), ["newer"]);
+    assert.equal(watchers[0].closed, false);
+  }, { fsApi: delayedFs });
+});
+
+test("closing research watching invalidates a request still resolving its library", async () => {
+  let delayedRoot = "";
+  let delayNextRootStat = false;
+  const requestBlocked = deferred();
+  const releaseRequest = deferred();
+  const delayedFs = {
+    ...fs,
+    async lstat(targetPath) {
+      if (delayNextRootStat && delayedRoot && path.resolve(targetPath) === path.resolve(delayedRoot)) {
+        delayNextRootStat = false;
+        requestBlocked.resolve();
+        await releaseRequest.promise;
+      }
+      return fs.lstat(targetPath);
+    },
+  };
+
+  await withLibrary(async ({ rootPath, manager }) => {
+    delayedRoot = rootPath;
+    const selected = await manager.selectRoot(rootPath);
+    const watchers = [];
+    delayNextRootStat = true;
+    const pending = manager.watchLibrary(selected.libraryId, {
+      watchFactory: (...args) => {
+        watchers.push(args);
+        return new EventEmitter();
+      },
+    });
+    await requestBlocked.promise;
+    manager.closeWatcher();
+    releaseRequest.resolve();
+    await pending;
+    assert.equal(watchers.length, 0);
+  }, { fsApi: delayedFs });
+});
 
 test("rejects future, malformed, and escaping library metadata", async (context) => withLibrary(async ({ sandbox, rootPath }) => {
   const workspace = await ensureLibrary(rootPath);

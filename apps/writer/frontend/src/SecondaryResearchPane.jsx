@@ -783,7 +783,7 @@ function StaticResearchPreview({ item, loadPreview, onOpenExternal, onShowInFold
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const contentRef = useRef(null);
-  const markdownRef = useRef(null);
+  const richTextRef = useRef(null);
   const searchInputRef = useRef(null);
   const sourceKey = itemIdentity(item);
 
@@ -836,11 +836,12 @@ function StaticResearchPreview({ item, loadPreview, onOpenExternal, onShowInFold
     ? parseDelimitedPreview(payload?.text, /\.tsv$/i.test(payload?.name || item?.name || "") ? "\t" : ",")
     : null, [item?.name, kind, payload?.name, payload?.text]);
   const normalizedSearchQuery = normalizePreviewSearchQuery(searchQuery);
-  const searchable = ["markdown", "text", "table"].includes(kind);
-  const zoomable = ["markdown", "text", "table"].includes(kind);
-  const markdownRender = useMemo(() => {
-    const html = payload?.html || "<p>Markdown 内容为空。</p>";
-    if (kind !== "markdown" || !normalizedSearchQuery || typeof document === "undefined") {
+  const richText = ["markdown", "docx"].includes(kind);
+  const searchable = ["markdown", "docx", "text", "table"].includes(kind);
+  const zoomable = ["markdown", "docx", "text", "table"].includes(kind);
+  const richTextRender = useMemo(() => {
+    const html = payload?.html || (kind === "docx" ? "<p>DOCX 内容为空。</p>" : "<p>Markdown 内容为空。</p>");
+    if (!richText || !normalizedSearchQuery || typeof document === "undefined") {
       return { html, count: 0, truncated: false };
     }
     const root = document.createElement("div");
@@ -880,10 +881,10 @@ function StaticResearchPreview({ item, loadPreview, onOpenExternal, onShowInFold
       }
     }
     return { html: root.innerHTML, count: cursor, truncated };
-  }, [kind, normalizedSearchQuery, payload?.html]);
+  }, [kind, normalizedSearchQuery, payload?.html, richText]);
   const searchSummary = useMemo(() => {
     if (!normalizedSearchQuery) return { count: 0, truncated: false };
-    if (kind === "markdown") return { count: markdownRender.count, truncated: markdownRender.truncated };
+    if (richText) return { count: richTextRender.count, truncated: richTextRender.truncated };
     if (kind === "text") return countPreviewSearchMatches(payload?.text, normalizedSearchQuery, MAX_PREVIEW_SEARCH_MATCHES);
     if (kind === "table") {
       let count = 0;
@@ -904,7 +905,7 @@ function StaticResearchPreview({ item, loadPreview, onOpenExternal, onShowInFold
       return { count, truncated };
     }
     return { count: 0, truncated: false };
-  }, [kind, markdownRender.count, markdownRender.truncated, normalizedSearchQuery, payload?.text, table?.rows]);
+  }, [kind, normalizedSearchQuery, payload?.text, richText, richTextRender.count, richTextRender.truncated, table?.rows]);
 
   useEffect(() => {
     if (!searchOpen) return;
@@ -917,14 +918,14 @@ function StaticResearchPreview({ item, loadPreview, onOpenExternal, onShowInFold
 
   useEffect(() => {
     if (!normalizedSearchQuery || !searchSummary.count) return undefined;
-    const root = kind === "markdown" ? markdownRef.current : contentRef.current;
+    const root = richText ? richTextRef.current : contentRef.current;
     if (!root) return undefined;
     root.querySelectorAll("mark.is-active").forEach((node) => node.classList.remove("is-active"));
     const match = root.querySelector(`[data-preview-search-index="${activeSearchIndex}"]`);
     match?.classList.add("is-active");
     const frame = window.requestAnimationFrame(() => match?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" }));
     return () => window.cancelAnimationFrame(frame);
-  }, [activeSearchIndex, kind, normalizedSearchQuery, searchSummary.count]);
+  }, [activeSearchIndex, normalizedSearchQuery, richText, searchSummary.count]);
 
   const moveSearch = useCallback((direction) => {
     if (!searchSummary.count) return;
@@ -940,9 +941,9 @@ function StaticResearchPreview({ item, loadPreview, onOpenExternal, onShowInFold
     setSearchOpen(false);
     setSearchQuery("");
     setActiveSearchIndex(0);
-    const root = kind === "markdown" ? markdownRef.current : contentRef.current;
+    const root = richText ? richTextRef.current : contentRef.current;
     root?.querySelectorAll?.("mark.is-active").forEach((node) => node.classList.remove("is-active"));
-  }, [kind]);
+  }, [richText]);
 
   if (status === "loading") return <div className="secondary-research-state" role="status"><LoaderCircle className="research-spin" size={19} /><span>正在读取资料…</span></div>;
   if (status === "error") return <div className="secondary-research-state is-error" role="alert"><ShieldAlert size={20} /><span>{error}</span></div>;
@@ -982,11 +983,12 @@ function StaticResearchPreview({ item, loadPreview, onOpenExternal, onShowInFold
           </>
         ) : null}
       </PreviewToolbar>
-      {kind === "markdown" ? (
+      {richText ? (
         <article
-          ref={markdownRef}
+          ref={richTextRef}
           className="secondary-markdown-preview"
           style={{ "--research-preview-scale": contentScale }}
+          aria-label={kind === "docx" ? "DOCX 资料内容" : "Markdown 资料内容"}
           onClick={(event) => {
             const anchor = event.target?.closest?.("a[href]");
             if (!anchor) return;
@@ -996,7 +998,7 @@ function StaticResearchPreview({ item, loadPreview, onOpenExternal, onShowInFold
               if (["http:", "https:"].includes(url.protocol)) void bridge.openExternal?.(url.href);
             } catch {}
           }}
-          dangerouslySetInnerHTML={{ __html: markdownRender.html }}
+          dangerouslySetInnerHTML={{ __html: richTextRender.html }}
         />
       ) : null}
       {kind === "text" ? <pre ref={contentRef} className="secondary-text-preview" style={{ "--research-preview-scale": contentScale }}>{renderPreviewSearchText(payload?.text || "", normalizedSearchQuery, searchCursor)}</pre> : null}
@@ -1080,7 +1082,7 @@ export default function SecondaryResearchPane({
 
   return (
     <aside className="secondary-research-pane" aria-label="资料阅读区" aria-busy={loading || undefined}>
-      <div className={["secondary-research-body", kind === "pdf" ? "is-pdf" : "", kind === "web" ? "is-web" : "", ["markdown", "text", "table", "image"].includes(kind) ? "is-static" : ""].filter(Boolean).join(" ")}>
+      <div className={["secondary-research-body", kind === "pdf" ? "is-pdf" : "", kind === "web" ? "is-web" : "", ["docx", "markdown", "text", "table", "image"].includes(kind) ? "is-static" : ""].filter(Boolean).join(" ")}>
         {loading ? <div className="secondary-research-state" role="status"><LoaderCircle className="research-spin" size={19} /><span>正在读取资料…</span></div> : null}
         {!loading && error ? <div className="secondary-research-state is-error" role="alert"><ShieldAlert size={20} /><span>{error}</span></div> : null}
         {!loading && !error && kind === "empty" ? <div className="secondary-research-state"><BookOpen size={25} /><span>从左侧资料区选择一份资料。</span></div> : null}
@@ -1097,7 +1099,7 @@ export default function SecondaryResearchPane({
           />
         ) : null}
         {!loading && !error && kind === "web" ? <EmbeddedWebResearch item={item} viewId={viewId} suspended={webViewSuspended} onActivate={onActivate} onOpenExternal={onOpenExternal} /> : null}
-        {!loading && !error && ["markdown", "text", "table", "image"].includes(kind) ? <StaticResearchPreview item={item} loadPreview={previewLoader} onOpenExternal={onOpenExternal} onShowInFolder={onShowInFolder} /> : null}
+        {!loading && !error && ["docx", "markdown", "text", "table", "image"].includes(kind) ? <StaticResearchPreview item={item} loadPreview={previewLoader} onOpenExternal={onOpenExternal} onShowInFolder={onShowInFolder} /> : null}
         {!loading && !error && kind === "unsupported" ? <FileResearchCard item={item} onShowInFolder={onShowInFolder} /> : null}
       </div>
     </aside>

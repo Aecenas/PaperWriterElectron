@@ -12,11 +12,50 @@ const {
   isolatedCodexEnvironment,
   mergeCodexRefreshedModels,
   parseCodexVersion,
+  registerAbortHandler,
   reconcileCodexModels,
   runCodex,
   streamCodexCompletion,
   supportsSecureCodexVersion,
 } = require("./codex-cli-provider.cjs");
+
+test("runs an abort handler immediately for an already-aborted signal and once for a future abort", () => {
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort();
+  let immediateCalls = 0;
+  const removeImmediateHandler = registerAbortHandler(alreadyAborted.signal, () => {
+    immediateCalls += 1;
+  });
+  assert.equal(immediateCalls, 1);
+  removeImmediateHandler();
+  assert.equal(immediateCalls, 1);
+
+  const futureAbort = new AbortController();
+  let futureCalls = 0;
+  const removeFutureHandler = registerAbortHandler(futureAbort.signal, () => {
+    futureCalls += 1;
+  });
+  futureAbort.abort();
+  futureAbort.abort();
+  assert.equal(futureCalls, 1);
+  removeFutureHandler();
+});
+
+test("rejects an already-canceled Codex stream before starting setup", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    () => streamCodexCompletion({
+      executable: process.execPath,
+      config: { model: "gpt-test", reasoningEffort: "medium" },
+      messages: [{ role: "user", content: "hello" }],
+      scope: { mode: "document-only", relativePath: "" },
+      signal: controller.signal,
+      onDelta: () => {},
+    }),
+    /已停止生成/,
+  );
+});
 
 test("prioritizes executable Codex installations and ignores PowerShell shims", () => {
   const candidates = codexExecutableCandidates({ PATH: "C:\\Tools", APPDATA: "C:\\Users\\Test\\AppData\\Roaming" }, "win32");

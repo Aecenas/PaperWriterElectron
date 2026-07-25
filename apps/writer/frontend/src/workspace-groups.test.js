@@ -147,6 +147,12 @@ test("research views always open in secondary and duplicate targets activate the
   assert.equal(state.secondary.views[0].titleSnapshot, "更新后的资料名");
   assert.equal(state.secondary.views[0].researchType, "pdf");
 
+  state = openWorkspaceResearch(state, {
+    ...fileTarget,
+    researchType: "docx",
+  });
+  assert.equal(state.secondary.views[0].researchType, "docx");
+
   state = openWorkspaceResearch(state, { libraryId: "library-a", sourceId: "web-one" });
   assert.equal(state.secondary.views.length, 2);
   assert.equal(getActiveWorkspaceView(state).sourceId, "web-one");

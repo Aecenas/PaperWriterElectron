@@ -217,6 +217,19 @@ import {
   toSafeCssImageUrl,
 } from "./resource-safety.js";
 import { waitForImageExportAssets } from "./image-export-readiness.js";
+import { createLatestRequestController } from "./latest-request-controller.js";
+import { deriveTabPersistenceState } from "./tab-persistence-state.js";
+import {
+  getLastStorageIssue,
+  safeStorageGetItem,
+  safeStorageSetItem,
+  subscribeStorageIssues,
+} from "./safe-storage.js";
+import {
+  isGlobalShortcutBlocked,
+  isTopModalDialog,
+  useModalFocusTrap,
+} from "./ui-interactions.js";
 
 const COLOR_OPTIONS = [
   { label: "默认墨色", value: "" },
@@ -1265,7 +1278,7 @@ function loadUserTemplateGroups() {
     return normalizeUserTemplateGroups([]);
   }
   try {
-    const raw = window.localStorage.getItem(USER_TEMPLATE_GROUP_STORAGE_KEY);
+    const raw = safeStorageGetItem(USER_TEMPLATE_GROUP_STORAGE_KEY);
     return normalizeUserTemplateGroups(raw ? JSON.parse(raw) : []);
   } catch {
     return normalizeUserTemplateGroups([]);
@@ -1276,7 +1289,7 @@ function saveUserTemplateGroups(groups) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(
+  safeStorageSetItem(
     USER_TEMPLATE_GROUP_STORAGE_KEY,
     JSON.stringify(normalizeUserTemplateGroups(groups)),
   );
@@ -1345,7 +1358,7 @@ function loadUserLetterTemplates(userTemplateGroups) {
     return [];
   }
   try {
-    const raw = window.localStorage.getItem(USER_TEMPLATE_STORAGE_KEY);
+    const raw = safeStorageGetItem(USER_TEMPLATE_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(parsed)) {
       return [];
@@ -1369,7 +1382,7 @@ function saveUserLetterTemplates(templates, userTemplateGroups) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(
+  safeStorageSetItem(
     USER_TEMPLATE_STORAGE_KEY,
     JSON.stringify(templates.map((template) => normalizeUserTemplate(template, userTemplateGroups))),
   );
@@ -1386,7 +1399,7 @@ function loadNewDocumentTemplateId(letterTemplates = DEFAULT_LETTER_TEMPLATES) {
     return DEFAULT_LETTER_TEMPLATES[0].id;
   }
   return normalizeNewDocumentTemplateId(
-    window.localStorage.getItem(NEW_DOCUMENT_TEMPLATE_STORAGE_KEY),
+    safeStorageGetItem(NEW_DOCUMENT_TEMPLATE_STORAGE_KEY),
     letterTemplates,
   );
 }
@@ -1395,7 +1408,7 @@ function saveNewDocumentTemplateId(templateId) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(NEW_DOCUMENT_TEMPLATE_STORAGE_KEY, templateId);
+  safeStorageSetItem(NEW_DOCUMENT_TEMPLATE_STORAGE_KEY, templateId);
 }
 
 function normalizeNewDocumentTemplateHistory(history, letterTemplates = DEFAULT_LETTER_TEMPLATES) {
@@ -1413,7 +1426,7 @@ function loadNewDocumentTemplateHistory(letterTemplates = DEFAULT_LETTER_TEMPLAT
     return [];
   }
   try {
-    const raw = window.localStorage.getItem(NEW_DOCUMENT_TEMPLATE_HISTORY_STORAGE_KEY);
+    const raw = safeStorageGetItem(NEW_DOCUMENT_TEMPLATE_HISTORY_STORAGE_KEY);
     return normalizeNewDocumentTemplateHistory(raw ? JSON.parse(raw) : [], letterTemplates);
   } catch {
     return [];
@@ -1424,7 +1437,7 @@ function saveNewDocumentTemplateHistory(history) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(NEW_DOCUMENT_TEMPLATE_HISTORY_STORAGE_KEY, JSON.stringify(history));
+  safeStorageSetItem(NEW_DOCUMENT_TEMPLATE_HISTORY_STORAGE_KEY, JSON.stringify(history));
 }
 
 function loadSessionState() {
@@ -1432,7 +1445,7 @@ function loadSessionState() {
     return { folderPath: "", activePath: "", tabs: [] };
   }
   try {
-    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    const raw = safeStorageGetItem(SESSION_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     const tabs = Array.isArray(parsed.tabs)
       ? parsed.tabs
@@ -1461,7 +1474,7 @@ function saveSessionState(state) {
   if (typeof window === "undefined") {
     return;
   }
-  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+  safeStorageSetItem(SESSION_STORAGE_KEY, JSON.stringify({
     folderPath: typeof state.folderPath === "string" ? state.folderPath : "",
     activePath: typeof state.activePath === "string" ? state.activePath : "",
     tabs: Array.isArray(state.tabs)
@@ -1489,7 +1502,7 @@ function normalizeRememberedExportDirectory(value) {
 function loadRememberedExportDirectory() {
   if (typeof window === "undefined") return "";
   try {
-    return normalizeRememberedExportDirectory(window.localStorage.getItem(EXPORT_LAST_DIRECTORY_STORAGE_KEY));
+    return normalizeRememberedExportDirectory(safeStorageGetItem(EXPORT_LAST_DIRECTORY_STORAGE_KEY));
   } catch {
     return "";
   }
@@ -1500,7 +1513,7 @@ function rememberExportDirectory(value) {
   const directory = normalizeRememberedExportDirectory(value);
   if (!directory) return;
   try {
-    window.localStorage.setItem(EXPORT_LAST_DIRECTORY_STORAGE_KEY, directory);
+    safeStorageSetItem(EXPORT_LAST_DIRECTORY_STORAGE_KEY, directory);
   } catch {
     // Export still works when local preferences are unavailable.
   }
@@ -1511,7 +1524,7 @@ function getLastAutoUpdateCheckAt() {
     return 0;
   }
   try {
-    return Number(window.localStorage.getItem(UPDATE_AUTO_CHECK_STORAGE_KEY) || 0) || 0;
+    return Number(safeStorageGetItem(UPDATE_AUTO_CHECK_STORAGE_KEY) || 0) || 0;
   } catch {
     return 0;
   }
@@ -1522,7 +1535,7 @@ function saveLastAutoUpdateCheckAt(value = Date.now()) {
     return;
   }
   try {
-    window.localStorage.setItem(UPDATE_AUTO_CHECK_STORAGE_KEY, String(value));
+    safeStorageSetItem(UPDATE_AUTO_CHECK_STORAGE_KEY, String(value));
   } catch {
     // localStorage may be unavailable; update checks can still be run manually.
   }
@@ -3512,6 +3525,7 @@ function PaperImageNodeView({ node, updateAttributes, selected, editor, getPos }
   const alt = normalizeImageText(node.attrs.alt);
   const title = normalizeImageText(node.attrs.title);
   const imageId = normalizeDocumentId(node.attrs.imageId);
+  const readOnly = !editor?.isEditable;
   const captionRef = useRef(null);
 
   useEffect(() => {
@@ -3542,6 +3556,7 @@ function PaperImageNodeView({ node, updateAttributes, selected, editor, getPos }
               type="button"
               className={width === option.value ? "active" : ""}
               title={`图片宽度 ${option.value}`}
+              disabled={readOnly}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => updateAttributes({ width: option.value })}
             >
@@ -3575,6 +3590,7 @@ function PaperImageNodeView({ node, updateAttributes, selected, editor, getPos }
           ref={captionRef}
           className="paper-image-caption"
           value={caption}
+          readOnly={readOnly}
           maxLength={IMAGE_CAPTION_MAX_CHARS}
           rows={1}
           onChange={(event) => {
@@ -3690,13 +3706,14 @@ const PaperImage = Image.extend({
   },
 });
 
-function PaperMediaNodeView({ node, updateAttributes, selected }) {
+function PaperMediaNodeView({ node, updateAttributes, selected, editor }) {
   const kind = node.attrs.kind === "video" ? "video" : "audio";
   const width = normalizeEmbedWidth(node.attrs.width);
   const source = normalizeMediaSource(node.attrs.src, kind);
   const fileName = normalizeMediaFileName(node.attrs.fileName, kind === "video" ? "未命名视频" : "未命名音频");
   const MediaIcon = kind === "video" ? Video : Music2;
   const mediaLabel = kind === "video" ? "视频" : "音频";
+  const readOnly = !editor?.isEditable;
 
   return (
     <NodeViewWrapper
@@ -3721,6 +3738,7 @@ function PaperMediaNodeView({ node, updateAttributes, selected }) {
                 type="button"
                 className={width === option.value ? "active" : ""}
                 title={`视频宽度 ${option.value}`}
+                disabled={readOnly}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => updateAttributes({ width: option.value })}
               >
@@ -4451,13 +4469,14 @@ function syncHeadingNumberingDefaults(editor, headingNumbering) {
   editor.view.dispatch(editor.state.tr.setMeta(HEADING_NUMBERING_PLUGIN_KEY, headingNumbering));
 }
 
-function MenuButton({ icon: Icon, label, menuId, openMenu, onOpenMenu, children, disabled = false, triggerClassName = "", showDisclosure = true }) {
+function MenuButton({ icon: Icon, label, menuId, openMenu, onOpenMenu, children, disabled = false, triggerClassName = "", showDisclosure = true, triggerRef }) {
   const isOpen = openMenu === menuId;
   const popoverId = `nav-menu-${menuId}`;
 
   return (
     <div className={isOpen ? "nav-menu open" : "nav-menu"}>
       <button
+        ref={triggerRef}
         type="button"
         className={["nav-menu-trigger", triggerClassName].filter(Boolean).join(" ")}
         disabled={disabled}
@@ -4537,7 +4556,7 @@ function TreeContextMenu({ menu, onClose, onCreateFolder, onCreateDocument, onRe
 
   const run = (action) => {
     onClose();
-    action?.(menu.entry);
+    action?.(menu.entry, { returnFocusElement: menu.returnFocusElement });
   };
 
   return (
@@ -4610,6 +4629,7 @@ function TopNav({
   onOpenHelp,
   onOpenSettings,
   settingsTriggerRef,
+  exportTriggerRef,
   onOpenSearch,
   workspaceSearchAvailable,
   aiMode,
@@ -4618,7 +4638,9 @@ function TopNav({
   aiConfigured,
   aiModeChooserOpen,
   aiModeTriggerRef,
+  aiReadOnly,
   editorLocked,
+  documentReadOnly,
   onToggleAiModeChooser,
   immersiveMode,
   onToggleImmersive,
@@ -4647,9 +4669,12 @@ function TopNav({
   const documentActionsDisabled = Boolean(aiMode);
   const [openMenu, setOpenMenu] = useState("");
   const activeAiModeLabel = aiModeKind === "chat" ? "AI问答" : "AI优化";
-  const aiModeTriggerLabel = aiMode
-    ? `AI模式，当前：${activeAiModeLabel}${aiBusy ? "，正在生成" : ""}`
-    : "选择 AI 模式";
+  const aiModeTriggerDisabled = aiReadOnly && !aiMode;
+  const aiModeTriggerLabel = aiModeTriggerDisabled
+    ? "当前信笺为只读，不能进入 AI 模式"
+    : (aiMode
+      ? `AI模式，当前：${activeAiModeLabel}${aiBusy ? "，正在生成" : ""}`
+      : "选择 AI 模式");
   const leftSidebarToggleLabel = leftSidebarCollapsed ? "展开左侧栏" : "收起左侧栏";
   const LeftSidebarToggleIcon = leftSidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
   const canUndo = canEdit && toolbarState.canUndo;
@@ -4767,8 +4792,8 @@ function TopNav({
           <MenuItem icon={FilePlus} label="新建文件" description="创建空白信笺" shortcut="Ctrl+N" onClick={() => runMenuAction(onNew)} />
           <MenuItem icon={FileText} label="打开文件" description="打开本地信笺" shortcut="Ctrl+O" onClick={() => runMenuAction(onOpen)} />
           <MenuDivider />
-          <MenuItem icon={Save} label="保存" description="写入当前文件" shortcut="Ctrl+S" onClick={() => runMenuAction(() => onSave(false))} />
-          <MenuItem icon={SaveAll} label="另存为" description="保存为新信笺" shortcut="Ctrl+Shift+S" onClick={() => runMenuAction(() => onSave(true))} />
+          <MenuItem icon={Save} label="保存" description="写入当前文件" shortcut="Ctrl+S" disabled={documentReadOnly} onClick={() => runMenuAction(() => onSave(false))} />
+          <MenuItem icon={SaveAll} label="另存为" description="保存为新信笺" shortcut="Ctrl+Shift+S" disabled={documentReadOnly} onClick={() => runMenuAction(() => onSave(true))} />
         </MenuButton>
         <MenuButton
           icon={Download}
@@ -4777,6 +4802,7 @@ function TopNav({
           openMenu={openMenu}
           onOpenMenu={setOpenMenu}
           disabled={documentActionsDisabled}
+          triggerRef={exportTriggerRef}
           showDisclosure={false}
         >
           <MenuItem icon={Download} label="导出信笺" description="PDF、图片与可编辑文档" shortcut="Ctrl+Alt+E" onClick={() => runMenuAction(onOpenExport)} />
@@ -4818,6 +4844,7 @@ function TopNav({
             aiConfigured ? "configured" : "unconfigured",
             aiModeChooserOpen ? "chooser-open" : "",
           ].filter(Boolean).join(" ")}
+          disabled={aiModeTriggerDisabled}
           onClick={() => {
             closeMenus();
             onToggleAiModeChooser?.();
@@ -4995,9 +5022,15 @@ function renderHelpText(text) {
 function HelpCenterDialog({ open, onClose }) {
   const [activeTopicId, setActiveTopicId] = useState(HELP_TOPICS[0]?.id || "");
   const [imagePreview, setImagePreview] = useState(null);
+  const dialogRef = useRef(null);
+  const closeButtonRef = useRef(null);
+  const previewDialogRef = useRef(null);
+  const previewCloseButtonRef = useRef(null);
   const activeTopic = HELP_TOPICS.find((topic) => topic.id === activeTopicId) || HELP_TOPICS[0];
   const activeIllustrations = helpIllustrationsFor(activeTopic);
   const activeCategoryId = activeTopic?.categoryId || HELP_CATEGORIES[0]?.id;
+  useModalFocusTrap(open, dialogRef, closeButtonRef);
+  useModalFocusTrap(Boolean(imagePreview), previewDialogRef, previewCloseButtonRef);
 
   useEffect(() => {
     if (!open) {
@@ -5010,6 +5043,7 @@ function HelpCenterDialog({ open, onClose }) {
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         if (imagePreview) {
           setImagePreview(null);
         } else {
@@ -5036,6 +5070,7 @@ function HelpCenterDialog({ open, onClose }) {
     <>
       <div className="help-center-overlay dialog-scrim dialog-scrim--large" role="presentation" onMouseDown={onClose}>
       <section
+        ref={dialogRef}
         className="help-center-dialog"
         role="dialog"
         aria-modal="true"
@@ -5080,7 +5115,7 @@ function HelpCenterDialog({ open, onClose }) {
           </nav>
         </aside>
         <main className="help-center-content">
-          <button type="button" className="help-center-close" onClick={onClose} aria-label="关闭帮助" title="关闭帮助">
+          <button ref={closeButtonRef} type="button" className="help-center-close" onClick={onClose} aria-label="关闭帮助" title="关闭帮助">
             <X size={17} />
           </button>
           <article className="help-topic-detail">
@@ -5130,6 +5165,7 @@ function HelpCenterDialog({ open, onClose }) {
       {imagePreview ? createPortal(
         <div className="help-image-preview-overlay dialog-scrim dialog-scrim--large" role="presentation" onMouseDown={() => setImagePreview(null)}>
           <section
+            ref={previewDialogRef}
             className="help-image-preview-dialog"
             role="dialog"
             aria-modal="true"
@@ -5141,7 +5177,7 @@ function HelpCenterDialog({ open, onClose }) {
                 <p>帮助配图</p>
                 <h2 id="help-image-preview-title">{imagePreview.title}</h2>
               </div>
-              <button type="button" onClick={() => setImagePreview(null)} aria-label="关闭图片预览" title="关闭图片预览" autoFocus>
+              <button ref={previewCloseButtonRef} type="button" onClick={() => setImagePreview(null)} aria-label="关闭图片预览" title="关闭图片预览">
                 <X size={19} />
               </button>
             </header>
@@ -5171,15 +5207,18 @@ function HelpCenterDialog({ open, onClose }) {
   );
 }
 
-function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImages, onExportEditable }) {
+function ExportDialog({ open, documentTitle, returnFocusRef, onClose, onExportPdf, onExportImages, onExportEditable }) {
   const [format, setFormat] = useState("pdf");
   const [targetPath, setTargetPath] = useState("");
   const [status, setStatus] = useState("idle");
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("选择格式与保存位置后开始导出");
   const [error, setError] = useState("");
+  const dialogRef = useRef(null);
+  const firstFormatRef = useRef(null);
   const busy = status === "choosing" || status === "exporting";
   const completed = status === "success";
+  useModalFocusTrap(open, dialogRef, firstFormatRef, returnFocusRef);
 
   useEffect(() => {
     if (!open) {
@@ -5201,6 +5240,7 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
     const handleKeyDown = (event) => {
       if (event.key === "Escape" && status !== "exporting") {
         event.preventDefault();
+        event.stopPropagation();
         onClose();
       }
     };
@@ -5287,6 +5327,7 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
   const content = (
     <div className="export-dialog-overlay dialog-scrim" role="presentation" onMouseDown={() => { if (!busy) onClose(); }}>
       <section
+        ref={dialogRef}
         className="export-dialog"
         role="dialog"
         aria-modal="true"
@@ -5311,7 +5352,7 @@ function ExportDialog({ open, documentTitle, onClose, onExportPdf, onExportImage
             <legend>版式输出</legend>
             <div className="export-format-options">
               <label className={format === "pdf" ? "selected" : ""}>
-                <input type="radio" name="export-format" value="pdf" checked={format === "pdf"} onChange={() => updateFormat("pdf")} autoFocus />
+                <input ref={firstFormatRef} type="radio" name="export-format" value="pdf" checked={format === "pdf"} onChange={() => updateFormat("pdf")} />
                 <span className="export-format-icon"><FileText size={20} strokeWidth={1.8} /></span>
                 <span><strong>PDF 文档</strong><small>适合打印、归档与分享</small></span>
                 <i aria-hidden="true" />
@@ -5708,6 +5749,7 @@ function LeftSidebar({
     event.stopPropagation();
     setContextMenu({
       entry,
+      returnFocusElement: event.currentTarget,
       x: Math.min(event.clientX, window.innerWidth - 210),
       y: Math.min(event.clientY, window.innerHeight - 220),
     });
@@ -6568,13 +6610,6 @@ function TemplateHeadingColorPicker({ value, onChange, label, disabled = false }
       ) : null}
     </div>
   );
-}
-
-function dialogFocusableElements(container) {
-  if (!container) return [];
-  return [...container.querySelectorAll(
-    'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
-  )].filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
 }
 
 function LetterTemplateDialog({
@@ -7868,7 +7903,7 @@ function estimateAuthorWidth(author) {
   return `${Math.max(0.76, Math.min(12, width + 0.2))}em`;
 }
 
-function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLATE_PRESENTATION, paperStyle, children, className = "", showHeader = false, customHeaderLayout = false, onTitleChange, onAuthorChange, onDateChange }) {
+function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLATE_PRESENTATION, paperStyle, children, className = "", showHeader = false, customHeaderLayout = false, readOnly = false, onTitleChange, onAuthorChange, onDateChange }) {
   const authorText = document.author?.trim() || "";
   const authorWidth = estimateAuthorWidth(authorText);
   const displayDate = document.displayDate || formatPaperDate(document.createdAt);
@@ -7898,6 +7933,7 @@ function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLA
             <input
               className="paper-title-input"
               value={document.title}
+              readOnly={readOnly}
               onChange={(event) => onTitleChange?.(event.target.value)}
               maxLength={DOCUMENT_TITLE_MAX_CHARS}
               aria-label="文章标题"
@@ -7910,6 +7946,7 @@ function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLA
               <input
                 className="paper-author-input"
                 value={document.author || ""}
+                readOnly={readOnly}
                 onChange={(event) => onAuthorChange?.(event.target.value)}
                 aria-label="作者署名"
                 placeholder="署名"
@@ -7920,6 +7957,7 @@ function PageArticle({ document, selectedTemplate, presentation = DEFAULT_TEMPLA
               <input
                 className="paper-date-input"
                 value={displayDate}
+                readOnly={readOnly}
                 onChange={(event) => onDateChange?.(event.target.value)}
                 aria-label="写作日期"
                 spellCheck={false}
@@ -10758,11 +10796,27 @@ function PaperCanvas({
       3: headingNumberingThree,
     });
   }, [editor, headingNumberingOne, headingNumberingThree, headingNumberingTwo]);
+  useEffect(() => {
+    const syncEmbeddedControls = () => {
+      const canvas = canvasRef?.current;
+      if (!canvas) return;
+      canvas.querySelectorAll(".image-size-tools button:not(.image-copy-reference), .media-size-tools button").forEach((button) => {
+        button.disabled = readOnly;
+      });
+      canvas.querySelectorAll(".paper-image-caption").forEach((field) => {
+        field.readOnly = readOnly;
+      });
+    };
+    syncEmbeddedControls();
+    const frame = window.requestAnimationFrame(syncEmbeddedControls);
+    return () => window.cancelAnimationFrame(frame);
+  }, [canvasRef, document.documentId, editor, readOnly]);
   return (
     <main
       ref={canvasRef}
-      className={[printMode ? "canvas print-mode" : "canvas", className].filter(Boolean).join(" ")}
+      className={[printMode ? "canvas print-mode" : "canvas", readOnly ? "read-only" : "", className].filter(Boolean).join(" ")}
       onPointerDown={onActivate}
+      onFocusCapture={onActivate}
       onClick={(event) => handleEditorLinkClick(event, {
         editor,
         disabled: printMode || imageExportMode || readOnly,
@@ -10785,6 +10839,7 @@ function PaperCanvas({
           presentation={presentation}
           paperStyle={paperStyle}
           showHeader
+          readOnly={readOnly}
           onTitleChange={onTitleChange}
           onAuthorChange={onAuthorChange}
           onDateChange={onDateChange}
@@ -11009,13 +11064,17 @@ function SecondaryDocumentTab({ tab, active = false, onActivate, onClose }) {
 }
 
 function AppConfirmDialog({ dialog, onResolve }) {
+  const dialogRef = useRef(null);
+  useModalFocusTrap(Boolean(dialog), dialogRef, null, dialog?.returnFocusElement);
+
   useEffect(() => {
     if (!dialog) {
       return undefined;
     }
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && isTopModalDialog(dialogRef)) {
         event.preventDefault();
+        event.stopPropagation();
         onResolve(dialog.cancelValue);
       }
     };
@@ -11031,6 +11090,7 @@ function AppConfirmDialog({ dialog, onResolve }) {
   const content = (
     <div className="app-confirm-overlay dialog-scrim" role="presentation" onMouseDown={() => onResolve(dialog.cancelValue)}>
       <section
+        ref={dialogRef}
         className={`app-confirm-dialog ${dialog.tone || "default"}`}
         role="dialog"
         aria-modal="true"
@@ -11075,6 +11135,8 @@ function AppConfirmDialog({ dialog, onResolve }) {
 
 function AppPromptDialog({ dialog, onResolve }) {
   const inputRef = useRef(null);
+  const dialogRef = useRef(null);
+  useModalFocusTrap(Boolean(dialog), dialogRef, inputRef, dialog?.returnFocusElement);
 
   useEffect(() => {
     if (!dialog) {
@@ -11085,8 +11147,9 @@ function AppPromptDialog({ dialog, onResolve }) {
       inputRef.current?.select();
     });
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && isTopModalDialog(dialogRef)) {
         event.preventDefault();
+        event.stopPropagation();
         onResolve(null);
       }
     };
@@ -11105,6 +11168,7 @@ function AppPromptDialog({ dialog, onResolve }) {
   const content = (
     <div className="app-confirm-overlay dialog-scrim" role="presentation" onMouseDown={() => onResolve(null)}>
       <form
+        ref={dialogRef}
         className="app-confirm-dialog app-prompt-dialog"
         role="dialog"
         aria-modal="true"
@@ -11922,6 +11986,7 @@ function createDocumentTab(document, path = "", dirty = false, options = {}) {
     recoveryId: options.recoveryId || "",
     recoverySourcePath: options.recoverySourcePath || "",
     recoveryBaseRevision: normalizeSessionDiskRevision(options.recoveryBaseRevision),
+    recoveryRevision: Number.isFinite(options.recoveryRevision) ? options.recoveryRevision : null,
     recoveredTemporary: Boolean(options.recoveredTemporary),
     diskRevision: options.diskRevision || null,
     readOnly: Boolean(options.readOnly || document?._readOnlyFutureSchema),
@@ -12120,9 +12185,9 @@ function getFlowExportSegments(sheet) {
     .filter((segment) => segment.bottom - segment.top >= 80);
 }
 
-async function prepareImageExportRects() {
+async function prepareImageExportRects(sourceSheet = null) {
   cleanupImageExportStage();
-  const sheet = window.document.querySelector(".paper-sheet");
+  const sheet = sourceSheet || window.document.querySelector(".paper-sheet");
   if (!sheet) {
     return [];
   }
@@ -12183,7 +12248,7 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState(() => openTabs[0]?.id || "");
   const [workspaceGroups, setWorkspaceGroups] = useState(() => createWorkspaceGroupsState(
     workspaceDocumentView(openTabs[0]),
-    { splitRatio: Number(window.localStorage.getItem("paperwriter.workspaceSplitRatio")) || 0.5 },
+    { splitRatio: Number(safeStorageGetItem("paperwriter.workspaceSplitRatio")) || 0.5 },
   ));
   const rightSplitTabId = activeSecondaryDocumentTabId(workspaceGroups);
   const setRightSplitTabId = useCallback((value) => {
@@ -12235,11 +12300,13 @@ export default function App() {
   const [researchBusyKeys, setResearchBusyKeys] = useState([]);
   const researchRootRef = useRef(null);
   const researchCurrentRelativePathRef = useRef("");
+  const researchExpandedFoldersRef = useRef(researchExpandedFolders);
   const [librarySources, setLibrarySources] = useState([]);
   const [librarySourcesReady, setLibrarySourcesReady] = useState(false);
   const [webTreeState, setWebTreeState] = useState(() => ({ folders: [], placements: {}, diskRevision: null, warnings: [], readOnly: false }));
+  const [webTreeReady, setWebTreeReady] = useState(false);
   const [webWorkspaceMode, setWebWorkspaceMode] = useState(() => {
-    try { return window.localStorage.getItem("paperwriter.research.web-scope-mode") === "workspace" ? "workspace" : "global"; } catch { return "global"; }
+    return safeStorageGetItem("paperwriter.research.web-scope-mode") === "workspace" ? "workspace" : "global";
   });
   const [writingWorkspaceIdentity, setWritingWorkspaceIdentity] = useState(null);
   const webWorkspaceConnected = webWorkspaceMode === "workspace" && Boolean(writingWorkspaceIdentity?.workspaceId);
@@ -12251,6 +12318,7 @@ export default function App() {
   const researchItemsByViewIdRef = useRef(researchItemsByViewId);
   librarySourcesRef.current = librarySources;
   researchItemsByViewIdRef.current = researchItemsByViewId;
+  researchExpandedFoldersRef.current = researchExpandedFolders;
   const [activeResearchLoading, setActiveResearchLoading] = useState(false);
   const [activeResearchError, setActiveResearchError] = useState("");
   const [workspaceCitationSources, setWorkspaceCitationSources] = useState([]);
@@ -12264,8 +12332,6 @@ export default function App() {
   const [citationSourceDialog, setCitationSourceDialog] = useState({ open: false, source: null, insertTarget: null, citationPage: "", returnToPicker: false });
   const [knowledgeReferencePopover, setKnowledgeReferencePopover] = useState(null);
   const [immersiveMode, setImmersiveMode] = useState(false);
-  const [persistenceState, setPersistenceState] = useState("workspace");
-  const [externalVersionDetected, setExternalVersionDetected] = useState(false);
   const [applyingAiBlockIndex, setApplyingAiBlockIndex] = useState(-1);
   const [manualFallbackAiBlockIndexes, setManualFallbackAiBlockIndexes] = useState([]);
   const [manualAiApply, setManualAiApply] = useState(null);
@@ -12275,6 +12341,8 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportTarget, setExportTarget] = useState(null);
+  const [exportRenderPane, setExportRenderPane] = useState("");
   const [status, setStatus] = useState(null);
   const [printMode, setPrintMode] = useState(false);
   const [imageExportMode, setImageExportMode] = useState(false);
@@ -12330,7 +12398,7 @@ export default function App() {
   }, [writingWorkspaceRoot]);
 
   useEffect(() => {
-    try { window.localStorage.setItem("paperwriter.research.web-scope-mode", webWorkspaceMode); } catch {}
+    safeStorageSetItem("paperwriter.research.web-scope-mode", webWorkspaceMode);
   }, [webWorkspaceMode]);
   const applyingRef = useRef(false);
   const aiApplyInFlightRef = useRef(false);
@@ -12358,6 +12426,15 @@ export default function App() {
   const getSaveDocumentRef = useRef(null);
   const getRightSplitSaveDocumentRef = useRef(null);
   const refreshFolderRef = useRef(null);
+  const folderPathRef = useRef(folderState.path);
+  const expandedFoldersRef = useRef(expandedFolders);
+  const folderRequestControllerRef = useRef(createLatestRequestController());
+  const folderBranchRequestControllerRef = useRef(createLatestRequestController());
+  const diskRevisionRequestControllerRef = useRef(createLatestRequestController());
+  const researchCurrentRequestControllerRef = useRef(createLatestRequestController());
+  const researchBranchRequestControllerRef = useRef(createLatestRequestController());
+  const researchSourcesRequestControllerRef = useRef(createLatestRequestController());
+  const researchWebRequestControllerRef = useRef(createLatestRequestController());
   const applyDocumentRunRef = useRef(0);
   const rightSplitApplyingRef = useRef(false);
   const rightSplitApplyRunRef = useRef(0);
@@ -12369,6 +12446,7 @@ export default function App() {
   const previousImmersiveModeRef = useRef(false);
   const aiModeTriggerRef = useRef(null);
   const settingsTriggerRef = useRef(null);
+  const exportTriggerRef = useRef(null);
   const tabTemplateReturnFocusRef = useRef(null);
   const aiRequestIdRef = useRef("");
   const aiPreviousSidebarsRef = useRef(null);
@@ -12387,6 +12465,8 @@ export default function App() {
   const tabClosePendingIdsRef = useRef(new Set());
   const sessionClosePendingRef = useRef(false);
   const workspaceSearchRequestRef = useRef("");
+  folderPathRef.current = folderState.path;
+  expandedFoldersRef.current = expandedFolders;
   const closeInternalLinkPicker = useCallback(() => setInternalLinkPicker(null), []);
 
   useLayoutEffect(() => {
@@ -12415,7 +12495,6 @@ export default function App() {
     if (!tabId) return false;
     liveUpdatedAtByTabRef.current.set(tabId, updatedAt);
     lastEditAtByTabRef.current.set(tabId, Date.now());
-    setPersistenceState("dirty");
     liveRevisionByTabRef.current.set(tabId, (liveRevisionByTabRef.current.get(tabId) || 0) + 1);
     const becameDirty = !dirtyTabIdsRef.current.has(tabId);
     dirtyTabIdsRef.current.add(tabId);
@@ -12423,14 +12502,25 @@ export default function App() {
       dirtyRef.current = true;
       if (becameDirty) setDirty(true);
     }
-    if (becameDirty) {
+    const recoveryBecameStale = openTabsRef.current.some((tab) => tab.id === tabId && tab.recoveryRevision != null);
+    if (becameDirty || recoveryBecameStale) {
       const nextTabs = openTabsRef.current.map((tab) => (
-        tab.id === tabId ? { ...tab, dirty: true } : tab
+        tab.id === tabId ? { ...tab, dirty: true, recoveryRevision: null } : tab
       ));
       openTabsRef.current = nextTabs;
       setOpenTabs(nextTabs);
     }
     return becameDirty;
+  }, []);
+
+  const releaseTabRuntimeState = useCallback((tabId) => {
+    dirtyTabIdsRef.current.delete(tabId);
+    liveUpdatedAtByTabRef.current.delete(tabId);
+    liveRevisionByTabRef.current.delete(tabId);
+    diskRevisionByTabRef.current.delete(tabId);
+    lastEditAtByTabRef.current.delete(tabId);
+    liveEditorSourceByTabRef.current.delete(tabId);
+    saveQueueByTabRef.current.delete(tabId);
   }, []);
 
   const queueTabSave = useCallback(async (tabId, operation) => {
@@ -12473,6 +12563,7 @@ export default function App() {
       const { from, to } = activeEditor.state.selection;
       editorSelectionRef.current = { from, to };
     },
+    onFocus: () => setActivePane("main"),
     onUpdate: ({ transaction }) => {
       if (transaction?.getMeta?.("paperKnowledgeDerived") || transaction?.getMeta?.("paperStructuredDerived")) return;
       if (applyingRef.current) return;
@@ -12528,6 +12619,12 @@ export default function App() {
   const activeWorkEditor = researchPaneFocused ? null : (splitPaneActive ? rightSplitEditor : editor);
   const activeWorkDocument = researchPaneFocused ? null : (splitPaneActive ? rightSplitDocument : documentState);
   const activeWorkPath = researchPaneFocused ? "" : (splitPaneActive ? (rightSplitTab?.path || "") : currentPath);
+  const activeWorkTabId = splitPaneActive ? rightSplitTabId : activeTabId;
+  const activeWorkTab = openTabs.find((tab) => tab.id === activeWorkTabId) || null;
+  const activeWorkPersistenceState = deriveTabPersistenceState(
+    activeWorkTab,
+    liveRevisionByTabRef.current.get(activeWorkTabId) || 0,
+  );
   const activeWorkSelectionRef = splitPaneActive ? rightSplitSelectionRef : editorSelectionRef;
   const structureWorkEditor = activeWorkEditor || editor;
   const structureWorkDocument = activeWorkDocument || documentState;
@@ -12594,9 +12691,12 @@ export default function App() {
       || (view.sourceId ? librarySources.find((source) => source.id === view.sourceId) : null)
       || (activeSecondaryView?.viewId === view.viewId ? activeLibraryItem : null);
     const title = item?.title || item?.name || item?.fileName || view.titleSnapshot || view.relativePath || "未命名资料";
-    const researchType = item?.type === "web"
+    const inferredResearchType = item?.type === "web"
       ? "web"
-      : (/\.pdf$/i.test(view.relativePath || item?.name || "") ? "pdf" : "file");
+      : researchPreviewKind(item || { type: "file", relativePath: view.relativePath });
+    const researchType = inferredResearchType === "unsupported"
+      ? (view.researchType || "file")
+      : inferredResearchType;
     const page = Number(view.viewState?.page) || 1;
     return {
       viewId: view.viewId,
@@ -12606,6 +12706,7 @@ export default function App() {
       path: view.relativePath || "",
       metaLabel: researchType === "pdf" ? `PDF · ${page}` : ({
         web: "网页",
+        docx: "DOCX",
         markdown: "Markdown",
         text: "文本",
         table: "表格",
@@ -12625,8 +12726,9 @@ export default function App() {
     setPendingCitationPage(isPdf ? String(activeSecondaryView.viewState?.page || 1) : "");
   }, [activeLibraryItem, activeSecondaryView, librarySources, researchItemsByViewId]);
   const activeTabReadOnly = Boolean(openTabs.find((tab) => tab.id === activeTabId)?.readOnly || documentState?._readOnlyFutureSchema);
+  const rightSplitReadOnly = Boolean(rightSplitTab?.readOnly || rightSplitDocument?._readOnlyFutureSchema);
   const activeWorkReadOnly = splitPaneActive
-    ? Boolean(rightSplitTab?.readOnly || rightSplitDocument?._readOnlyFutureSchema)
+    ? rightSplitReadOnly
     : activeTabReadOnly;
   const mainCanvasDocument = useMemo(() => paperCanvasViewModel(documentState), [
     documentState.author,
@@ -12697,6 +12799,7 @@ export default function App() {
       cancelValue: "cancel",
       actions: [],
       ...options,
+      returnFocusElement: options?.returnFocusElement || window.document.activeElement,
     });
   }), []);
 
@@ -12754,6 +12857,7 @@ export default function App() {
       defaultValue: "",
       confirmLabel: "确定",
       ...options,
+      returnFocusElement: options?.returnFocusElement || window.document.activeElement,
     });
   }), []);
 
@@ -12776,7 +12880,7 @@ export default function App() {
 
   const updateDocumentAiStateForKey = useCallback((documentKey, updater) => {
     if (!documentKey) {
-      return;
+      return false;
     }
     const updatedAt = new Date().toISOString();
     const applyPatch = (document) => ({
@@ -12793,14 +12897,18 @@ export default function App() {
     });
     if (documentKey === activeDocumentKeyRef.current) {
       const tabId = activeTabIdRef.current;
+      const targetTab = openTabsRef.current.find((tab) => tab.id === tabId);
+      if (!targetTab || targetTab.readOnly || documentStateRef.current?._readOnlyFutureSchema) {
+        return false;
+      }
       recordTabMutation(tabId, updatedAt);
       const nextDocument = applyPatch(documentStateRef.current);
       documentStateRef.current = nextDocument;
       setDocumentState(nextDocument);
-      return;
+      return true;
     }
     const targetTab = openTabsRef.current.find((tab) => documentRuntimeKey(tab.path, tab.id) === documentKey);
-    if (!targetTab) return;
+    if (!targetTab || targetTab.readOnly || targetTab.document?._readOnlyFutureSchema) return false;
     recordTabMutation(targetTab.id, updatedAt);
     const nextTabs = openTabsRef.current.map((tab) => (
       tab.id === targetTab.id
@@ -12809,6 +12917,7 @@ export default function App() {
     ));
     openTabsRef.current = nextTabs;
     setOpenTabs(nextTabs);
+    return true;
   }, [recordTabMutation]);
 
   const updateActiveDocumentAiState = useCallback((updater) => {
@@ -12921,7 +13030,7 @@ export default function App() {
 
   useEffect(() => {
     workspaceGroupsRef.current = workspaceGroups;
-    window.localStorage.setItem("paperwriter.workspaceSplitRatio", String(workspaceGroups.splitRatio));
+    safeStorageSetItem("paperwriter.workspaceSplitRatio", String(workspaceGroups.splitRatio));
   }, [workspaceGroups]);
 
   useEffect(() => {
@@ -13047,6 +13156,21 @@ export default function App() {
     showStatus.timer = window.setTimeout(() => setStatus(null), duration);
   }, []);
 
+  useEffect(() => {
+    let warned = false;
+    const warn = (issue) => {
+      if (!issue || warned) return;
+      warned = true;
+      showStatus(
+        "浏览器存储暂时不可用；界面设置仅保留到当前会话，需要持久保存的浏览器操作会明确提示失败",
+        "warning",
+        { duration: 6000, dismissible: true },
+      );
+    };
+    warn(getLastStorageIssue());
+    return subscribeStorageIssues(warn);
+  }, [showStatus]);
+
   const dismissStatus = useCallback(() => {
     window.clearTimeout(showStatus.timer);
     setStatus(null);
@@ -13057,15 +13181,30 @@ export default function App() {
       setAiModeChooserOpen(false);
       return;
     }
+    if (activeTabReadOnly) {
+      showStatus("当前信笺为只读，不能进入 AI 模式", "warning");
+      return;
+    }
     if (!aiHasUsableProvider) {
       openAiSettings();
       showStatus(AI_MODEL_REQUIRED_MESSAGE, "warning", { duration: 5000, dismissible: true });
       return;
     }
     setAiModeChooserOpen(true);
-  }, [aiHasUsableProvider, aiModeChooserOpen, openAiSettings, showStatus]);
+  }, [activeTabReadOnly, aiHasUsableProvider, aiModeChooserOpen, openAiSettings, showStatus]);
+
+  const isDocumentPaneReadOnly = useCallback((pane) => {
+    const targetTabId = pane === "right" ? rightSplitTabIdRef.current : activeTabIdRef.current;
+    const targetTab = openTabsRef.current.find((tab) => tab.id === targetTabId);
+    const targetDocument = pane === "right" ? targetTab?.document : documentStateRef.current;
+    return !targetTab || Boolean(targetTab.readOnly || targetDocument?._readOnlyFutureSchema);
+  }, []);
 
   const updateCommentsForPane = useCallback((pane, updater) => {
+    if (isDocumentPaneReadOnly(pane)) {
+      showStatus("当前信笺为只读，不能修改评注", "warning");
+      return false;
+    }
     const updatedAt = new Date().toISOString();
     const sourceEditor = pane === "right" ? rightSplitEditor : editor;
     const applyCommentUpdate = (document) => {
@@ -13098,7 +13237,7 @@ export default function App() {
           return nextDocument;
         });
       }
-      return;
+      return true;
     }
 
     const tabId = activeTabIdRef.current;
@@ -13106,7 +13245,8 @@ export default function App() {
     const nextDocument = applyCommentUpdate(documentStateRef.current);
     documentStateRef.current = nextDocument;
     setDocumentState(nextDocument);
-  }, [editor, recordTabMutation, rightSplitEditor]);
+    return true;
+  }, [editor, isDocumentPaneReadOnly, recordTabMutation, rightSplitEditor, showStatus]);
 
   const commentPanelComment = useMemo(() => {
     if (!commentPanel?.commentId) {
@@ -13123,6 +13263,10 @@ export default function App() {
   }, [commentPanel?.commentId, commentPanelComment]);
 
   const handleStartComment = useCallback((pane, selection, position) => {
+    if (isDocumentPaneReadOnly(pane)) {
+      showStatus("当前信笺为只读，不能添加评注", "warning");
+      return;
+    }
     if (!selection?.text || selection.from === selection.to) {
       showStatus("请先选中要评注的文字", "warning");
       return;
@@ -13141,7 +13285,7 @@ export default function App() {
       x: Math.max(12, Math.min(position?.left || window.innerWidth / 2, window.innerWidth - 352)),
       y: Math.max(52, Math.min((position?.top || 120) + 22, window.innerHeight - 300)),
     });
-  }, [documentState, editor, rightSplitDocument, rightSplitEditor, showStatus]);
+  }, [documentState, editor, isDocumentPaneReadOnly, rightSplitDocument, rightSplitEditor, showStatus]);
 
   const handleOpenComment = useCallback((pane, comment, position) => {
     if (!comment?.id) {
@@ -13177,17 +13321,17 @@ export default function App() {
         createdAt: now,
         updatedAt: now,
       };
-      updateCommentsForPane(commentPanel.pane, (comments) => [...comments, nextComment]);
+      if (!updateCommentsForPane(commentPanel.pane, (comments) => [...comments, nextComment])) return;
       setCommentPanel(null);
       showStatus("评注已添加", "success");
       return;
     }
     if (commentPanel.mode === "edit" && commentPanel.commentId) {
-      updateCommentsForPane(commentPanel.pane, (comments) => comments.map((comment) => (
+      if (!updateCommentsForPane(commentPanel.pane, (comments) => comments.map((comment) => (
         comment.id === commentPanel.commentId
           ? { ...comment, text, updatedAt: now }
           : comment
-      )));
+      )))) return;
       setCommentPanel((panel) => panel ? { ...panel, mode: "view", text } : panel);
       showStatus("评注已更新", "success");
     }
@@ -13197,11 +13341,19 @@ export default function App() {
     if (!commentPanel?.commentId || !commentPanelComment) {
       return;
     }
+    if (isDocumentPaneReadOnly(commentPanel.pane)) {
+      showStatus("当前信笺为只读，不能编辑评注", "warning");
+      return;
+    }
     setCommentPanel((panel) => panel ? { ...panel, mode: "edit", text: commentPanelComment.text || "" } : panel);
-  }, [commentPanel?.commentId, commentPanelComment]);
+  }, [commentPanel, commentPanelComment, isDocumentPaneReadOnly, showStatus]);
 
   const handleDeleteCommentPanel = useCallback(async () => {
     if (!commentPanel?.commentId) {
+      return;
+    }
+    if (isDocumentPaneReadOnly(commentPanel.pane)) {
+      showStatus("当前信笺为只读，不能删除评注", "warning");
       return;
     }
     const decision = await showConfirmDialog({
@@ -13219,10 +13371,10 @@ export default function App() {
     if (decision !== "delete") {
       return;
     }
-    updateCommentsForPane(commentPanel.pane, (comments) => comments.filter((comment) => comment.id !== commentPanel.commentId));
+    if (!updateCommentsForPane(commentPanel.pane, (comments) => comments.filter((comment) => comment.id !== commentPanel.commentId))) return;
     setCommentPanel(null);
     showStatus("评注已删除", "success");
-  }, [commentPanel, showConfirmDialog, showStatus, updateCommentsForPane]);
+  }, [commentPanel, isDocumentPaneReadOnly, showConfirmDialog, showStatus, updateCommentsForPane]);
 
   const handleClearDocumentCache = useCallback(() => {
     setOpenTabs((tabs) => {
@@ -13370,26 +13522,55 @@ export default function App() {
   }, [searchMode, snapshotLiveTabs, workspaceSearchQuery, writingWorkspaceRoot]);
 
   const verifyOpenDiskRevisions = useCallback(async () => {
-    const tabs = snapshotLiveTabs().filter((tab) => tab.path);
-    const changedIds = new Set();
-    await Promise.all(tabs.map(async (tab) => {
+    const request = diskRevisionRequestControllerRef.current.begin("open-documents");
+    const checks = snapshotLiveTabs().filter((tab) => tab.path).map((tab) => ({
+      id: tab.id,
+      path: tab.path,
+      expected: diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null,
+    }));
+    const outcomes = await Promise.all(checks.map(async (check) => {
       try {
-        const result = await bridge.getDocumentRevision?.(tab.path);
-        const actual = result?.diskRevision || null;
-        const expected = diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null;
-        if (expected && !sameDiskRevision(actual, expected)) changedIds.add(tab.id);
-        else if (!expected && actual) diskRevisionByTabRef.current.set(tab.id, actual);
+        const result = await bridge.getDocumentRevision?.(check.path);
+        return { ...check, actual: result?.diskRevision || null, failed: false };
       } catch {
-        if (diskRevisionByTabRef.current.has(tab.id)) changedIds.add(tab.id);
+        return { ...check, actual: null, failed: true };
       }
     }));
-    const nextTabs = openTabsRef.current.map((tab) => ({ ...tab, externalChanged: changedIds.has(tab.id) }));
+    if (!diskRevisionRequestControllerRef.current.isCurrent(request)) return new Set();
+    const outcomeById = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
+    const changedIds = new Set();
+    const newlyChangedIds = new Set();
+    const nextTabs = openTabsRef.current.map((tab) => {
+      const outcome = outcomeById.get(tab.id);
+      if (!outcome || !sameDocumentPath(tab.path, outcome.path)) return tab;
+      const currentExpected = diskRevisionByTabRef.current.get(tab.id) || tab.diskRevision || null;
+      const expectedStillCurrent = outcome.expected
+        ? Boolean(currentExpected && sameDiskRevision(currentExpected, outcome.expected))
+        : !currentExpected;
+      if (!expectedStillCurrent) return tab;
+      if (!outcome.expected && outcome.actual && !outcome.failed) {
+        diskRevisionByTabRef.current.set(tab.id, outcome.actual);
+      }
+      const externalChanged = Boolean(
+        outcome.expected
+        && (outcome.failed || !sameDiskRevision(outcome.actual, outcome.expected)),
+      );
+      if (externalChanged) {
+        changedIds.add(tab.id);
+        if (!tab.externalChanged) newlyChangedIds.add(tab.id);
+      }
+      return tab.externalChanged === externalChanged ? tab : { ...tab, externalChanged };
+    });
     openTabsRef.current = nextTabs;
     setOpenTabs(nextTabs);
-    const activeChanged = changedIds.has(activeTabIdRef.current);
-    setExternalVersionDetected(activeChanged);
-    if (activeChanged) {
-      setPersistenceState("external");
+    diskRevisionRequestControllerRef.current.finish(request);
+    const focusedSecondary = workspaceGroupsRef.current.focusedGroup === WORKSPACE_GROUP_ID.SECONDARY
+      ? getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY)
+      : null;
+    const activeId = focusedSecondary?.kind === WORKSPACE_VIEW_KIND.DOCUMENT
+      ? focusedSecondary.tabId
+      : activeTabIdRef.current;
+    if (newlyChangedIds.has(activeId)) {
       showStatus("检测到磁盘上的外部版本；保存时会保护两个版本", "warning");
     }
     return changedIds;
@@ -13398,7 +13579,8 @@ export default function App() {
   useEffect(() => {
     bridge.watchWorkspace?.(writingWorkspaceRoot || "").catch?.(() => {});
     if (!writingWorkspaceRoot) return undefined;
-    const onChanged = () => {
+    const onChanged = (payload = {}) => {
+      if (payload.rootPath && !sameDocumentPath(payload.rootPath, writingWorkspaceRoot)) return;
       refreshFolderRef.current?.();
       verifyOpenDiskRevisions();
     };
@@ -13483,6 +13665,16 @@ export default function App() {
       editor.setEditable(true);
     };
   }, [activeTabReadOnly, aiApplyPreview, aiMode, aiStatus, editor]);
+
+  useEffect(() => {
+    if (!rightSplitEditor) {
+      return undefined;
+    }
+    rightSplitEditor.setEditable(!rightSplitReadOnly);
+    return () => {
+      rightSplitEditor.setEditable(true);
+    };
+  }, [rightSplitEditor, rightSplitReadOnly]);
 
   useEffect(() => {
     if (!aiMode || aiStatus !== "streaming" || !aiStartedAtRef.current) {
@@ -13920,33 +14112,37 @@ export default function App() {
   }, [getRightSplitSaveDocument]);
 
   const handleTitleChange = useCallback((title) => {
+    if (activeTabReadOnly) return;
     const tabId = activeTabIdRef.current;
     const updatedAt = new Date().toISOString();
     recordTabMutation(tabId, updatedAt);
     const nextDocument = { ...documentStateRef.current, title: String(title || "").slice(0, DOCUMENT_TITLE_MAX_CHARS), updatedAt };
     documentStateRef.current = nextDocument;
     setDocumentState(nextDocument);
-  }, [recordTabMutation]);
+  }, [activeTabReadOnly, recordTabMutation]);
 
   const handleAuthorChange = useCallback((author) => {
+    if (activeTabReadOnly) return;
     const tabId = activeTabIdRef.current;
     const updatedAt = new Date().toISOString();
     recordTabMutation(tabId, updatedAt);
     const nextDocument = { ...documentStateRef.current, author: author.slice(0, 40), updatedAt };
     documentStateRef.current = nextDocument;
     setDocumentState(nextDocument);
-  }, [recordTabMutation]);
+  }, [activeTabReadOnly, recordTabMutation]);
 
   const handleDateChange = useCallback((displayDate) => {
+    if (activeTabReadOnly) return;
     const tabId = activeTabIdRef.current;
     const updatedAt = new Date().toISOString();
     recordTabMutation(tabId, updatedAt);
     const nextDocument = { ...documentStateRef.current, displayDate: displayDate.slice(0, 40), updatedAt };
     documentStateRef.current = nextDocument;
     setDocumentState(nextDocument);
-  }, [recordTabMutation]);
+  }, [activeTabReadOnly, recordTabMutation]);
 
   const updateRightSplitDocument = useCallback((patch) => {
+    if (rightSplitReadOnly) return;
     const splitId = rightSplitTabIdRef.current;
     if (!splitId) {
       return;
@@ -13967,7 +14163,7 @@ export default function App() {
         return nextDocument;
       });
     }
-  }, [recordTabMutation]);
+  }, [recordTabMutation, rightSplitReadOnly]);
 
   const handleRightSplitTitleChange = useCallback((title) => {
     updateRightSplitDocument({ title: String(title || "").slice(0, DOCUMENT_TITLE_MAX_CHARS) });
@@ -13984,7 +14180,6 @@ export default function App() {
   const updateDocumentSplitRatio = useCallback((value) => {
     const next = normalizeWorkspaceSplitRatio(value);
     setDocumentPaneRatio(next);
-    window.localStorage.setItem("paperwriter.workspaceSplitRatio", String(next));
   }, []);
 
   const startDocumentSplitResize = useCallback((event) => {
@@ -14240,11 +14435,13 @@ export default function App() {
         }
       }
       if (folderPath) {
+        const folderRestoreRequest = folderRequestControllerRef.current.begin("view");
+        folderPathRef.current = folderPath;
         bridge.debugLog?.("renderer:restore:folder-selected", {
           folderPath,
           source: savedFolderPath ? "session" : "documents-default",
         });
-        if (isActiveRestore()) {
+        if (isActiveRestore() && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
           setFolderState((previous) => ({
             ...previous,
             rootPath: previous.rootPath || folderPath,
@@ -14254,15 +14451,21 @@ export default function App() {
         }
         try {
           const result = await listFolderWithTimeout(folderPath);
-          if (isActiveRestore() && !result?.canceled) {
+          if (
+            isActiveRestore()
+            && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
+            && !result?.canceled
+          ) {
             bridge.debugLog?.("renderer:restore:folder-applied", {
               folderPath,
               folders: result.folders?.length || 0,
               files: result.files?.length || 0,
             });
+            const restoredFolderPath = result.folderPath || folderPath;
+            folderPathRef.current = restoredFolderPath;
             setFolderState({
               rootPath: folderPath,
-              path: result.folderPath || folderPath,
+              path: restoredFolderPath,
               parentPath: result.parentPath || "",
               folders: result.folders || [],
               files: result.files || [],
@@ -14270,7 +14473,7 @@ export default function App() {
               loading: false,
               error: "",
             });
-          } else if (isActiveRestore()) {
+          } else if (isActiveRestore() && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
             throw new Error("folder list canceled");
           }
         } catch (error) {
@@ -14278,12 +14481,15 @@ export default function App() {
             folderPath,
             message: error?.message,
           });
-          if (isActiveRestore()) {
+          if (isActiveRestore() && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
             try {
               const paths = defaultFolderPath ? { documents: defaultFolderPath } : await bridge.getPaths?.();
               const fallbackPath = paths?.documents || "";
               const fallback = fallbackPath ? await listFolderWithTimeout(fallbackPath) : null;
-              if (fallbackPath && !fallback?.canceled) {
+              if (!folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
+                // A newer folder navigation owns the tree now.
+              } else if (fallbackPath && !fallback?.canceled) {
+                folderPathRef.current = fallback.folderPath || fallbackPath;
                 setFolderState({
                   rootPath: fallback.folderPath || fallbackPath,
                   path: fallback.folderPath || fallbackPath,
@@ -14296,6 +14502,7 @@ export default function App() {
                 });
                 persistSession({ folderPath: fallback.folderPath || fallbackPath, activePath: "" });
               } else {
+                folderPathRef.current = folderPath;
                 setFolderState({
                   rootPath: folderPath,
                   path: folderPath,
@@ -14308,18 +14515,23 @@ export default function App() {
                 });
               }
             } catch {
-              setFolderState({
-                rootPath: folderPath,
-                path: folderPath,
-                parentPath: "",
-                files: [],
-                folders: [],
-                entries: [],
-                loading: false,
-                error: "文件树读取超时或失败",
-              });
+              if (folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
+                folderPathRef.current = folderPath;
+                setFolderState({
+                  rootPath: folderPath,
+                  path: folderPath,
+                  parentPath: "",
+                  files: [],
+                  folders: [],
+                  entries: [],
+                  loading: false,
+                  error: "文件树读取超时或失败",
+                });
+              }
             }
           }
+        } finally {
+          folderRequestControllerRef.current.finish(folderRestoreRequest);
         }
       }
       if (restoreEntries.length) {
@@ -14351,6 +14563,7 @@ export default function App() {
                     recoveryId: restoreEntry.recoveryId || result.recoveryId,
                     recoverySourcePath,
                     recoveryBaseRevision,
+                    recoveryRevision: 0,
                     recoveredTemporary: true,
                     diskRevision: recoveryBaseRevision,
                     readOnly: result.readOnly,
@@ -14411,8 +14624,6 @@ export default function App() {
           } else {
             setActivePane("main");
           }
-          setExternalVersionDetected(Boolean(activeTab.externalChanged));
-          setPersistenceState(activeTab.externalChanged ? "external" : (activeTab.dirty ? "recovery" : "workspace"));
           persistSession({
             activePath: activeTab.path || activeTab.recoveryPath,
             tabs: summarizeSessionTabs(restoredTabs),
@@ -14597,6 +14808,7 @@ export default function App() {
         activeTabIdRef.current = nextTab.id;
         setActiveTabId(nextTab.id);
         applyDocument(blank, "", false, { scrollState: nextTab.scrollState });
+        releaseTabRuntimeState(tabId);
         return;
       }
       let nextTabs = remaining;
@@ -14618,6 +14830,7 @@ export default function App() {
       }
       openTabsRef.current = nextTabs;
       setOpenTabs(nextTabs);
+      releaseTabRuntimeState(tabId);
       commitWorkspaceGroups(nextGroups);
       const nextPrimaryView = getActiveWorkspaceView(nextGroups, WORKSPACE_GROUP_ID.PRIMARY);
       const nextPrimaryTab = nextTabs.find((tab) => tab.id === nextPrimaryView?.tabId);
@@ -14644,7 +14857,7 @@ export default function App() {
         tabClosePendingIdsRef.current.delete(tabId);
       }
     },
-    [activeTabId, applyDocument, commitWorkspaceGroups, letterTemplates, librarySources, newDocumentTemplateId, researchItemsByViewId, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave],
+    [activeTabId, applyDocument, commitWorkspaceGroups, letterTemplates, librarySources, newDocumentTemplateId, releaseTabRuntimeState, researchItemsByViewId, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave],
   );
 
   const handleCloseGroupView = useCallback(async (groupId, viewId) => {
@@ -14710,65 +14923,56 @@ export default function App() {
   }, [addOrActivateDocumentTab, showStatus]);
 
   const handleOpenFolder = useCallback(async () => {
-    const result = await bridge.openFolder();
-    if (result?.canceled) {
-      return;
+    const request = folderRequestControllerRef.current.begin("view");
+    try {
+      const result = await bridge.openFolder();
+      if (!folderRequestControllerRef.current.isCurrent(request) || result?.canceled) return;
+      const nextPath = result.folderPath || "";
+      folderPathRef.current = nextPath;
+      folderBranchRequestControllerRef.current.invalidateAll();
+      expandedFoldersRef.current = {};
+      setFolderState({
+        rootPath: nextPath,
+        path: nextPath,
+        parentPath: result.parentPath || "",
+        folders: result.folders || [],
+        files: result.files || [],
+        entries: result.entries || [...(result.folders || []), ...(result.files || [])],
+        loading: false,
+        error: "",
+      });
+      setExpandedFolders({});
+      showStatus("文件夹已打开", "success");
+    } catch (error) {
+      if (folderRequestControllerRef.current.isCurrent(request)) {
+        showStatus(error?.message || "文件夹打开失败", "warning");
+      }
+    } finally {
+      folderRequestControllerRef.current.finish(request);
     }
-    setFolderState({
-      rootPath: result.folderPath || "",
-      path: result.folderPath || "",
-      parentPath: result.parentPath || "",
-      folders: result.folders || [],
-      files: result.files || [],
-      entries: result.entries || [...(result.folders || []), ...(result.files || [])],
-      loading: false,
-      error: "",
-    });
-    setExpandedFolders({});
-    showStatus("文件夹已打开", "success");
   }, [showStatus]);
 
   const handleOpenFolderPath = useCallback(async (path) => {
-    if (!path) {
-      return;
-    }
+    if (!path) return;
+    const request = folderRequestControllerRef.current.begin("view");
+    folderPathRef.current = path;
     setFolderState((previous) => ({
       ...previous,
       path,
       loading: true,
-    }));
-    const result = await listFolderWithTimeout(path);
-    if (result?.canceled) {
-      setFolderState((previous) => ({
-        ...previous,
-      loading: false,
       error: "",
     }));
-      showStatus("无法打开这个文件夹", "warning");
-      return;
-    }
-    setFolderState((previous) => ({
-      rootPath: previous.rootPath || result.folderPath || path,
-      path: result.folderPath || path,
-      parentPath: result.parentPath || "",
-      folders: result.folders || [],
-      files: result.files || [],
-      entries: result.entries || [...(result.folders || []), ...(result.files || [])],
-      loading: false,
-      error: "",
-    }));
-    setExpandedFolders({});
-  }, [showStatus]);
-
-  const refreshFolder = useCallback(async () => {
-    if (!folderState.path) {
-      return;
-    }
-    const result = await listFolderWithTimeout(folderState.path);
-    if (!result?.canceled) {
+    try {
+      const result = await listFolderWithTimeout(path);
+      if (!folderRequestControllerRef.current.isCurrent(request)) return;
+      if (result?.canceled) throw new Error("无法打开这个文件夹");
+      const nextPath = result.folderPath || path;
+      folderPathRef.current = nextPath;
+      folderBranchRequestControllerRef.current.invalidateAll();
+      expandedFoldersRef.current = {};
       setFolderState((previous) => ({
-        rootPath: previous.rootPath || result.folderPath || folderState.path,
-        path: result.folderPath || folderState.path,
+        rootPath: previous.rootPath || nextPath,
+        path: nextPath,
         parentPath: result.parentPath || "",
         folders: result.folders || [],
         files: result.files || [],
@@ -14776,8 +14980,56 @@ export default function App() {
         loading: false,
         error: "",
       }));
+      setExpandedFolders({});
+    } catch (error) {
+      if (!folderRequestControllerRef.current.isCurrent(request)) return;
+      setFolderState((previous) => ({
+        ...previous,
+        loading: false,
+        error: error?.message || "文件夹读取失败",
+      }));
+      showStatus(error?.message || "无法打开这个文件夹", "warning");
+    } finally {
+      folderRequestControllerRef.current.finish(request);
     }
-  }, [folderState.path]);
+  }, [showStatus]);
+
+  const refreshFolder = useCallback(async () => {
+    const targetPath = folderPathRef.current;
+    if (!targetPath) return;
+    const request = folderRequestControllerRef.current.begin("view");
+    try {
+      const result = await listFolderWithTimeout(targetPath);
+      if (
+        !folderRequestControllerRef.current.isCurrent(request)
+        || !sameDocumentPath(folderPathRef.current, targetPath)
+      ) return;
+      if (result?.canceled) throw new Error("文件树刷新超时");
+      setFolderState((previous) => ({
+        rootPath: previous.rootPath || result.folderPath || targetPath,
+        path: result.folderPath || targetPath,
+        parentPath: result.parentPath || "",
+        folders: result.folders || [],
+        files: result.files || [],
+        entries: result.entries || [...(result.folders || []), ...(result.files || [])],
+        loading: false,
+        error: "",
+      }));
+    } catch (error) {
+      if (
+        folderRequestControllerRef.current.isCurrent(request)
+        && sameDocumentPath(folderPathRef.current, targetPath)
+      ) {
+        setFolderState((previous) => ({
+          ...previous,
+          loading: false,
+          error: error?.message || "文件树刷新失败",
+        }));
+      }
+    } finally {
+      folderRequestControllerRef.current.finish(request);
+    }
+  }, []);
 
   useEffect(() => {
     refreshFolderRef.current = refreshFolder;
@@ -14785,21 +15037,41 @@ export default function App() {
 
   const refreshTreeAfterEntryChange = useCallback(async (folderPath = "") => {
     await refreshFolder();
-    if (folderPath && expandedFolders[folderPath]?.expanded) {
+    if (!folderPath || !expandedFoldersRef.current[folderPath]?.expanded) return;
+    const request = folderBranchRequestControllerRef.current.begin(folderPath);
+    try {
       const result = await listFolderWithTimeout(folderPath);
-      if (!result?.canceled) {
-        setExpandedFolders((state) => ({
+      if (!folderBranchRequestControllerRef.current.isCurrent(request)) return;
+      if (result?.canceled) throw new Error("文件夹读取超时");
+      setExpandedFolders((state) => {
+        if (!state[folderPath]?.expanded) return state;
+        const next = {
           ...state,
           [folderPath]: {
-            ...(state[folderPath] || {}),
-            expanded: true,
+            ...state[folderPath],
             loading: false,
+            error: "",
             entries: result.entries || [...(result.folders || []), ...(result.files || [])],
           },
-        }));
-      }
+        };
+        expandedFoldersRef.current = next;
+        return next;
+      });
+    } catch (error) {
+      if (!folderBranchRequestControllerRef.current.isCurrent(request)) return;
+      setExpandedFolders((state) => {
+        if (!state[folderPath]?.expanded) return state;
+        const next = {
+          ...state,
+          [folderPath]: { ...state[folderPath], loading: false, error: error?.message || "文件夹读取失败" },
+        };
+        expandedFoldersRef.current = next;
+        return next;
+      });
+    } finally {
+      folderBranchRequestControllerRef.current.finish(request);
     }
-  }, [expandedFolders, refreshFolder]);
+  }, [refreshFolder]);
 
   const handleOpenFolderFile = useCallback(
     async (path) => {
@@ -14872,7 +15144,7 @@ export default function App() {
     if (next.activeMatch) targetEditor.chain().focus().setTextSelection(next.activeMatch.from).scrollIntoView().run();
   }, [editor, handleOpenFolderFile, workspaceSearchQuery]);
 
-  const handleCreateFolderInTree = useCallback(async (entry) => {
+  const handleCreateFolderInTree = useCallback(async (entry, interaction = {}) => {
     const parentPath = entry?.path || folderState.path;
     if (!parentPath) {
       return;
@@ -14883,6 +15155,7 @@ export default function App() {
       defaultValue: "新建文件夹",
       confirmLabel: "新建",
       icon: FolderPlus,
+      returnFocusElement: interaction.returnFocusElement,
     });
     if (!name?.trim()) {
       return;
@@ -14896,7 +15169,7 @@ export default function App() {
     showStatus("文件夹已新建", "success");
   }, [folderState.path, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
 
-  const handleCreateDocumentInTree = useCallback(async (entry) => {
+  const handleCreateDocumentInTree = useCallback(async (entry, interaction = {}) => {
     const folderPath = entry?.path || folderState.path;
     if (!folderPath) {
       return;
@@ -14907,6 +15180,7 @@ export default function App() {
       defaultValue: "未命名信笺",
       confirmLabel: "新建",
       icon: FilePlus,
+      returnFocusElement: interaction.returnFocusElement,
     });
     if (!title?.trim()) {
       return;
@@ -14926,7 +15200,7 @@ export default function App() {
     showStatus("信笺已新建", "success");
   }, [addOrActivateDocumentTab, folderState.path, letterTemplates, newDocumentTemplateId, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
 
-  const handleRenameTreeEntry = useCallback(async (entry) => {
+  const handleRenameTreeEntry = useCallback(async (entry, interaction = {}) => {
     if (!entry?.path) {
       return;
     }
@@ -14937,6 +15211,7 @@ export default function App() {
       defaultValue: currentName,
       confirmLabel: "保存",
       icon: Pencil,
+      returnFocusElement: interaction.returnFocusElement,
     });
     if (!nextName?.trim() || nextName.trim() === currentName) {
       return;
@@ -14983,15 +15258,24 @@ export default function App() {
       persistSession({ activePath: nextCurrentPath });
     }
     if (entry.type === "folder") {
+      if (pathIsSameOrInside(folderPathRef.current, entry.path)) {
+        folderRequestControllerRef.current.invalidate("view");
+        folderPathRef.current = replacePathPrefix(folderPathRef.current, entry.path, result.path);
+      }
       setFolderState((previous) => pathIsSameOrInside(previous.path, entry.path)
         ? { ...previous, path: replacePathPrefix(previous.path, entry.path, result.path) }
         : previous);
-      setExpandedFolders((previous) => Object.fromEntries(Object.entries(previous).map(([folderPath, value]) => [
-        pathIsSameOrInside(folderPath, entry.path)
-          ? replacePathPrefix(folderPath, entry.path, result.path)
-          : folderPath,
-        value,
-      ])));
+      folderBranchRequestControllerRef.current.invalidateAll();
+      setExpandedFolders((previous) => {
+        const next = Object.fromEntries(Object.entries(previous).map(([folderPath, value]) => [
+          pathIsSameOrInside(folderPath, entry.path)
+            ? replacePathPrefix(folderPath, entry.path, result.path)
+            : folderPath,
+          value,
+        ]));
+        expandedFoldersRef.current = next;
+        return next;
+      });
     }
 
     await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
@@ -15032,7 +15316,7 @@ export default function App() {
     showStatus("备份已复制到当前目录", "success");
   }, [folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus, snapshotLiveTabs]);
 
-  const handleDeleteTreeEntry = useCallback(async (entry) => {
+  const handleDeleteTreeEntry = useCallback(async (entry, interaction = {}) => {
     if (!entry?.path) {
       return;
     }
@@ -15061,6 +15345,7 @@ export default function App() {
           ? "继续会丢失这些标签中的内存修改；回收站只能恢复最后一次已保存的版本。"
           : "删除后会进入回收站。",
         cancelValue: "cancel",
+        returnFocusElement: interaction.returnFocusElement,
         actions: [
           {
             value: "delete",
@@ -15096,6 +15381,7 @@ export default function App() {
         }
         openTabsRef.current = remainingTabs;
         setOpenTabs(remainingTabs);
+        removedTabs.forEach((tab) => releaseTabRuntimeState(tab.id));
         if (removedTabs.some((tab) => tab.id === activeTabIdRef.current)) {
           const nextTab = remainingTabs[0];
           activeTabIdRef.current = nextTab.id;
@@ -15110,7 +15396,7 @@ export default function App() {
     } finally {
       affectedIds.forEach((tabId) => tabClosePendingIdsRef.current.delete(tabId));
     }
-  }, [applyDocument, folderState.path, letterTemplates, newDocumentTemplateId, persistSession, refreshTreeAfterEntryChange, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave]);
+  }, [applyDocument, folderState.path, letterTemplates, newDocumentTemplateId, persistSession, refreshTreeAfterEntryChange, releaseTabRuntimeState, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave]);
 
   const handleMoveTreeEntry = useCallback(async (entry, targetFolderPath) => {
     if (!entry?.path || !targetFolderPath) {
@@ -15136,15 +15422,24 @@ export default function App() {
       persistSession({ activePath: nextPath });
     }
     if (entry.type === "folder") {
+      if (pathIsSameOrInside(folderPathRef.current, result.oldPath)) {
+        folderRequestControllerRef.current.invalidate("view");
+        folderPathRef.current = replacePathPrefix(folderPathRef.current, result.oldPath, result.path);
+      }
       setFolderState((previous) => pathIsSameOrInside(previous.path, result.oldPath)
         ? { ...previous, path: replacePathPrefix(previous.path, result.oldPath, result.path) }
         : previous);
-      setExpandedFolders((previous) => Object.fromEntries(Object.entries(previous).map(([folderPath, value]) => [
-        pathIsSameOrInside(folderPath, result.oldPath)
-          ? replacePathPrefix(folderPath, result.oldPath, result.path)
-          : folderPath,
-        value,
-      ])));
+      folderBranchRequestControllerRef.current.invalidateAll();
+      setExpandedFolders((previous) => {
+        const next = Object.fromEntries(Object.entries(previous).map(([folderPath, value]) => [
+          pathIsSameOrInside(folderPath, result.oldPath)
+            ? replacePathPrefix(folderPath, result.oldPath, result.path)
+            : folderPath,
+          value,
+        ]));
+        expandedFoldersRef.current = next;
+        return next;
+      });
     }
 
     await refreshTreeAfterEntryChange(result.sourceParent || folderState.path);
@@ -15153,32 +15448,63 @@ export default function App() {
   }, [folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus]);
 
   const handleToggleFolder = useCallback(async (path) => {
-    if (!path) {
-      return;
-    }
-    const existing = expandedFolders[path];
+    if (!path) return;
+    const existing = expandedFoldersRef.current[path];
     if (existing?.expanded) {
+      folderBranchRequestControllerRef.current.invalidate(path);
       setExpandedFolders((state) => ({
         ...state,
-        [path]: { ...existing, expanded: false },
+        [path]: { ...(state[path] || existing), expanded: false, loading: false },
       }));
+      expandedFoldersRef.current = {
+        ...expandedFoldersRef.current,
+        [path]: { ...existing, expanded: false, loading: false },
+      };
       return;
     }
 
+    const request = folderBranchRequestControllerRef.current.begin(path);
     setExpandedFolders((state) => ({
       ...state,
-      [path]: { ...(state[path] || {}), expanded: true, loading: true },
+      [path]: { ...(state[path] || {}), expanded: true, loading: true, error: "" },
     }));
-    const result = await listFolderWithTimeout(path);
-    setExpandedFolders((state) => ({
-      ...state,
-      [path]: {
-        expanded: true,
-        loading: false,
-        entries: result?.canceled ? [] : (result.entries || [...(result.folders || []), ...(result.files || [])]),
-      },
-    }));
-  }, [expandedFolders]);
+    expandedFoldersRef.current = {
+      ...expandedFoldersRef.current,
+      [path]: { ...(expandedFoldersRef.current[path] || {}), expanded: true, loading: true, error: "" },
+    };
+    try {
+      const result = await listFolderWithTimeout(path);
+      if (!folderBranchRequestControllerRef.current.isCurrent(request)) return;
+      if (result?.canceled) throw new Error("文件夹读取超时");
+      setExpandedFolders((state) => {
+        if (!state[path]?.expanded) return state;
+        const next = {
+          ...state,
+          [path]: {
+            ...state[path],
+            loading: false,
+            error: "",
+            entries: result.entries || [...(result.folders || []), ...(result.files || [])],
+          },
+        };
+        expandedFoldersRef.current = next;
+        return next;
+      });
+    } catch (error) {
+      if (!folderBranchRequestControllerRef.current.isCurrent(request)) return;
+      setExpandedFolders((state) => {
+        if (!state[path]?.expanded) return state;
+        const next = {
+          ...state,
+          [path]: { ...state[path], loading: false, error: error?.message || "文件夹读取失败" },
+        };
+        expandedFoldersRef.current = next;
+        return next;
+      });
+    } finally {
+      folderBranchRequestControllerRef.current.finish(request);
+    }
+  }, []);
 
   const handleOutlineItemClick = useCallback(
     (item) => {
@@ -15235,8 +15561,11 @@ export default function App() {
           bridge.saveDocument(nextDocument, targetTab.path, saveAs, reservedPaths, expectedRevision)
         ));
         if (result?.conflict) {
-          setExternalVersionDetected(true);
-          setPersistenceState("external");
+          const conflictedTabs = openTabsRef.current.map((tab) => (
+            tab.id === targetTab.id ? { ...tab, externalChanged: true } : tab
+          ));
+          openTabsRef.current = conflictedTabs;
+          setOpenTabs(conflictedTabs);
           const decision = await showConfirmDialog({
             tone: "warning",
             icon: RefreshCw,
@@ -15262,8 +15591,11 @@ export default function App() {
               { conflictAction: "overwrite" },
             ));
             if (result?.conflict) {
-              setExternalVersionDetected(true);
-              setPersistenceState("external");
+              const conflictedAgainTabs = openTabsRef.current.map((tab) => (
+                tab.id === targetTab.id ? { ...tab, externalChanged: true } : tab
+              ));
+              openTabsRef.current = conflictedAgainTabs;
+              setOpenTabs(conflictedAgainTabs);
               showStatus("确认覆盖期间又检测到新的外部版本；未覆盖磁盘，并再次保留了本机冲突副本", "warning");
               return;
             }
@@ -15273,12 +15605,23 @@ export default function App() {
               diskRevisionByTabRef.current.set(targetTab.id, reloaded.diskRevision);
               dirtyTabIdsRef.current.delete(targetTab.id);
               const normalizedReload = normalizeDocument(reloaded.document, letterTemplates);
-              const nextTabs = openTabsRef.current.map((tab) => tab.id === targetTab.id ? { ...tab, document: normalizedReload, dirty: false, diskRevision: reloaded.diskRevision, externalChanged: false } : tab);
+              const nextTabs = openTabsRef.current.map((tab) => tab.id === targetTab.id ? {
+                ...tab,
+                document: normalizedReload,
+                dirty: false,
+                diskRevision: reloaded.diskRevision,
+                recoveryPath: "",
+                recoveryId: "",
+                recoverySourcePath: "",
+                recoveryBaseRevision: null,
+                recoveryRevision: null,
+                recoveredTemporary: false,
+                externalChanged: false,
+              } : tab);
               openTabsRef.current = nextTabs;
               setOpenTabs(nextTabs);
               if (targetTab.id === activeTabIdRef.current) applyDocument(normalizedReload, targetTab.path, false);
-              setPersistenceState("workspace");
-              setExternalVersionDetected(false);
+              await deleteRecoveryBestEffort(bridge.deleteTempDocument, recoveryIdToDelete);
             }
             showStatus("已重新载入磁盘版本；内存稿保留在冲突副本中", "success");
             return;
@@ -15328,7 +15671,14 @@ export default function App() {
             recoveryWriteError = error;
           }
         }
-        const nextTabs = latestSnapshot.map((tab) => (
+        const commitSnapshot = unchanged
+          ? latestSnapshot
+          : snapshotLiveTabs({ includeEditorJson: true });
+        const commitTargetTab = commitSnapshot.find((tab) => tab.id === targetTab.id) || latestTargetTab;
+        const committedLiveDocument = unchanged
+          ? livePersistedDocument
+          : mergePersistedDocumentIdentity(commitTargetTab.document || livePersistedDocument, savedDocument);
+        const nextTabs = commitSnapshot.map((tab) => (
           tab.id === targetTab.id
             ? {
                 ...tab,
@@ -15337,9 +15687,12 @@ export default function App() {
                 recoveryId: unchanged ? "" : (recoveryWrite?.recoveryId || tab.recoveryId || recoveryTabId(tab)),
                 recoverySourcePath: unchanged ? "" : (recoveryWrite?.path ? result.path : tab.recoverySourcePath || ""),
                 recoveryBaseRevision: unchanged ? null : (recoveryWrite?.path ? normalizeSessionDiskRevision(result.diskRevision) : tab.recoveryBaseRevision || null),
+                recoveryRevision: unchanged
+                  ? null
+                  : (recoveryWrite?.path ? latestTargetTab.snapshotRevision : tab.recoveryRevision),
                 recoveredTemporary: unchanged ? false : Boolean(recoveryWrite?.path || tab.recoveryPath),
-                title: livePersistedDocument.title,
-                document: livePersistedDocument,
+                title: committedLiveDocument.title,
+                document: committedLiveDocument,
                 diskRevision: result.diskRevision || tab.diskRevision,
                 externalChanged: false,
                 dirty: !unchanged,
@@ -15353,10 +15706,8 @@ export default function App() {
           setCurrentPath(result.path);
           dirtyRef.current = !unchanged;
           setDirty(!unchanged);
-          documentStateRef.current = livePersistedDocument;
-          setDocumentState(livePersistedDocument);
-          setExternalVersionDetected(false);
-          setPersistenceState(unchanged ? "workspace" : (recoveryWrite?.path ? "recovery" : "dirty"));
+          documentStateRef.current = committedLiveDocument;
+          setDocumentState(committedLiveDocument);
         }
         const activeSessionTab = nextTabs.find((tab) => tab.id === activeTabIdRef.current) || nextTabs[0];
         persistSession({ activePath: activeSessionTab?.path || activeSessionTab?.recoveryPath || "", tabs: summarizeSessionTabs(nextTabs) });
@@ -15477,6 +15828,7 @@ export default function App() {
                 diskRevision: result.diskRevision || tab.diskRevision,
                 recoverySourcePath: tab.path ? "" : tab.recoverySourcePath,
                 recoveryBaseRevision: tab.path ? null : tab.recoveryBaseRevision,
+                recoveryRevision: tab.path ? null : tab.snapshotRevision,
                 dirty: !tab.path,
               });
             }
@@ -15560,6 +15912,7 @@ export default function App() {
             recoveryId: update.recoveryId,
             recoverySourcePath: update.sourcePath,
             recoveryBaseRevision: update.baseRevision,
+            recoveryRevision: update.snapshotRevision,
             recoveredTemporary: true,
             dirty: true,
           };
@@ -15567,10 +15920,6 @@ export default function App() {
         openTabsRef.current = nextTabs;
         setOpenTabs(nextTabs);
         const activeId = activeTabIdRef.current;
-        if (updates.has(activeId)) {
-          const activeRecoveryTab = nextTabs.find((tab) => tab.id === activeId);
-          setPersistenceState(activeRecoveryTab?.externalChanged ? "external" : "recovery");
-        }
         persistSession({
           activePath: nextTabs.find((tab) => tab.id === activeId)?.path
             || nextTabs.find((tab) => tab.id === activeId)?.recoveryPath
@@ -15602,10 +15951,6 @@ export default function App() {
             openTabsRef.current = next;
             return next;
           });
-          if (tab.id === activeTabIdRef.current) {
-            setExternalVersionDetected(true);
-            setPersistenceState("external");
-          }
           showStatus(`检测到外部版本；本机稿已保留为冲突副本`, "warning");
           continue;
         }
@@ -15621,6 +15966,7 @@ export default function App() {
           recoveryId: "",
           recoverySourcePath: "",
           recoveryBaseRevision: null,
+          recoveryRevision: null,
           recoveredTemporary: false,
           dirty: false,
           externalChanged: false,
@@ -15630,8 +15976,6 @@ export default function App() {
         if (tab.id === activeTabIdRef.current) {
           dirtyRef.current = false;
           setDirty(false);
-          setPersistenceState("workspace");
-          setExternalVersionDetected(false);
         }
         if (tab.recoveryPath) await bridge.deleteTempDocument?.(recoveryTabId(tab)).catch?.(() => {});
       } catch (error) {
@@ -15652,8 +15996,53 @@ export default function App() {
 
   useEffect(() => bridge.onWindowBlur?.(() => flushDirtyWorkspaceTabs({ idleOnly: false })), [flushDirtyWorkspaceTabs]);
 
+  const handleOpenExportDialog = useCallback(() => {
+    if (!activeWorkEditor || !activeWorkDocument) {
+      showStatus("当前活动标签不是可导出的信笺", "warning");
+      return;
+    }
+    const pane = splitPaneActive ? "right" : "main";
+    const tabId = splitPaneActive ? rightSplitTabIdRef.current : activeTabIdRef.current;
+    if (!tabId) {
+      showStatus("没有找到要导出的信笺", "warning");
+      return;
+    }
+    setExportTarget({
+      pane,
+      tabId,
+      title: activeWorkDocument.title || "未命名信笺",
+    });
+    setExportDialogOpen(true);
+  }, [activeWorkDocument, activeWorkEditor, showStatus, splitPaneActive]);
+
+  const handleCloseExportDialog = useCallback(() => {
+    setExportDialogOpen(false);
+    setExportTarget(null);
+  }, []);
+
+  const resolveExportTarget = useCallback(() => {
+    if (!exportTarget?.tabId) {
+      throw new Error("导出目标已经失效，请关闭窗口后重试");
+    }
+    if (exportTarget.pane === "right") {
+      if (rightSplitTabIdRef.current !== exportTarget.tabId || !rightSplitEditor) {
+        throw new Error("右侧导出目标已经变化，请关闭窗口后重试");
+      }
+      const nextDocument = getRightSplitSaveDocument();
+      if (!nextDocument) throw new Error("无法读取右侧信笺内容");
+      return { pane: "right", document: nextDocument, canvas: rightCanvasRef.current };
+    }
+    if (activeTabIdRef.current !== exportTarget.tabId || !editor) {
+      throw new Error("导出目标已经变化，请关闭窗口后重试");
+    }
+    const nextDocument = getSaveDocument();
+    if (!nextDocument) throw new Error("无法读取当前信笺内容");
+    return { pane: "main", document: nextDocument, canvas: mainCanvasRef.current };
+  }, [editor, exportTarget, getRightSplitSaveDocument, getSaveDocument, rightSplitEditor]);
+
   useEffect(() => {
     const handleKeyDown = (event) => {
+      if (isGlobalShortcutBlocked(event)) return;
       if (event.key === "Escape" && searchMode) {
         event.preventDefault();
         closeSearch();
@@ -15679,7 +16068,7 @@ export default function App() {
         handleImportDocument();
       } else if (event.altKey && key === "e") {
         event.preventDefault();
-        setExportDialogOpen(true);
+        handleOpenExportDialog();
       } else if (!event.altKey && key === "n") {
         event.preventDefault();
         handleNew();
@@ -15706,16 +16095,18 @@ export default function App() {
 
     window.document.addEventListener("keydown", handleKeyDown, true);
     return () => window.document.removeEventListener("keydown", handleKeyDown, true);
-  }, [activePane, closeSearch, handleCloseGroupView, handleImportDocument, handleNew, handleOpen, handleSave, openSearch, searchMode]);
+  }, [activePane, closeSearch, handleCloseGroupView, handleImportDocument, handleNew, handleOpen, handleOpenExportDialog, handleSave, openSearch, searchMode]);
 
   const handleExportPdf = useCallback(async (targetPath) => {
-    const nextDocument = getSaveDocument();
-    setDocumentState(nextDocument);
+    const target = resolveExportTarget();
+    const nextDocument = target.document;
+    setExportRenderPane(target.pane);
     setPrintMode(true);
     let restorePrintPaperBackground = () => {};
     try {
       await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
-      const printSheet = window.document.querySelector(".canvas.print-mode .paper-sheet");
+      const printSheet = target.canvas?.querySelector(".paper-sheet");
+      if (!printSheet) throw new Error("无法找到要导出的信笺画布");
       restorePrintPaperBackground = applyPrintPaperBackground(printSheet);
       await new Promise((resolve) => window.requestAnimationFrame(resolve));
       const result = await bridge.exportPdf(nextDocument.title, targetPath);
@@ -15726,25 +16117,26 @@ export default function App() {
     } finally {
       restorePrintPaperBackground();
       setPrintMode(false);
+      setExportRenderPane("");
     }
-  }, [getSaveDocument, showStatus]);
+  }, [resolveExportTarget, showStatus]);
 
   const handleExportImages = useCallback(async (targetPath) => {
-    const nextDocument = getSaveDocument();
-    setDocumentState(nextDocument);
-    const previousCanvasScroll = window.document.querySelector(".canvas")?.scrollTop || 0;
+    const target = resolveExportTarget();
+    const nextDocument = target.document;
+    const targetCanvas = target.canvas;
+    if (!targetCanvas) throw new Error("无法找到要导出的信笺画布");
+    const previousCanvasScroll = readCanvasScrollState(targetCanvas);
+    setExportRenderPane(target.pane);
     window.document.body.classList.add("image-export-body");
     setImageExportMode(true);
     try {
       await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
-      const canvas = window.document.querySelector(".canvas");
-      if (canvas) {
-        canvas.scrollTop = 0;
-        canvas.scrollLeft = 0;
-      }
+      targetCanvas.scrollTop = 0;
+      targetCanvas.scrollLeft = 0;
       window.scrollTo(0, 0);
       await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
-      const pageRects = await prepareImageExportRects();
+      const pageRects = await prepareImageExportRects(targetCanvas.querySelector(".paper-sheet"));
       await new Promise((resolve) => window.requestAnimationFrame(resolve));
       if (!pageRects.length) {
         showStatus("没有可导出的内容", "warning");
@@ -15756,21 +16148,18 @@ export default function App() {
       }
       return result;
     } finally {
-      const canvas = window.document.querySelector(".canvas");
-      if (canvas) {
-        window.requestAnimationFrame(() => {
-          canvas.scrollTop = previousCanvasScroll;
-        });
-      }
+      window.requestAnimationFrame(() => {
+        restoreCanvasScrollState(targetCanvas, previousCanvasScroll);
+      });
       cleanupImageExportStage();
       setImageExportMode(false);
+      setExportRenderPane("");
       window.document.body.classList.remove("image-export-body");
     }
-  }, [getSaveDocument, showStatus]);
+  }, [resolveExportTarget, showStatus]);
 
   const handleExportEditable = useCallback(async (format, targetPath) => {
-    const nextDocument = getSaveDocument();
-    setDocumentState(nextDocument);
+    const nextDocument = resolveExportTarget().document;
     const exchangeDocument = {
       ...nextDocument,
       comments: [],
@@ -15782,9 +16171,13 @@ export default function App() {
       showStatus(warnings.length ? `${format.toUpperCase()} 已导出；有 ${warnings.length} 项降级` : `${format.toUpperCase()} 已导出`, warnings.length ? "warning" : "success");
     }
     return result;
-  }, [getSaveDocument, showStatus]);
+  }, [resolveExportTarget, showStatus]);
 
   const handleInsertImage = useCallback(async () => {
+    if (activeWorkReadOnly || !activeWorkEditor) {
+      showStatus("当前信笺为只读，不能插入图片", "warning");
+      return;
+    }
     let result;
     try {
       result = await bridge.pickImage();
@@ -15811,9 +16204,13 @@ export default function App() {
       width: "78%",
       imageId: createDocumentId(),
     }).run();
-  }, [activeWorkEditor, showStatus]);
+  }, [activeWorkEditor, activeWorkReadOnly, showStatus]);
 
   const handleInsertMedia = useCallback(async (kind) => {
+    if (activeWorkReadOnly || !activeWorkEditor) {
+      showStatus("当前信笺为只读，不能插入媒体", "warning");
+      return;
+    }
     const picker = kind === "video" ? bridge.pickVideo : bridge.pickAudio;
     let result;
     try {
@@ -15851,15 +16248,19 @@ export default function App() {
       },
     }).run();
     showStatus(`${label}已插入`, "success");
-  }, [activeWorkEditor, showStatus]);
+  }, [activeWorkEditor, activeWorkReadOnly, showStatus]);
 
   const handleOpenLinkDialog = useCallback(() => {
+    if (activeWorkReadOnly) {
+      showStatus("当前信笺为只读，不能修改链接", "warning");
+      return;
+    }
     const context = getEditorLinkContext(activeWorkEditor, activeWorkSelectionRef);
     if (!context || !activeWorkEditor) {
       return;
     }
     setLinkDialog({ ...context, editor: activeWorkEditor });
-  }, [activeWorkEditor, activeWorkSelectionRef]);
+  }, [activeWorkEditor, activeWorkReadOnly, activeWorkSelectionRef, showStatus]);
 
   const handleCloseLinkDialog = useCallback(() => {
     setLinkDialog(null);
@@ -15873,7 +16274,8 @@ export default function App() {
   }, []);
 
   const handleSubmitLink = useCallback(({ text, url }) => {
-    if (!linkDialog?.editor) {
+    if (!linkDialog?.editor || activeWorkReadOnly) {
+      if (activeWorkReadOnly) showStatus("当前信笺为只读，不能修改链接", "warning");
       return;
     }
     const content = {
@@ -15888,10 +16290,11 @@ export default function App() {
       .run();
     setLinkDialog(null);
     showStatus(linkDialog.editing ? "链接已更新" : "链接已插入", "success");
-  }, [linkDialog, showStatus]);
+  }, [activeWorkReadOnly, linkDialog, showStatus]);
 
   const handleRemoveLink = useCallback(() => {
-    if (!linkDialog?.editor) {
+    if (!linkDialog?.editor || activeWorkReadOnly) {
+      if (activeWorkReadOnly) showStatus("当前信笺为只读，不能修改链接", "warning");
       return;
     }
     const label = String(linkDialog.text || "");
@@ -15901,7 +16304,7 @@ export default function App() {
     ).setTextSelection(linkDialog.from + label.length).run();
     setLinkDialog(null);
     showStatus("链接已移除", "success");
-  }, [linkDialog, showStatus]);
+  }, [activeWorkReadOnly, linkDialog, showStatus]);
 
   const updateDocumentSetting = useCallback((patch) => {
     const updatedAt = new Date().toISOString();
@@ -16326,6 +16729,10 @@ export default function App() {
     if (kind !== "optimize" && kind !== "chat") {
       return false;
     }
+    if (activeTabReadOnly) {
+      showStatus("当前信笺为只读，不能进入 AI 模式", "warning");
+      return false;
+    }
     if (!aiHasUsableProvider) {
       showStatus("请先在“设置 > AI 配置”中配置并测试可用模型", "warning");
       return false;
@@ -16356,9 +16763,14 @@ export default function App() {
     }
     clearActiveAiRequestRefs();
     return true;
-  }, [activePane, aiHasUsableProvider, aiModeKind, clearActiveAiRequestRefs, effectiveAiProvider, immersiveMode, leftSidebarCollapsed, showStatus, snapshotLiveTabs, updateActiveDocumentAiState]);
+  }, [activePane, activeTabReadOnly, aiHasUsableProvider, aiModeKind, clearActiveAiRequestRefs, effectiveAiProvider, immersiveMode, leftSidebarCollapsed, showStatus, snapshotLiveTabs, updateActiveDocumentAiState]);
 
   const requestAiModeChange = useCallback(async (kind) => {
+    if (activeTabReadOnly) {
+      setAiModeChooserOpen(false);
+      showStatus("当前信笺为只读，不能进入 AI 模式", "warning");
+      return false;
+    }
     if (!aiHasUsableProvider) {
       openAiSettings();
       showStatus(AI_MODEL_REQUIRED_MESSAGE, "warning", { duration: 5000, dismissible: true });
@@ -16393,7 +16805,7 @@ export default function App() {
       setAiModeChooserOpen(false);
     }
     return activated;
-  }, [activateAiMode, aiHasUsableProvider, aiModeKind, aiStatus, openAiSettings, showConfirmDialog, showStatus]);
+  }, [activateAiMode, activeTabReadOnly, aiHasUsableProvider, aiModeKind, aiStatus, openAiSettings, showConfirmDialog, showStatus]);
 
   const requestExitAiMode = useCallback(async () => {
     if (aiModeKind === "none") {
@@ -16585,14 +16997,20 @@ export default function App() {
 
   const refreshResearchLibrarySources = useCallback(async (libraryId = researchRootRef.current?.libraryId) => {
     if (!libraryId) {
+      researchSourcesRequestControllerRef.current.invalidate("sources");
       setLibrarySources([]);
       setLibrarySourcesReady(false);
       return [];
     }
+    const request = researchSourcesRequestControllerRef.current.begin("sources");
+    setLibrarySourcesReady(false);
     try {
       const result = await bridge.listResearchLibrarySources?.(libraryId);
       const sources = Array.isArray(result?.sources) ? result.sources : [];
-      if (researchRootRef.current?.libraryId !== libraryId) return sources;
+      if (
+        !researchSourcesRequestControllerRef.current.isCurrent(request)
+        || researchRootRef.current?.libraryId !== libraryId
+      ) return sources;
       const warningCount = Array.isArray(result?.warnings) ? result.warnings.length : 0;
       const removedNoteCount = Array.isArray(result?.removedNoteSourceIds) ? result.removedNoteSourceIds.length : 0;
       if (warningCount) showStatus(`资料来源读取完成；${warningCount} 项元数据需要检查`, "warning");
@@ -16605,22 +17023,34 @@ export default function App() {
       });
       return sources;
     } catch (error) {
-      if (researchRootRef.current?.libraryId === libraryId) {
+      if (
+        researchSourcesRequestControllerRef.current.isCurrent(request)
+        && researchRootRef.current?.libraryId === libraryId
+      ) {
         setLibrarySourcesReady(false);
         setResearchTreeError(error?.message || "资料来源读取失败");
       }
       return [];
+    } finally {
+      researchSourcesRequestControllerRef.current.finish(request);
     }
   }, [showStatus]);
 
   const refreshResearchWebTree = useCallback(async (libraryId = researchRootRef.current?.libraryId) => {
     if (!libraryId) {
+      researchWebRequestControllerRef.current.invalidate("web-tree");
       setWebTreeState({ folders: [], placements: {}, diskRevision: null, warnings: [], readOnly: false });
+      setWebTreeReady(false);
       return null;
     }
+    const request = researchWebRequestControllerRef.current.begin("web-tree");
+    setWebTreeReady(false);
     try {
       const result = await bridge.listResearchWebTree?.(libraryId);
-      if (researchRootRef.current?.libraryId !== libraryId) return result;
+      if (
+        !researchWebRequestControllerRef.current.isCurrent(request)
+        || researchRootRef.current?.libraryId !== libraryId
+      ) return result;
       const next = {
         folders: Array.isArray(result?.folders) ? result.folders : (Array.isArray(result?.tree?.folders) ? result.tree.folders : []),
         placements: result?.placements && typeof result.placements === "object" ? result.placements : (result?.tree?.placements || {}),
@@ -16629,11 +17059,20 @@ export default function App() {
         readOnly: Boolean(result?.readOnly),
       };
       setWebTreeState(next);
+      setWebTreeReady(true);
       if (next.warnings.length) showStatus("网页分组索引需要检查；当前以只读扁平列表显示", "warning");
       return result;
     } catch (error) {
-      showStatus(error?.message || "网页分组读取失败", "warning");
+      if (
+        researchWebRequestControllerRef.current.isCurrent(request)
+        && researchRootRef.current?.libraryId === libraryId
+      ) {
+        setWebTreeReady(false);
+        showStatus(error?.message || "网页分组读取失败", "warning");
+      }
       return null;
+    } finally {
+      researchWebRequestControllerRef.current.finish(request);
     }
   }, [showStatus]);
 
@@ -16649,49 +17088,94 @@ export default function App() {
     const normalizedPath = normalizeResearchRelativePath(relativePath);
     const updateCurrent = options.current === true
       || (options.current !== false && normalizedPath === researchCurrentRelativePathRef.current);
+    const controller = updateCurrent
+      ? researchCurrentRequestControllerRef.current
+      : researchBranchRequestControllerRef.current;
+    const scope = updateCurrent ? "current" : normalizedPath;
+    if (!updateCurrent && !options.expand && !researchExpandedFoldersRef.current[normalizedPath]?.expanded) {
+      return [];
+    }
+    const request = controller.begin(scope);
     if (updateCurrent) {
       setResearchTreeLoading(true);
       setResearchTreeError("");
     } else if (normalizedPath) {
-      setResearchExpandedFolders((previous) => ({
-        ...previous,
-        [normalizedPath]: { ...(previous[normalizedPath] || {}), expanded: true, loading: true, error: "" },
-      }));
+      setResearchExpandedFolders((previous) => {
+        const next = {
+          ...previous,
+          [normalizedPath]: {
+            ...(previous[normalizedPath] || {}),
+            expanded: options.expand === true ? true : Boolean(previous[normalizedPath]?.expanded),
+            loading: true,
+            error: "",
+          },
+        };
+        researchExpandedFoldersRef.current = next;
+        return next;
+      });
     }
     try {
       const result = await bridge.listResearchFolder?.(libraryId, normalizedPath);
       const entries = normalizeResearchTreeEntries(result?.entries);
-      if (researchRootRef.current?.libraryId !== libraryId) return entries;
+      if (
+        !controller.isCurrent(request)
+        || researchRootRef.current?.libraryId !== libraryId
+      ) return entries;
       if (updateCurrent) {
         if (researchCurrentRelativePathRef.current !== normalizedPath) return entries;
         setResearchEntries(entries);
       } else if (normalizedPath) {
-        setResearchEntries((previous) => replaceResearchTreeFolder(previous, normalizedPath, entries));
-        setResearchExpandedFolders((previous) => ({
-          ...previous,
-          [normalizedPath]: { expanded: true, loading: false, error: "", entries },
-        }));
+        setResearchExpandedFolders((previous) => {
+          if (!previous[normalizedPath]?.expanded) return previous;
+          const next = {
+            ...previous,
+            [normalizedPath]: { ...previous[normalizedPath], loading: false, error: "", entries },
+          };
+          researchExpandedFoldersRef.current = next;
+          return next;
+        });
+        if (researchExpandedFoldersRef.current[normalizedPath]?.expanded) {
+          setResearchEntries((previous) => replaceResearchTreeFolder(previous, normalizedPath, entries));
+        }
       }
       return entries;
     } catch (error) {
-      if (researchRootRef.current?.libraryId !== libraryId) return [];
+      if (
+        !controller.isCurrent(request)
+        || researchRootRef.current?.libraryId !== libraryId
+      ) return [];
       const message = error?.message || "资料目录读取失败";
       if (updateCurrent && researchCurrentRelativePathRef.current === normalizedPath) setResearchTreeError(message);
       else if (normalizedPath) {
-        setResearchExpandedFolders((previous) => ({
-          ...previous,
-          [normalizedPath]: { ...(previous[normalizedPath] || {}), expanded: true, loading: false, error: message },
-        }));
+        setResearchExpandedFolders((previous) => {
+          if (!previous[normalizedPath]?.expanded) return previous;
+          const next = {
+            ...previous,
+            [normalizedPath]: { ...previous[normalizedPath], loading: false, error: message },
+          };
+          researchExpandedFoldersRef.current = next;
+          return next;
+        });
       }
       return [];
     } finally {
-      if (updateCurrent && researchRootRef.current?.libraryId === libraryId && researchCurrentRelativePathRef.current === normalizedPath) {
+      if (
+        controller.isCurrent(request)
+        && updateCurrent
+        && researchRootRef.current?.libraryId === libraryId
+        && researchCurrentRelativePathRef.current === normalizedPath
+      ) {
         setResearchTreeLoading(false);
       }
+      controller.finish(request);
     }
   }, []);
 
   const applyResearchRoot = useCallback(async (root) => {
+    researchCurrentRequestControllerRef.current.invalidateAll();
+    researchBranchRequestControllerRef.current.invalidateAll();
+    researchSourcesRequestControllerRef.current.invalidateAll();
+    researchWebRequestControllerRef.current.invalidateAll();
     const normalized = root && typeof root === "object" ? root : { configured: false, available: false };
     const previousLibraryId = String(researchRootRef.current?.libraryId || "");
     const nextLibraryId = normalized.available ? String(normalized.libraryId || "") : "";
@@ -16704,12 +17188,14 @@ export default function App() {
     setResearchRoot(normalized);
     setResearchCurrentRelativePath("");
     setResearchEntries([]);
+    researchExpandedFoldersRef.current = {};
     setResearchExpandedFolders({});
     setResearchTreeLoading(false);
     setResearchBusyKeys([]);
     setLibrarySources([]);
     setLibrarySourcesReady(false);
     setWebTreeState({ folders: [], placements: {}, diskRevision: null, warnings: [], readOnly: false });
+    setWebTreeReady(false);
     if (libraryChanged || !nextLibraryId || staleResearchPane) {
       setActiveLibraryItem(null);
       setActiveResearchError("");
@@ -16748,7 +17234,7 @@ export default function App() {
       removeOpenResearchViews((view) => !libraryId || view.libraryId !== libraryId);
       return;
     }
-    if (librarySourcesReady) {
+    if (librarySourcesReady && webTreeReady) {
       const availableSourceIds = new Set(librarySources.filter((source) => {
         if (source.type !== "web") return true;
         if (webWorkspaceIdentityPending) return true;
@@ -16777,7 +17263,7 @@ export default function App() {
     if (!item) return;
     if (!existing) setResearchItemsByViewId((previous) => ({ ...previous, [active.viewId]: item }));
     setActiveLibraryItem((previous) => previous === item ? previous : item);
-  }, [librarySources, librarySourcesReady, removeOpenResearchViews, researchItemsByViewId, researchRoot, webScopeKey, webTreeState.placements, webWorkspaceIdentityPending, workspaceGroups]);
+  }, [librarySources, librarySourcesReady, removeOpenResearchViews, researchItemsByViewId, researchRoot, webScopeKey, webTreeReady, webTreeState.placements, webWorkspaceIdentityPending, workspaceGroups]);
 
   const openResearchTargetSignature = useMemo(() => JSON.stringify(workspaceGroups.secondary.views
     .filter((view) => view.kind === WORKSPACE_VIEW_KIND.RESEARCH)
@@ -16874,19 +17360,26 @@ export default function App() {
     const relativePath = String(entry?.relativePath || "");
     if (!relativePath) return;
     if (!expanded) {
-      setResearchExpandedFolders((previous) => ({
-        ...previous,
-        [relativePath]: { ...(previous[relativePath] || {}), expanded: false, loading: false },
-      }));
+      researchBranchRequestControllerRef.current.invalidate(relativePath);
+      setResearchExpandedFolders((previous) => {
+        const next = {
+          ...previous,
+          [relativePath]: { ...(previous[relativePath] || {}), expanded: false, loading: false },
+        };
+        researchExpandedFoldersRef.current = next;
+        return next;
+      });
       return;
     }
-    await refreshIndependentResearchFolder(relativePath, undefined, { current: false });
+    await refreshIndependentResearchFolder(relativePath, undefined, { current: false, expand: true });
   }, [refreshIndependentResearchFolder]);
 
   const handleNavigateResearchPath = useCallback(async (relativePath = "") => {
     if (!researchRootRef.current?.libraryId) return;
     const normalizedPath = normalizeResearchRelativePath(relativePath);
     researchCurrentRelativePathRef.current = normalizedPath;
+    researchBranchRequestControllerRef.current.invalidateAll();
+    researchExpandedFoldersRef.current = {};
     setResearchCurrentRelativePath(normalizedPath);
     setResearchEntries([]);
     setResearchExpandedFolders({});
@@ -17511,17 +18004,24 @@ export default function App() {
 
   const handleEditFootnote = useCallback((footnote) => {
     if (!footnote?.id) return;
+    if (activeWorkReadOnly) {
+      showStatus("当前信笺为只读，不能编辑脚注", "warning");
+      return;
+    }
     setFootnoteDialog({ open: true, footnote, insertTarget: null });
-  }, []);
+  }, [activeWorkReadOnly, showStatus]);
 
   const handleSaveFootnoteDialog = useCallback(async (text) => {
     if (footnoteDialog.footnote?.id) {
-      updateKnowledgeDocument((document) => ({
+      const updated = updateKnowledgeDocument((document) => ({
         ...document,
         footnotes: (document.footnotes || []).map((item) => item.id === footnoteDialog.footnote.id
           ? { ...item, text: text.trim(), updatedAt: new Date().toISOString() }
           : item),
       }));
+      if (!updated) {
+        return { ok: false, error: "当前信笺为只读或已经变化，脚注未保存" };
+      }
       showStatus("脚注已更新", "success");
       return true;
     }
@@ -17540,21 +18040,33 @@ export default function App() {
   }, [footnoteDialog.footnote, footnoteDialog.insertTarget, insertAtCapturedSelection, showStatus, updateKnowledgeDocument, updateKnowledgeDocumentForTarget]);
 
   const handleDeleteFootnote = useCallback(async (footnote) => {
+    if (activeWorkReadOnly) {
+      showStatus("当前信笺为只读，不能删除脚注", "warning");
+      return;
+    }
     const choice = await showConfirmDialog({ title: "删除脚注", message: "正文中的所有对应脚注标记也会删除。", actions: [{ value: "delete", label: "删除", tone: "danger" }, { value: "cancel", label: "取消" }], cancelValue: "cancel" });
     if (choice !== "delete") return;
     removeKnowledgeNodesByAttribute(structureWorkEditor, "paperFootnoteReference", "footnoteId", footnote.id);
     // Keep the detached metadata so a single Ctrl+Z can restore a valid inline
     // reference. Unreferenced footnotes are hidden and omitted by exporters.
-  }, [showConfirmDialog, structureWorkEditor]);
+  }, [activeWorkReadOnly, showConfirmDialog, showStatus, structureWorkEditor]);
 
   const handleAddCitationSource = useCallback(() => {
+    if (activeWorkReadOnly) {
+      showStatus("当前信笺为只读，不能新增参考文献来源", "warning");
+      return;
+    }
     setCitationSourceDialog({ open: true, source: null, insertTarget: null, citationPage: "", returnToPicker: false });
-  }, []);
+  }, [activeWorkReadOnly, showStatus]);
 
   const handleEditCitationSource = useCallback((source) => {
     if (!source?.id) return;
+    if (activeWorkReadOnly) {
+      showStatus("当前信笺为只读，不能编辑参考文献来源", "warning");
+      return;
+    }
     setCitationSourceDialog({ open: true, source, insertTarget: null, citationPage: "", returnToPicker: false });
-  }, []);
+  }, [activeWorkReadOnly, showStatus]);
 
   const persistCitationSource = useCallback(async (input, { insertTarget = null } = {}) => {
     const previous = input?.id ? input : null;
@@ -17578,16 +18090,18 @@ export default function App() {
         : (current) => [...current.filter((item) => item.id !== savedSource.id), savedSource]);
     }
     if (!saveToWorkspace && !insertTarget) {
-      updateKnowledgeDocument((document) => {
+      const updated = updateKnowledgeDocument((document) => {
         const sources = new Map((document.citationSources || []).map((item) => [item.id, item]));
         sources.set(savedSource.id, savedSource);
         return { ...document, citationSources: [...sources.values()] };
       });
+      if (!updated) throw new Error("当前信笺为只读或已经变化，参考文献来源未保存");
     } else if (previous?.id) {
-      updateKnowledgeDocument((document) => ({
+      const updated = updateKnowledgeDocument((document) => ({
         ...document,
         citationSources: (document.citationSources || []).map((item) => item.id === savedSource.id ? savedSource : item),
       }));
+      if (!updated) throw new Error("当前信笺为只读或已经变化，参考文献来源快照未更新");
     }
     return { source: savedSource, savedToWorkspace: saveToWorkspace };
   }, [updateKnowledgeDocument, workspaceCitationSources, writingWorkspaceRoot]);
@@ -17615,6 +18129,9 @@ export default function App() {
 
   const handleSaveCitationSourceDialog = useCallback(async (input, citationPage = "") => {
     const target = citationSourceDialog.insertTarget;
+    if (!target && activeWorkReadOnly) {
+      return { ok: false, error: "当前信笺为只读，不能保存参考文献来源" };
+    }
     const result = await persistCitationSource(input, { insertTarget: target });
     if (target) {
       if (handleInsertCitationAtTarget(target, result.source, citationPage)) {
@@ -17634,7 +18151,7 @@ export default function App() {
       showStatus(result.savedToWorkspace ? "参考文献来源已保存到当前工作区" : "参考文献来源已保存到当前信笺", "success");
     }
     return true;
-  }, [citationSourceDialog.insertTarget, handleInsertCitationAtTarget, persistCitationSource, showStatus, updateKnowledgeDocumentForTarget]);
+  }, [activeWorkReadOnly, citationSourceDialog.insertTarget, handleInsertCitationAtTarget, persistCitationSource, showStatus, updateKnowledgeDocumentForTarget]);
 
   const handleOpenCitationPicker = useCallback(() => {
     const target = captureElementInsertTarget();
@@ -17690,6 +18207,10 @@ export default function App() {
 
   const handleDeleteCitationSource = useCallback(async (source) => {
     if (!source?.id) return;
+    if (activeWorkReadOnly) {
+      showStatus("当前信笺为只读，不能移除参考文献来源", "warning");
+      return;
+    }
     const inWorkspace = workspaceCitationSources.some((item) => item.id === source.id);
     const isCited = citationOrder.includes(source.id);
     const choice = await showConfirmDialog({
@@ -17714,7 +18235,7 @@ export default function App() {
     } catch (error) {
       showStatus(error?.message || "参考文献来源移除失败", "warning");
     }
-  }, [citationOrder, showConfirmDialog, showStatus, updateKnowledgeDocument, workspaceCitationSources, writingWorkspaceRoot]);
+  }, [activeWorkReadOnly, citationOrder, showConfirmDialog, showStatus, updateKnowledgeDocument, workspaceCitationSources, writingWorkspaceRoot]);
 
   const handleCreateCitationFromResearch = useCallback(async (researchSource) => {
     if (!researchSource) {
@@ -17974,6 +18495,10 @@ export default function App() {
   }, [handleOpenFolderFile, showStatus]);
 
   const handleRemoveInternalLink = useCallback((link) => {
+    if (activeWorkReadOnly) {
+      showStatus("当前信笺为只读，不能移除关联", "warning");
+      return;
+    }
     const position = Number(link?.position);
     const node = Number.isFinite(position) ? structureWorkEditor?.state.doc.nodeAt(position) : null;
     if (!node || node.type.name !== "paperInternalLink") {
@@ -17981,7 +18506,7 @@ export default function App() {
       return;
     }
     structureWorkEditor.chain().focus().deleteRange({ from: position, to: position + node.nodeSize }).run();
-  }, [showStatus, structureWorkEditor]);
+  }, [activeWorkReadOnly, showStatus, structureWorkEditor]);
 
   const handleJumpInternalLinkUsage = useCallback((link) => {
     const targetDocumentId = link?.targetDocumentId || link?.documentId;
@@ -18077,12 +18602,12 @@ export default function App() {
 
   useEffect(() => {
     const handleKeyDown = (event) => {
+      if (isGlobalShortcutBlocked(event)) return;
       if (event.key === "F11") {
         event.preventDefault();
         setImmersive(!immersiveMode);
         return;
       }
-      if (event.defaultPrevented) return;
       if (event.key !== "Escape") return;
       if (event.target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
       if (window.document.querySelector("[role='dialog'],[role='alertdialog'],.nav-menu-popover,.tree-context-menu,.template-select-popover")) return;
@@ -18112,6 +18637,10 @@ export default function App() {
 
   const handleStartAiOptimize = useCallback(async () => {
     if (aiStatus === "streaming") {
+      return;
+    }
+    if (activeTabReadOnly) {
+      showStatus("当前信笺为只读，不能启动 AI 优化", "warning");
       return;
     }
     if (!aiHasUsableProvider) {
@@ -18170,7 +18699,7 @@ export default function App() {
       });
       showStatus(result?.message || "AI 生成启动失败", "warning");
     }
-  }, [aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.model, effectiveAiConfig.modelId, effectiveAiConfig.modelName, effectiveAiConfig.provider, editor, letterTemplates, openAiSettings, showStatus, updateOptimizeStateForKey, writingWorkspaceRoot]);
+  }, [activeTabReadOnly, aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.model, effectiveAiConfig.modelId, effectiveAiConfig.modelName, effectiveAiConfig.provider, editor, letterTemplates, openAiSettings, showStatus, updateOptimizeStateForKey, writingWorkspaceRoot]);
 
   const handleAiChatPresetSelect = useCallback((preset) => {
     if (preset?.id === "rewrite-selection" && !aiChatSelections.length) {
@@ -18186,6 +18715,10 @@ export default function App() {
   const handleSendAiChat = useCallback(async () => {
     const question = aiChatInput.trim();
     if (!question || aiStatus === "streaming") {
+      return;
+    }
+    if (activeTabReadOnly) {
+      showStatus("当前信笺为只读，不能发送 AI 问答", "warning");
       return;
     }
     if (!aiHasUsableProvider) {
@@ -18299,7 +18832,7 @@ export default function App() {
       aiRequestMetaRef.current = { kind: "" };
       showStatus(message, "warning");
     }
-  }, [aiChatCodexImageMode, aiChatInput, aiChatSelections, aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.modelId, effectiveAiConfig.provider, effectiveAiConfig.transport, editor, letterTemplates, openAiSettings, showStatus, updateChatStateForKey, writingWorkspaceRoot]);
+  }, [activeTabReadOnly, aiChatCodexImageMode, aiChatInput, aiChatSelections, aiHasUsableProvider, aiStatus, currentPath, effectiveAiConfig.modelId, effectiveAiConfig.provider, effectiveAiConfig.transport, editor, letterTemplates, openAiSettings, showStatus, updateChatStateForKey, writingWorkspaceRoot]);
 
   const handleClearAiChat = useCallback(() => {
     if (aiStatus === "streaming") {
@@ -18415,6 +18948,7 @@ export default function App() {
     } : null);
     if (!aiApplyPreview) return undefined;
     const handleKeyDown = (event) => {
+      if (isGlobalShortcutBlocked(event)) return;
       if (event.key !== "Escape") return;
       event.preventDefault();
       cancelAiApplyPreview();
@@ -18557,6 +19091,7 @@ export default function App() {
       void handleManualAiApplyTarget(target.id);
     };
     const handleKeyDown = (event) => {
+      if (isGlobalShortcutBlocked(event)) return;
       if (event.key !== "Escape") return;
       event.preventDefault();
       setManualAiApply(null);
@@ -18604,6 +19139,7 @@ export default function App() {
     "desktop-shell",
     printMode ? "print-mode" : "",
     imageExportMode ? "image-export-mode" : "",
+    (printMode || imageExportMode) && exportRenderPane ? `export-${exportRenderPane}-pane` : "",
     aiMode ? "ai-mode" : "",
     leftSidebarCollapsed ? "left-sidebar-collapsed" : "",
     immersiveMode ? "immersive-mode" : "",
@@ -18648,7 +19184,7 @@ export default function App() {
         onOpen={handleOpen}
         onImport={handleImportDocument}
         onSave={handleSave}
-        onOpenExport={() => setExportDialogOpen(true)}
+        onOpenExport={handleOpenExportDialog}
         onInsertImage={handleInsertImage}
         onInsertAudio={() => handleInsertMedia("audio")}
         onInsertVideo={() => handleInsertMedia("video")}
@@ -18659,6 +19195,7 @@ export default function App() {
         onOpenHelp={openHelpCenter}
         onOpenSettings={openSettings}
         settingsTriggerRef={settingsTriggerRef}
+        exportTriggerRef={exportTriggerRef}
         onOpenSearch={openSearch}
         workspaceSearchAvailable={Boolean(writingWorkspaceRoot)}
         aiMode={aiMode}
@@ -18667,7 +19204,9 @@ export default function App() {
         aiConfigured={aiHasUsableProvider}
         aiModeChooserOpen={aiModeChooserOpen}
         aiModeTriggerRef={aiModeTriggerRef}
-        editorLocked={(aiMode && aiStatus === "streaming") || Boolean(aiApplyPreview)}
+        aiReadOnly={activeTabReadOnly}
+        editorLocked={activeWorkReadOnly || (aiMode && aiStatus === "streaming") || Boolean(aiApplyPreview)}
+        documentReadOnly={!activeWorkEditor || activeWorkReadOnly}
         onToggleAiModeChooser={toggleAiModeChooser}
         immersiveMode={immersiveMode}
         onToggleImmersive={() => setImmersive(!immersiveMode)}
@@ -18752,6 +19291,7 @@ export default function App() {
                   citationOrder,
                   pendingPage: pendingCitationPage,
                   loading: citationLibraryLoading,
+                  readOnly: activeWorkReadOnly,
                   onJumpFootnote: handleJumpFootnote,
                   onEditFootnote: handleEditFootnote,
                   onDeleteFootnote: handleDeleteFootnote,
@@ -18976,7 +19516,7 @@ export default function App() {
                       savedSelectionRef={rightSplitSelectionRef}
                       className={activePane === "right" ? "right-split-canvas active-pane" : "right-split-canvas"}
                       onActivate={() => setActivePane("right")}
-                      readOnly={Boolean(rightSplitTab?.readOnly || rightSplitDocument?._readOnlyFutureSchema)}
+                      readOnly={rightSplitReadOnly}
                       comments={rightSplitDocument.comments}
                       activeCommentId={commentPanel?.pane === "right" ? commentPanel.commentId : ""}
                       commentsHidden={aiMode || printMode || imageExportMode}
@@ -19061,15 +19601,15 @@ export default function App() {
         key={`status-${activeEditorViewKey}`}
         editor={activeWorkEditor}
         updatedAt={(activeWorkDocument || documentState).updatedAt}
-        dirty={splitPaneActive ? Boolean(rightSplitTab?.dirty) : dirty}
+        dirty={Boolean(activeWorkTab?.dirty)}
         version={appVersion}
         cacheSummary={documentCacheSummary}
         updateState={updateState}
         onRunUpdate={handleRunUpdate}
         onClearCache={handleClearDocumentCache}
         onOpenReleaseNotes={openReleaseNotes}
-        persistenceState={persistenceState}
-        externalVersion={externalVersionDetected}
+        persistenceState={activeWorkPersistenceState}
+        externalVersion={Boolean(activeWorkTab?.externalChanged)}
         readOnly={activeWorkReadOnly}
       />
       {commentPanel ? (
@@ -19219,8 +19759,9 @@ export default function App() {
       />
       <ExportDialog
         open={exportDialogOpen}
-        documentTitle={activeWorkDocument?.title || documentState.title || "未命名信笺"}
-        onClose={() => setExportDialogOpen(false)}
+        documentTitle={exportTarget?.title || "未命名信笺"}
+        returnFocusRef={exportTriggerRef}
+        onClose={handleCloseExportDialog}
         onExportPdf={handleExportPdf}
         onExportImages={handleExportImages}
         onExportEditable={handleExportEditable}

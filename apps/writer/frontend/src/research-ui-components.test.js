@@ -144,7 +144,7 @@ test("research browsing path resets with the root and closes a stale research pa
   assert.match(app, /setResearchCurrentRelativePath\(""\)/);
   assert.match(app, /workspaceGroupsRef\.current\.secondary\.views\.some\(\(view\) => view\.kind === WORKSPACE_VIEW_KIND\.RESEARCH/);
   assert.match(app, /removeOpenResearchViews\(\(view\) => !libraryId \|\| view\.libraryId !== libraryId\)/);
-  assert.match(app, /if \(researchRootRef\.current\?\.libraryId !== libraryId\) return entries/);
+  assert.match(app, /!controller\.isCurrent\(request\)[\s\S]*?researchRootRef\.current\?\.libraryId !== libraryId[\s\S]*?\) return entries/);
   assert.match(app, /currentRelativePath=\{researchCurrentRelativePath\}/);
   assert.match(app, /onNavigatePath=\{handleNavigateResearchPath\}/);
   assert.match(sidebar, /资料区位置/);
@@ -232,11 +232,11 @@ test("PDF reader exposes restorable per-tab page, zoom and scroll view state", a
   assert.match(jsx, /searchRunRef\.current \+= 1;[\s\S]*setQuery\(""\);[\s\S]*setSearchMessage\(""\)/);
 });
 
-test("static research previews cover sanitized markdown, text, tables and revocable image blobs", async () => {
+test("static research previews cover sanitized DOCX, markdown, text, tables and revocable image blobs", async () => {
   const jsx = await source("./SecondaryResearchPane.jsx");
   const css = await source("./secondary-research-pane.css");
   assert.match(jsx, /readResearchPreview|loadPreview/);
-  assert.match(jsx, /dangerouslySetInnerHTML=\{\{ __html: markdownRender\.html/);
+  assert.match(jsx, /dangerouslySetInnerHTML=\{\{ __html: richTextRender\.html/);
   assert.match(jsx, /mark\.textContent = segment\.text/);
   assert.match(jsx, /parseDelimitedPreview/);
   assert.match(jsx, /PreviewSearchForm/);
@@ -248,7 +248,9 @@ test("static research previews cover sanitized markdown, text, tables and revoca
   assert.match(jsx, /className="secondary-table-scroll"/);
   assert.match(jsx, /URL\.createObjectURL/);
   assert.match(jsx, /URL\.revokeObjectURL/);
-  assert.match(jsx, /\["markdown", "text", "table", "image"\]/);
+  assert.match(jsx, /\["docx", "markdown", "text", "table", "image"\]/);
+  assert.match(jsx, /\["markdown", "docx"\]\.includes\(kind\)/);
+  assert.match(jsx, /DOCX 资料内容/);
   assert.match(css, /\.secondary-markdown-preview/);
   assert.match(css, /\.secondary-text-preview/);
   assert.match(css, /\.secondary-table-preview/);

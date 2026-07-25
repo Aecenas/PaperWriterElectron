@@ -20,7 +20,7 @@ const MAX_RELATIVE_PATH_LENGTH = 4096;
 const MAX_RESEARCH_TITLE_LENGTH = 256;
 const MIN_PDF_ZOOM = 0.35;
 const MAX_PDF_ZOOM = 2.5;
-const RESEARCH_TYPES = new Set(["file", "pdf", "web", "markdown", "text", "table", "image", "unsupported", "other"]);
+const RESEARCH_TYPES = new Set(["file", "pdf", "docx", "web", "markdown", "text", "table", "image", "unsupported", "other"]);
 
 function finiteNumber(value, fallback) {
   const number = Number(value);

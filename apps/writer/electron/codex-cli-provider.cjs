@@ -114,6 +114,16 @@ function terminateProcessTree(child) {
   }
 }
 
+function registerAbortHandler(signal, handler) {
+  if (!signal) return () => {};
+  if (signal.aborted) {
+    handler();
+    return () => {};
+  }
+  signal.addEventListener("abort", handler, { once: true });
+  return () => signal.removeEventListener("abort", handler);
+}
+
 function endChildInputSafely(child, input, finish, isSettled = () => false) {
   const stdin = child?.stdin;
   if (!stdin) {
@@ -449,6 +459,7 @@ function codexUsage(payload) {
 async function streamCodexCompletion({ executable, config, messages, cwd, scope, attachments = [], imagePaths = [], signal, onDelta }) {
   if (!executable) throw new Error("未检测到 Codex CLI");
   if (!config.model) throw new Error("请选择 Codex 模型");
+  if (signal?.aborted) throw new Error("已停止生成");
   void cwd;
   const isolationRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperwriter-codex-run-"));
   const workingDirectory = path.join(isolationRoot, "private-tmp");
@@ -475,6 +486,7 @@ async function streamCodexCompletion({ executable, config, messages, cwd, scope,
     let settled = false;
     let totalOutputCharacters = 0;
     let idleTimer;
+    let removeAbortHandler = () => {};
     const totalTimer = setTimeout(() => {
       terminateProcessTree(child);
       finish(new Error("Codex CLI 生成超时"));
@@ -492,7 +504,7 @@ async function streamCodexCompletion({ executable, config, messages, cwd, scope,
       settled = true;
       clearTimeout(totalTimer);
       clearTimeout(idleTimer);
-      signal?.removeEventListener("abort", abort);
+      removeAbortHandler();
       fs.rm(isolationRoot, { recursive: true, force: true })
         .catch(() => {})
         .finally(() => {
@@ -500,7 +512,6 @@ async function streamCodexCompletion({ executable, config, messages, cwd, scope,
         });
     };
     resetIdleTimer();
-    signal?.addEventListener("abort", abort, { once: true });
     child.stderr.on("data", (chunk) => {
       if (settled) return;
       resetIdleTimer();
@@ -557,7 +568,10 @@ async function streamCodexCompletion({ executable, config, messages, cwd, scope,
       if (code !== 0 || !completed) return finish(new Error(stderr.trim() || `Codex CLI 生成失败 (${code ?? "unknown"})`));
       return finish(null, usage);
     });
-    endChildInputSafely(child, codexPrompt(messages, scope, attachments), finish, () => settled);
+    removeAbortHandler = registerAbortHandler(signal, abort);
+    if (!signal?.aborted) {
+      endChildInputSafely(child, codexPrompt(messages, scope, attachments), finish, () => settled);
+    }
   });
 }
 
@@ -578,6 +592,7 @@ module.exports = {
   isolatedCodexEnvironment,
   mergeCodexRefreshedModels,
   parseCodexVersion,
+  registerAbortHandler,
   reconcileCodexModels,
   refreshCodexStatus,
   runCodex,

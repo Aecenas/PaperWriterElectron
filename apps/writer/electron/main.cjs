@@ -71,6 +71,13 @@ const {
   redactSecrets,
 } = require("./ai-config-security.cjs");
 const {
+  cancelReader: cancelAiResponseReader,
+  fetchAiResponse,
+  readReaderChunk,
+  readResponseTextLimited,
+  throwIfAborted: throwIfAiAborted,
+} = require("./ai-http-client.cjs");
+const {
   materializeCodexImageAttachments,
   normalizeCodexImageMode,
 } = require("./codex-image-attachments.cjs");
@@ -225,6 +232,7 @@ const workspaceSearchIndexes = new Map();
 let activeWorkspaceWatcher = null;
 let activeWorkspaceWatchRoot = "";
 let activeWorkspaceWatchTimer = null;
+let activeWorkspaceWatchGeneration = 0;
 let stagedAssetStore = null;
 let documentInterchange = null;
 let researchLibrary = null;
@@ -1143,83 +1151,44 @@ function updateAiProviderTestState(provider, modelId, testState, expectedIdentit
   return queueAiConfigMutation(() => updateAiProviderTestStateUnlocked(provider, modelId, testState, expectedIdentity));
 }
 
-async function readAiErrorBody(response) {
+async function readAiErrorBody(response, signal) {
   try {
-    const text = await readResponseTextLimited(response, AI_ERROR_BODY_MAX_BYTES);
+    const text = await readResponseTextLimited(response, AI_ERROR_BODY_MAX_BYTES, {
+      signal,
+      idleTimeoutMs: AI_STREAM_IDLE_TIMEOUT_MS,
+      timeoutMessage: "AI 错误响应超时",
+    });
     return text.replace(/\s+/g, " ").slice(0, 500);
   } catch {
     return "";
   }
 }
 
-async function assertAiResponseOk(response, secrets = []) {
+async function assertAiResponseOk(response, secrets = [], signal) {
+  throwIfAiAborted(signal);
   if (response.ok) {
     return;
   }
-  const details = redactSecrets(await readAiErrorBody(response), secrets);
+  const details = redactSecrets(await readAiErrorBody(response, signal), secrets);
   throw new Error(`AI 请求失败 ${response.status}${details ? `：${details}` : ""}`);
 }
 
-async function readResponseTextLimited(response, maximumBytes) {
-  if (!response?.body) {
-    const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > maximumBytes) throw new Error("AI 响应数据过大");
-    return text;
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  let text = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    if (bytes > maximumBytes) {
-      await reader.cancel().catch(() => {});
-      throw new Error("AI 响应数据过大");
-    }
-    text += decoder.decode(value, { stream: true });
-  }
-  return text + decoder.decode();
+function aiFetch(url, options = {}) {
+  return fetchAiResponse({
+    fetchImpl: net.fetch.bind(net),
+    fetchWithRedirectPolicy: fetchWithAiRedirectPolicy,
+    url,
+    options,
+    headerTimeoutMs: AI_FETCH_HEADER_TIMEOUT_MS,
+  });
 }
 
-async function aiFetch(url, options = {}) {
-  const controller = new AbortController();
-  const externalSignal = options.signal;
-  const onExternalAbort = () => controller.abort(externalSignal.reason);
-  if (externalSignal?.aborted) onExternalAbort();
-  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort(new Error("AI 服务连接超时"));
-  }, AI_FETCH_HEADER_TIMEOUT_MS);
-  try {
-    return await fetchWithAiRedirectPolicy(net.fetch.bind(net), url, { ...options, signal: controller.signal });
-  } catch (error) {
-    if (timedOut) throw new Error("AI 服务连接超时", { cause: error });
-    throw error;
-  } finally {
-    clearTimeout(timer);
-    externalSignal?.removeEventListener("abort", onExternalAbort);
-  }
-}
-
-async function readAiStreamChunk(reader) {
-  let timer;
-  try {
-    return await Promise.race([
-      reader.read(),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("AI 流式响应超时")), AI_STREAM_IDLE_TIMEOUT_MS);
-      }),
-    ]);
-  } catch (error) {
-    await reader.cancel().catch(() => {});
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
+function readAiStreamChunk(reader, signal) {
+  return readReaderChunk(reader, {
+    signal,
+    idleTimeoutMs: AI_STREAM_IDLE_TIMEOUT_MS,
+    timeoutMessage: "AI 流式响应超时",
+  });
 }
 
 async function testAiConfig(config) {
@@ -1231,14 +1200,18 @@ async function testAiConfig(config) {
   }
   const securedConfig = { ...config, baseUrl: normalizeProviderBaseUrl(config.baseUrl) };
   const request = buildAiRequest(securedConfig, [{ role: "user", content: "请只回复 OK" }], { test: true });
-  const response = await aiFetch(request.url, {
+  const fetched = await aiFetch(request.url, {
     method: "POST",
     headers: request.headers,
     body: JSON.stringify(request.body),
   });
-  await assertAiResponseOk(response, [config.apiKey]);
-  await response.body?.cancel().catch(() => {});
-  return { ok: true, message: "AI 连接可用" };
+  try {
+    await assertAiResponseOk(fetched.response, [config.apiKey], fetched.signal);
+    await fetched.response.body?.cancel().catch(() => {});
+    return { ok: true, message: "AI 连接可用" };
+  } finally {
+    fetched.release();
+  }
 }
 
 function normalizeAiMessages(payload = {}) {
@@ -1364,19 +1337,26 @@ async function resolveAiApplyWithModel(config, messages) {
   }
   if (!config.apiKey) throw new Error("应用裁决模型缺少 API Key");
   const request = buildAiRequest(config, messages, { stream: false });
-  const response = await aiFetch(request.url, {
+  const fetched = await aiFetch(request.url, {
     method: "POST",
     headers: request.headers,
     body: JSON.stringify(request.body),
   });
-  await assertAiResponseOk(response, [config.apiKey]);
-  const raw = await readResponseTextLimited(response, 512 * 1024);
-  const payload = JSON.parse(raw);
-  const output = config.protocol === "anthropic"
-    ? (payload?.content || []).filter((item) => item?.type === "text").map((item) => item.text || "").join("")
-    : String(payload?.choices?.[0]?.message?.content || "");
-  if (!output.trim()) throw new Error("应用裁决模型没有返回结果");
-  return output.trim();
+  try {
+    await assertAiResponseOk(fetched.response, [config.apiKey], fetched.signal);
+    const raw = await readResponseTextLimited(fetched.response, 512 * 1024, {
+      signal: fetched.signal,
+      idleTimeoutMs: AI_STREAM_IDLE_TIMEOUT_MS,
+    });
+    const payload = JSON.parse(raw);
+    const output = config.protocol === "anthropic"
+      ? (payload?.content || []).filter((item) => item?.type === "text").map((item) => item.text || "").join("")
+      : String(payload?.choices?.[0]?.message?.content || "");
+    if (!output.trim()) throw new Error("应用裁决模型没有返回结果");
+    return output.trim();
+  } finally {
+    fetched.release();
+  }
 }
 
 async function streamAiCompletion(sender, requestId, config, messages, signal) {
@@ -1385,100 +1365,121 @@ async function streamAiCompletion(sender, requestId, config, messages, signal) {
   }
   const securedConfig = { ...config, baseUrl: normalizeProviderBaseUrl(config.baseUrl) };
   const request = buildAiRequest(securedConfig, messages, { stream: true });
-  const response = await aiFetch(request.url, {
+  const fetched = await aiFetch(request.url, {
     method: "POST",
     headers: request.headers,
     signal,
     body: JSON.stringify(request.body),
   });
-  await assertAiResponseOk(response, [config.apiKey]);
-  const contentType = response.headers.get("content-type") || "";
-  if (!response.body || !contentType.toLowerCase().includes("text/event-stream")) {
-    const rawPayload = await readResponseTextLimited(response, AI_JSON_RESPONSE_MAX_BYTES);
-    const payload = JSON.parse(rawPayload);
-    const delta = config.protocol === "anthropic"
-      ? (payload?.content || []).filter((item) => item?.type === "text").map((item) => item.text || "").join("")
-      : extractAiStreamEvent(config.protocol, payload).delta;
-    if (delta) {
-      sendRendererEvent(sender, "ai:chunk", { requestId, delta });
-    }
-    return mergeAiUsage(config.protocol, payload, null);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let usage = null;
-  let outputCharacters = 0;
-  let parseErrors = 0;
-  let inputBytes = 0;
-  const streamStartedAt = Date.now();
   try {
-    while (true) {
-      if (Date.now() - streamStartedAt > AI_STREAM_MAX_MS) throw new Error("AI 流式生成超时");
-      const { done, value } = await readAiStreamChunk(reader);
-      if (done) {
-        break;
+    const response = fetched.response;
+    const responseSignal = fetched.signal;
+    await assertAiResponseOk(response, [config.apiKey], responseSignal);
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.body || !contentType.toLowerCase().includes("text/event-stream")) {
+      const rawPayload = await readResponseTextLimited(response, AI_JSON_RESPONSE_MAX_BYTES, {
+        signal: responseSignal,
+        idleTimeoutMs: AI_STREAM_IDLE_TIMEOUT_MS,
+      });
+      throwIfAiAborted(responseSignal);
+      const payload = JSON.parse(rawPayload);
+      const delta = config.protocol === "anthropic"
+        ? (payload?.content || []).filter((item) => item?.type === "text").map((item) => item.text || "").join("")
+        : extractAiStreamEvent(config.protocol, payload).delta;
+      throwIfAiAborted(responseSignal);
+      if (delta) {
+        sendRendererEvent(sender, "ai:chunk", { requestId, delta });
       }
-      inputBytes += value.byteLength;
-      if (inputBytes > AI_STREAM_INPUT_MAX_BYTES) throw new Error("AI 流式响应数据过大");
-      buffer += decoder.decode(value, { stream: true });
-      if (buffer.length > AI_STREAM_BUFFER_MAX_CHARS) throw new Error("AI 流式响应单行过大");
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith(":") || !trimmed.startsWith("data:")) {
-          continue;
-        }
-        const data = trimmed.slice(5).trim();
-        if (data === "[DONE]") {
-          return usage;
-        }
-        let payload;
-        try {
-          payload = JSON.parse(data);
-        } catch (error) {
-          parseErrors += 1;
-          if (parseErrors <= 3) {
-            void writeAiDebugLog("ai:stream:parse-error", { message: error?.message, data: data.slice(0, 200) });
-          }
-          continue;
-        }
-        usage = mergeAiUsage(config.protocol, payload, usage);
-        const streamEvent = extractAiStreamEvent(config.protocol, payload);
-        if (streamEvent.error) {
-          throw new Error(streamEvent.error);
-        }
-        if (streamEvent.delta) {
-          outputCharacters += streamEvent.delta.length;
-          if (outputCharacters > AI_STREAM_OUTPUT_MAX_CHARS) throw new Error("AI 生成内容超过安全上限");
-          sendRendererEvent(sender, "ai:chunk", { requestId, delta: streamEvent.delta });
-        }
-        if (streamEvent.done) {
-          return usage;
-        }
-      }
+      return mergeAiUsage(config.protocol, payload, null);
     }
-    return usage;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let usage = null;
+    let outputCharacters = 0;
+    let parseErrors = 0;
+    let inputBytes = 0;
+    const streamStartedAt = Date.now();
+    try {
+      while (true) {
+        throwIfAiAborted(responseSignal);
+        if (Date.now() - streamStartedAt > AI_STREAM_MAX_MS) throw new Error("AI 流式生成超时");
+        const { done, value } = await readAiStreamChunk(reader, responseSignal);
+        throwIfAiAborted(responseSignal);
+        if (done) {
+          break;
+        }
+        inputBytes += value.byteLength;
+        if (inputBytes > AI_STREAM_INPUT_MAX_BYTES) throw new Error("AI 流式响应数据过大");
+        buffer += decoder.decode(value, { stream: true });
+        if (buffer.length > AI_STREAM_BUFFER_MAX_CHARS) throw new Error("AI 流式响应单行过大");
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          throwIfAiAborted(responseSignal);
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith(":") || !trimmed.startsWith("data:")) {
+            continue;
+          }
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") {
+            throwIfAiAborted(responseSignal);
+            return usage;
+          }
+          let payload;
+          try {
+            payload = JSON.parse(data);
+          } catch (error) {
+            parseErrors += 1;
+            if (parseErrors <= 3) {
+              void writeAiDebugLog("ai:stream:parse-error", { message: error?.message, data: data.slice(0, 200) });
+            }
+            continue;
+          }
+          usage = mergeAiUsage(config.protocol, payload, usage);
+          const streamEvent = extractAiStreamEvent(config.protocol, payload);
+          if (streamEvent.error) {
+            throw new Error(streamEvent.error);
+          }
+          if (streamEvent.delta) {
+            outputCharacters += streamEvent.delta.length;
+            if (outputCharacters > AI_STREAM_OUTPUT_MAX_CHARS) throw new Error("AI 生成内容超过安全上限");
+            throwIfAiAborted(responseSignal);
+            sendRendererEvent(sender, "ai:chunk", { requestId, delta: streamEvent.delta });
+          }
+          if (streamEvent.done) {
+            throwIfAiAborted(responseSignal);
+            return usage;
+          }
+        }
+      }
+      throwIfAiAborted(responseSignal);
+      return usage;
+    } finally {
+      cancelAiResponseReader(reader, responseSignal.reason);
+    }
   } finally {
-    await reader.cancel().catch(() => {});
+    fetched.release();
   }
 }
 
 async function streamCodexForPayload(event, requestId, config, messages, payload, controller) {
+  throwIfAiAborted(controller.signal);
   const resolvedScope = await resolveCodexScopeDirectory({
     scope: payload?.codexScope,
     tempRoot: path.join(app.getPath("temp"), "PaperWriterCodex"),
   });
   let resolvedImages = { attachments: [], imagePaths: [], cleanup: async () => {} };
   try {
+    throwIfAiAborted(controller.signal);
     if (normalizeCodexImageMode(payload?.codexImageMode) === "original" && Array.isArray(payload?.codexImages) && payload.codexImages.length) {
       resolvedImages = await materializeCodexImageAttachments({
         images: payload.codexImages,
         tempRoot: path.join(app.getPath("temp"), "PaperWriterCodex"),
         readProtocolAsset,
       });
+      throwIfAiAborted(controller.signal);
     }
     return await streamCodexCompletion({
       executable: codexRuntimeStatus.executablePath,
@@ -1489,7 +1490,10 @@ async function streamCodexForPayload(event, requestId, config, messages, payload
       attachments: resolvedImages.attachments,
       imagePaths: resolvedImages.imagePaths,
       signal: controller.signal,
-      onDelta: (delta) => sendRendererEvent(event.sender, "ai:chunk", { requestId, delta }),
+      onDelta: (delta) => {
+        if (controller.signal.aborted) return;
+        sendRendererEvent(event.sender, "ai:chunk", { requestId, delta });
+      },
     });
   } finally {
     await Promise.allSettled([resolvedImages.cleanup(), resolvedScope.cleanup()]);
@@ -2585,21 +2589,28 @@ ipcMain.handle("ai:generate", async (event, payload) => {
   const completion = config.transport === "codex-cli"
     ? streamCodexForPayload(event, requestId, config, messages, payload, controller)
     : streamAiCompletion(event.sender, requestId, config, messages, controller.signal);
-  completion
-    .then((usage) => {
+  void (async () => {
+    try {
+      const usage = await completion;
+      if (activeAiRequests.get(requestId) !== controller) return;
+      throwIfAiAborted(controller.signal);
       sendRendererEvent(event.sender, "ai:done", { requestId, usage });
-      activeAiRequests.delete(requestId);
-    })
-    .catch(async (error) => {
+    } catch (error) {
+      if (activeAiRequests.get(requestId) !== controller) return;
       const aborted = controller.signal.aborted;
       await writeAiDebugLog("ai:generate:error", { requestId, aborted, message: error?.message });
+      if (activeAiRequests.get(requestId) !== controller) return;
       sendRendererEvent(event.sender, "ai:error", {
         requestId,
         message: aborted ? "已停止生成" : (error?.message || "AI 生成失败"),
         aborted,
       });
-      activeAiRequests.delete(requestId);
-    });
+    } finally {
+      if (activeAiRequests.get(requestId) === controller) {
+        activeAiRequests.delete(requestId);
+      }
+    }
+  })();
   return { ok: true, requestId };
 });
 
@@ -2655,11 +2666,10 @@ ipcMain.handle("ai:resolve-apply", async (_event, payload = {}) => {
 ipcMain.handle("ai:cancel", async (_event, requestId) => {
   const id = String(requestId || "");
   const controller = activeAiRequests.get(id);
-  if (controller) {
-    controller.abort();
-    activeAiRequests.delete(id);
+  if (controller && !controller.signal.aborted) {
+    controller.abort(new Error("已停止生成"));
   }
-  return { ok: true };
+  return { ok: true, canceled: Boolean(controller) };
 });
 
 ipcMain.handle("ai:export-chat", async (_event, payload) => {
@@ -2750,7 +2760,8 @@ async function getWorkspaceSearchIndex(folderPath, { refresh = false } = {}) {
   return { index, rootPath };
 }
 
-function stopWorkspaceWatcher() {
+function stopWorkspaceWatcher({ invalidatePending = true } = {}) {
+  if (invalidatePending) activeWorkspaceWatchGeneration += 1;
   if (activeWorkspaceWatchTimer) {
     clearTimeout(activeWorkspaceWatchTimer);
     activeWorkspaceWatchTimer = null;
@@ -2761,23 +2772,30 @@ function stopWorkspaceWatcher() {
 }
 
 async function startWorkspaceWatcher(folderPath) {
+  const generation = activeWorkspaceWatchGeneration + 1;
+  activeWorkspaceWatchGeneration = generation;
   const rootPath = await assertAuthorizedDirectory(folderPath);
+  if (generation !== activeWorkspaceWatchGeneration) return rootPath;
   if (activeWorkspaceWatcher && activeWorkspaceWatchRoot === rootPath) return rootPath;
-  stopWorkspaceWatcher();
+  stopWorkspaceWatcher({ invalidatePending: false });
   // This is also the main-process identity of the currently open writing
   // workspace. Keep it even when the host cannot provide recursive watching.
   activeWorkspaceWatchRoot = rootPath;
   try {
-    activeWorkspaceWatcher = nativeFs.watch(rootPath, { recursive: true, encoding: "utf8" }, (eventType, fileName) => {
+    let nextWatcher = null;
+    nextWatcher = nativeFs.watch(rootPath, { recursive: true, encoding: "utf8" }, (eventType, fileName) => {
+      if (activeWorkspaceWatcher !== nextWatcher || activeWorkspaceWatchRoot !== rootPath) return;
       if (activeWorkspaceWatchTimer) clearTimeout(activeWorkspaceWatchTimer);
       activeWorkspaceWatchTimer = setTimeout(async () => {
         activeWorkspaceWatchTimer = null;
+        if (activeWorkspaceWatcher !== nextWatcher || activeWorkspaceWatchRoot !== rootPath) return;
         try {
           const { index } = await getWorkspaceSearchIndex(rootPath);
           await index.refresh();
         } catch (error) {
           await writeAiDebugLog("workspace:watch:refresh-error", { rootPath, message: error?.message });
         }
+        if (activeWorkspaceWatcher !== nextWatcher || activeWorkspaceWatchRoot !== rootPath) return;
         sendRendererEvent(mainWindow?.webContents, "workspace:changed", {
           rootPath,
           eventType: String(eventType || "change"),
@@ -2787,7 +2805,9 @@ async function startWorkspaceWatcher(folderPath) {
       }, 180);
       activeWorkspaceWatchTimer.unref?.();
     });
-    activeWorkspaceWatcher.on?.("error", (error) => {
+    activeWorkspaceWatcher = nextWatcher;
+    nextWatcher.on?.("error", (error) => {
+      if (activeWorkspaceWatcher !== nextWatcher || activeWorkspaceWatchRoot !== rootPath) return;
       void writeAiDebugLog("workspace:watch:error", { rootPath, message: error?.message });
       sendRendererEvent(mainWindow?.webContents, "workspace:watch-error", { rootPath, message: error?.message || "文件监听失败" });
     });
@@ -3292,6 +3312,18 @@ ipcMain.handle("research:preview-read", async (_event, payload = {}) => {
     diskRevision: preview.diskRevision,
   };
   if (preview.previewKind === "image") return { ...common, bytes: preview.bytes };
+  if (preview.previewKind === "docx") {
+    const imported = await documentInterchange.importDocument({
+      format: "docx",
+      sourcePath: preview.path,
+      buffer: preview.bytes,
+    });
+    return {
+      ...common,
+      html: imported.document.html,
+      warnings: imported.warnings || [],
+    };
+  }
   const text = decodeResearchPreviewText(preview.bytes);
   if (preview.previewKind !== "markdown") return { ...common, text };
   const converted = markdownToHtml(text);

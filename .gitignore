@@ -8,3 +8,4 @@ apps/release/
 .env.local
 .DS_Store
 Thumbs.db
+output/playwright/
