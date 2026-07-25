@@ -2,8 +2,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { summarizeDocumentCache } from "./document-workspace/model.js";
 
 const source = fs.readFileSync(fileURLToPath(new URL("./App.jsx", import.meta.url)), "utf8");
+const commentOverlaysSource = fs.readFileSync(fileURLToPath(new URL("./editor/CommentOverlays.jsx", import.meta.url)), "utf8");
+const selectionToolbarSource = fs.readFileSync(fileURLToPath(new URL("./editor/SelectionBubbleToolbar.jsx", import.meta.url)), "utf8");
+const tableToolbarSource = fs.readFileSync(fileURLToPath(new URL("./editor/TableContextToolbar.jsx", import.meta.url)), "utf8");
+const editorDecorationsSource = fs.readFileSync(fileURLToPath(new URL("./editor/decorations.js", import.meta.url)), "utf8");
+const knowledgeLifecycleSource = fs.readFileSync(fileURLToPath(new URL("./controllers/knowledge-lifecycle.js", import.meta.url)), "utf8");
+const aiDocumentPortSource = fs.readFileSync(fileURLToPath(new URL("./document-workspace/ai-document-port.js", import.meta.url)), "utf8");
+const aiStreamRegistrySource = fs.readFileSync(fileURLToPath(new URL("./controllers/ai-stream-registry.js", import.meta.url)), "utf8");
 
 test("editor update handlers do not serialize or publish the complete document", () => {
   const mainStart = source.indexOf("onUpdate: ({ transaction }) => {", source.indexOf("const mainEditorOptions"));
@@ -18,9 +26,9 @@ test("editor update handlers do not serialize or publish the complete document",
 });
 
 test("knowledge synchronization cannot re-enter through its own derived transactions", () => {
-  const start = source.indexOf("const synchronize = createKnowledgeUpdateGuard(");
-  const end = source.indexOf('activeWorkEditor.on("update", synchronize)', start);
-  const synchronizationSource = source.slice(start, end);
+  const start = knowledgeLifecycleSource.indexOf("const synchronize = createKnowledgeUpdateGuard(");
+  const end = knowledgeLifecycleSource.indexOf('activeWorkEditor.on("update", synchronize)', start);
+  const synchronizationSource = knowledgeLifecycleSource.slice(start, end);
   assert.ok(start > 0 && end > start);
   assert.match(synchronizationSource, /createKnowledgeUpdateGuard/);
   assert.match(synchronizationSource, /synchronizeKnowledgeReferences/);
@@ -52,35 +60,41 @@ test("editor groups accept additional tabs without evicting an existing document
 });
 
 test("dirty tab updates do not reserialize every cached editor document", () => {
-  const start = source.indexOf("function summarizeDocumentCache");
-  const end = source.indexOf("function formatCacheBytes", start);
-  const summarySource = source.slice(start, end);
-  assert.doesNotMatch(summarySource, /JSON\.stringify|estimateSerializedBytes/);
-  assert.match(summarySource, /editorJsonBytes/);
+  const document = {};
+  Object.defineProperty(document, "toJSON", {
+    value() {
+      throw new Error("cache summaries must not serialize documents");
+    },
+  });
+  assert.deepEqual(summarizeDocumentCache([
+    { document, editorJsonBytes: 128 },
+    { document, editorJsonBytes: "64" },
+    { document, editorJsonBytes: 0 },
+  ]), { bytes: 192, count: 2 });
 });
 
 test("AI streaming batches chunks and participates in document revisions", () => {
-  const mutationStart = source.indexOf("const updateDocumentAiStateForKey");
-  const mutationEnd = source.indexOf("const updateActiveDocumentAiState", mutationStart);
-  assert.match(source.slice(mutationStart, mutationEnd), /recordTabMutation/);
-  assert.match(source, /pendingChunks\.push\(payload\.delta\)/);
-  assert.match(source, /setTimeout\(\(\) => flushContext\(context\), 50\)/);
+  assert.match(aiDocumentPortSource, /recordTabMutation\(activeSnapshot\.tabId, updatedAt\)/);
+  assert.match(aiDocumentPortSource, /recordTabMutation\(targetTab\.id, updatedAt\)/);
+  assert.match(aiStreamRegistrySource, /context\.pendingChunks\.push\(delta\)/);
+  assert.match(aiStreamRegistrySource, /timerHost\.setTimeout\(\(\) => \{/);
+  assert.match(aiStreamRegistrySource, /AI_STREAM_FLUSH_INTERVAL_MS/);
 });
 
 test("live statistics are ProseMirror-derived and never parse an HTML template", () => {
   const derivedSource = fs.readFileSync(fileURLToPath(new URL("./editor-derived-state.js", import.meta.url)), "utf8");
   assert.doesNotMatch(derivedSource, /createElement|innerHTML|querySelector/);
   assert.doesNotMatch(source, /createElement\(["']template["']\)/);
-  assert.match(source, /PAPER_DERIVED_STATE_PLUGIN_KEY/);
+  assert.match(editorDecorationsSource, /PAPER_DERIVED_STATE_PLUGIN_KEY/);
   assert.doesNotMatch(source, /\.doc\.descendants\(/);
 });
 
 test("status metrics subscribe to primitive fields instead of rerendering the whole status bar", () => {
-  const metricStart = source.indexOf("function LiveStatusMetric");
-  const statusStart = source.indexOf("function StatusBar", metricStart);
-  const statusEnd = source.indexOf("function createTabId", statusStart);
-  assert.match(source.slice(metricStart, statusStart), /stats\[field\]/);
-  const statusSource = source.slice(statusStart, statusEnd);
+  const statusModule = fs.readFileSync(fileURLToPath(new URL("./app-shell/StatusBar.jsx", import.meta.url)), "utf8");
+  const metricStart = statusModule.indexOf("function LiveStatusMetric");
+  const statusStart = statusModule.indexOf("function StatusBar", metricStart);
+  assert.match(statusModule.slice(metricStart, statusStart), /stats\[field\]/);
+  const statusSource = statusModule.slice(statusStart);
   assert.doesNotMatch(statusSource, /selector:/);
   for (const field of ["words", "paragraphs", "pages", "images"]) {
     assert.match(statusSource, new RegExp(`field="${field}"`));
@@ -99,7 +113,7 @@ test("closing a right-group document uses the lifecycle snapshot boundary", () =
 
 test("reopening a document secondary pane restores its selection and scroll snapshot", () => {
   const applyStart = source.indexOf("if (!rightSplitEditor || !rightSplitTabId)");
-  const applyEnd = source.indexOf("activeDocumentKeyRef.current = activeDocumentKey", applyStart);
+  const applyEnd = source.indexOf("currentPathRef.current = currentPath", applyStart);
   const applySource = source.slice(applyStart, applyEnd);
   assert.match(applySource, /restoreEditorSelectionWithoutHistory\(rightSplitEditor, splitTab\?\.selectionState\)/);
   assert.match(applySource, /rightSplitSelectionRef\.current = readEditorSelectionState\(rightSplitEditor\)/);
@@ -113,11 +127,11 @@ test("reopening a document secondary pane restores its selection and scroll snap
 });
 
 test("comment overlays avoid empty-state transaction renders and coalesce layout work", () => {
-  const anchorsStart = source.indexOf("function CommentAnchors");
-  const highlightsStart = source.indexOf("function CommentHighlights", anchorsStart);
-  const panelStart = source.indexOf("function CommentPanel", highlightsStart);
-  const anchorsSource = source.slice(anchorsStart, highlightsStart);
-  const highlightsSource = source.slice(highlightsStart, panelStart);
+  const anchorsStart = commentOverlaysSource.indexOf("function CommentAnchors");
+  const highlightsStart = commentOverlaysSource.indexOf("function CommentHighlights", anchorsStart);
+  const panelStart = commentOverlaysSource.indexOf("function CommentPanel", highlightsStart);
+  const anchorsSource = commentOverlaysSource.slice(anchorsStart, highlightsStart);
+  const highlightsSource = commentOverlaysSource.slice(highlightsStart, panelStart);
   assert.match(anchorsSource, /!normalizedComments\.length/);
   assert.match(anchorsSource, /setPositions\(\(current\) => \(current\.length \? \[\] : current\)\)/);
   assert.match(highlightsSource, /!activeCommentId \|\| !normalizedComments\.length/);
@@ -126,13 +140,7 @@ test("comment overlays avoid empty-state transaction renders and coalesce layout
 });
 
 test("selection and table overlays coalesce duplicate key and transaction events", () => {
-  const selectionStart = source.indexOf("function SelectionBubbleToolbar");
-  const commentStart = source.indexOf("function CommentAnchors", selectionStart);
-  const tableStart = source.indexOf("function TableContextToolbar", commentStart);
-  const tableEnd = source.indexOf("function ", tableStart + "function ".length);
-  const selectionSource = source.slice(selectionStart, commentStart);
-  const tableSource = source.slice(tableStart, tableEnd);
-  for (const overlaySource of [selectionSource, tableSource]) {
+  for (const overlaySource of [selectionToolbarSource, tableToolbarSource]) {
     assert.match(overlaySource, /if \(toolbarFrameRef\.current\) return/);
     assert.match(overlaySource, /cancelAnimationFrame\(toolbarFrameRef\.current\)/);
     assert.doesNotMatch(overlaySource, /const updateSoon = \(\) => window\.requestAnimationFrame/);
@@ -140,9 +148,9 @@ test("selection and table overlays coalesce duplicate key and transaction events
 });
 
 test("comment decorations map through ordinary typing instead of rebuilding all ranges", () => {
-  const start = source.indexOf("const DocumentCommentDecorations");
-  const end = source.indexOf("const HeadingMetadata", start);
-  assert.match(source.slice(start, end), /previousState\.decorations\.map\(transaction\.mapping, transaction\.doc\)/);
+  const start = editorDecorationsSource.indexOf("const DocumentCommentDecorations");
+  const end = editorDecorationsSource.indexOf("const HeadingMetadata", start);
+  assert.match(editorDecorationsSource.slice(start, end), /previousState\.decorations\.map\(transaction\.mapping, transaction\.doc\)/);
 });
 
 test("discard-close aborts when a document changes while confirmation is open", () => {

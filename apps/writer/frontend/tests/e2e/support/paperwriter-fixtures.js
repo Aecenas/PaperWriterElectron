@@ -106,7 +106,10 @@ export async function installDesktopBridgeFixture(page, {
     const readOnly = new Set(fixture.readOnlyPaths);
     const calls = {
       cancelAi: [],
+      closeCanceled: [],
+      closeReady: [],
       exportEditable: [],
+      pickExportPath: [],
       saveDocument: [],
     };
     const listeners = new Map();
@@ -146,6 +149,15 @@ export async function installDesktopBridgeFixture(page, {
       getFullscreen: async () => ({ fullscreen: false }),
       setFullscreen: async (fullscreen) => ({ ok: true, fullscreen: Boolean(fullscreen) }),
       getUpdateState: async () => ({ status: "idle", message: "" }),
+      closeReady: async (payload = {}) => {
+        calls.closeReady.push(clone(payload));
+        return { ok: true };
+      },
+      closeCanceled: async (payload = {}) => {
+        calls.closeCanceled.push(clone(payload));
+        return { ok: true };
+      },
+      onCloseRequest: (callback) => subscribe("app:close-request", callback),
       loadAutosave: async () => ({ exists: false }),
       getResearchRoot: async () => ({
         configured: false,
@@ -187,9 +199,36 @@ export async function installDesktopBridgeFixture(page, {
         path: filePath,
         diskRevision: revisionFor(filePath),
       }),
-      saveDocument: async (document, currentPath = "") => {
-        calls.saveDocument.push({ document: clone(document), currentPath });
-        return { canceled: false, path: currentPath, document: clone(document) };
+      saveDocument: async (
+        document,
+        currentPath = "",
+        saveAs = false,
+        reservedPaths = [],
+        expectedRevision = null,
+        saveOptions = {},
+      ) => {
+        const savedDocument = clone(document);
+        const nextRevision = {
+          size: JSON.stringify(savedDocument).length,
+          mtimeMs: Date.now(),
+          sha256: "c".repeat(64),
+        };
+        documentsByPath.set(currentPath, savedDocument);
+        revisionsByPath.set(currentPath, nextRevision);
+        calls.saveDocument.push({
+          document: savedDocument,
+          currentPath,
+          saveAs,
+          reservedPaths: clone(reservedPaths),
+          expectedRevision: clone(expectedRevision),
+          saveOptions: clone(saveOptions),
+        });
+        return {
+          canceled: false,
+          path: currentPath,
+          document: savedDocument,
+          diskRevision: clone(nextRevision),
+        };
       },
       saveTempDocument: async (_document, tabId = "") => ({
         canceled: false,
@@ -197,11 +236,16 @@ export async function installDesktopBridgeFixture(page, {
         recoveryId: tabId,
       }),
       deleteTempDocument: async () => ({ ok: true }),
-      pickExportPath: async (format, suggestedName = "未命名信笺") => ({
-        canceled: false,
-        format,
-        path: `${suggestedName}.${format === "markdown" ? "md" : format}`,
-      }),
+      pickExportPath: async (format, suggestedName = "未命名信笺", initialDirectory = "") => {
+        const path = `${suggestedName}.${format === "markdown" ? "md" : format}`;
+        calls.pickExportPath.push({ format, suggestedName, initialDirectory });
+        return {
+          canceled: false,
+          format,
+          path,
+          directory: "C:\\e2e\\exports",
+        };
+      },
       exportEditable: async (document, format, targetPath) => {
         calls.exportEditable.push({ document: clone(document), format, targetPath });
         return { canceled: false, path: targetPath, warnings: [] };

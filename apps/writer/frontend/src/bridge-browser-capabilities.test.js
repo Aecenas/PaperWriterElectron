@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { validateAiApplyResolutionAgainstManifest } from "./ai-direct-apply.js";
 import { browserBridge } from "./bridge.js";
 
@@ -282,8 +280,7 @@ test("browser relationships keep legacy candidates without identities and exclud
   assert.deepEqual(result.documents.map((document) => document.path), ["folder/legacy.letterpaper", "identified.letterpaper"]);
 });
 
-test("browser bridge exposes the desktop feature surface with explicit browser fallbacks", () => {
-  const source = fs.readFileSync(fileURLToPath(new URL("./bridge.js", import.meta.url)), "utf8");
+test("browser bridge exposes the desktop feature surface with explicit browser fallbacks", async () => {
   for (const capability of [
     "importDocument", "exportEditable", "searchFolder", "cancelFolderSearch", "getWorkspaceRelationships",
     "watchWorkspace", "getDocumentRevision", "regenerateDocumentIdentity", "listResearch", "createResearch",
@@ -301,7 +298,10 @@ test("browser bridge exposes the desktop feature surface with explicit browser f
     "writeClipboardContent",
     "setFullscreen", "getFullscreen", "onFullscreenChanged", "onWorkspaceChanged", "onWindowFocus", "onWindowBlur",
   ]) {
-    assert.match(source, new RegExp(`\\b${capability}:`), capability);
+    assert.equal(typeof browserBridge[capability], "function", capability);
   }
-  assert.match(source, /浏览器预览暂不支持 DOCX 导出/);
+  await assert.rejects(
+    () => browserBridge.pickExportPath("docx"),
+    /浏览器预览暂不支持 DOCX 导出/,
+  );
 });

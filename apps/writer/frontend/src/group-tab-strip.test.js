@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { readAppStylesSync } from "./style-test-utils.js";
 
 const source = fs.readFileSync(new URL("./GroupTabStrip.jsx", import.meta.url), "utf8");
-const styles = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-const app = fs.readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
+const styles = readAppStylesSync();
+const topNav = fs.readFileSync(new URL("./app-shell/TopNav.jsx", import.meta.url), "utf8");
 
 test("top navigation puts exporting the letter before importing a document", () => {
-  assert.match(app, /<MenuButton\s+icon=\{Download\}\s+label="导出"/);
-  assert.doesNotMatch(app, /<MenuButton icon=\{ArrowUpDown\} label="交换"/);
-  assert.match(app, /label="导入文档"/);
-  assert.match(app, /label="导出信笺"/);
-  assert.ok(app.indexOf('label="导出信笺"') < app.indexOf('label="导入文档"'));
+  assert.match(topNav, /<MenuButton\s+icon=\{Download\}\s+label="导出"/);
+  assert.doesNotMatch(topNav, /<MenuButton icon=\{ArrowUpDown\} label="交换"/);
+  assert.match(topNav, /label="导入文档"/);
+  assert.match(topNav, /label="导出信笺"/);
+  assert.ok(topNav.indexOf('label="导出信笺"') < topNav.indexOf('label="导入文档"'));
 });
 
 test("group tab strip supports scrolling, mixed research tabs and document moves", () => {

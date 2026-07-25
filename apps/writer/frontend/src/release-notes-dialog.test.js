@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { readAppStylesSync } from "./style-test-utils.js";
 
 const dialogSource = fs.readFileSync(new URL("./ReleaseNotesDialog.jsx", import.meta.url), "utf8");
-const stylesSource = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const stylesSource = readAppStylesSync();
 
 test("release notes dialog exposes phase and major-version navigation", () => {
   assert.match(dialogSource, /className="release-notes-phase-nav"/);

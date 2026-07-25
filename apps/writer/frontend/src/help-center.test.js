@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
-const appUrl = new URL("./App.jsx", import.meta.url);
+const helpDataUrl = new URL("./app-shell/help-data.js", import.meta.url);
 const screenshotsUrl = new URL("./assets/help/screenshots/", import.meta.url);
 
 function section(source, startMarker, endMarker) {
@@ -63,17 +63,18 @@ function illustrationArrayField(object) {
 }
 
 async function helpSource() {
-  const app = await readFile(appUrl, "utf8");
+  const data = await readFile(helpDataUrl, "utf8");
+  const topicsStart = data.indexOf("const HELP_TOPICS = [");
+  assert.notEqual(topicsStart, -1, "missing const HELP_TOPICS = [");
   return {
-    app,
-    screenshots: section(app, "const HELP_SCREENSHOTS = {", "const HELP_CATEGORIES = ["),
-    categories: section(app, "const HELP_CATEGORIES = [", "const AI_CHAT_PROMPT_PRESETS = ["),
-    topics: section(app, "const HELP_TOPICS = [", "const PAPER_SLICES = {"),
+    screenshots: section(data, "const HELP_SCREENSHOTS = {", "const HELP_CATEGORIES = ["),
+    categories: section(data, "const HELP_CATEGORIES = [", "const HELP_TOPICS = ["),
+    topics: data.slice(topicsStart),
   };
 }
 
 function parseScreenshots(source) {
-  return [...source.matchAll(/^\s*(?:"([^"]+)"|([A-Za-z][\w-]*)):\s*new URL\("\.\/assets\/help\/screenshots\/([^"]+)"/gm)]
+  return [...source.matchAll(/^\s*(?:"([^"]+)"|([A-Za-z][\w-]*)):\s*new URL\("\.\.\/assets\/help\/screenshots\/([^"]+)"/gm)]
     .map((match) => ({ key: match[1] || match[2], file: match[3] }));
 }
 

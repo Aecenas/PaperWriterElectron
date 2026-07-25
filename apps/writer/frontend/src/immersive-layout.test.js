@@ -11,6 +11,10 @@ const appSource = fs.readFileSync(
   fileURLToPath(new URL("./App.jsx", import.meta.url)),
   "utf8",
 );
+const aiLayoutPortSource = fs.readFileSync(
+  fileURLToPath(new URL("./document-workspace/ai-layout-port.js", import.meta.url)),
+  "utf8",
+);
 
 test("immersive mode removes window chrome without removing the writing workspace", () => {
   assert.match(
@@ -44,7 +48,9 @@ test("immersive mode removes window chrome without removing the writing workspac
     );
   }
   assert.doesNotMatch(
-    appSource,
+    `${appSource}\n${aiLayoutPortSource}`,
     /immersiveNavVisible|immersiveNavTimerRef|restoreImmersiveLayout/,
   );
+  assert.match(appSource, /aiLayoutPort\.transitionImmersiveLayout\(\{/);
+  assert.match(aiLayoutPortSource, /previousImmersiveModeRef\.current = immersiveMode/);
 });

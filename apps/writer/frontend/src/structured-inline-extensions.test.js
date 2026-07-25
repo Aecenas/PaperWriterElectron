@@ -5,6 +5,7 @@ import { Editor } from "@tiptap/core";
 import Image from "@tiptap/extension-image";
 import StarterKit from "@tiptap/starter-kit";
 import { createKnowledgeExtensions } from "./knowledge-extensions.js";
+import { paperCanvasViewModel } from "./document-workspace/model.js";
 import {
   createStructuredInlineExtensions,
   imageReferencePasteAllowed,
@@ -13,6 +14,7 @@ import {
   StructuredInlineBehavior,
   synchronizeStructuredInlineReferences,
 } from "./structured-inline-extensions.js";
+import { readAppStylesSync } from "./style-test-utils.js";
 
 const IMAGE_ONE = "11111111-1111-4111-8111-111111111111";
 const IMAGE_TWO = "22222222-2222-4222-8222-222222222222";
@@ -178,11 +180,12 @@ test("image-reference clipboard scope accepts only complete same-document metada
 });
 
 test("the copy-reference control is gated by both image-caption template flags", () => {
-  const app = fs.readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
-  const css = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-  assert.match(app, /className="image-copy-reference"/);
-  assert.match(app, /function paperCanvasViewModel[\s\S]*documentId: normalizeDocumentId\(document\.documentId\)/);
-  assert.match(app, /data-paper-document-id=\{normalizeDocumentId\(document\.documentId\)\}/);
+  const paperNodes = fs.readFileSync(new URL("./editor/paper-nodes.jsx", import.meta.url), "utf8");
+  const pageArticle = fs.readFileSync(new URL("./editor/PageArticle.jsx", import.meta.url), "utf8");
+  const css = readAppStylesSync();
+  assert.match(paperNodes, /className="image-copy-reference"/);
+  assert.equal(paperCanvasViewModel({ documentId: DOCUMENT_ONE }).documentId, DOCUMENT_ONE);
+  assert.match(pageArticle, /data-paper-document-id=\{normalizeDocumentId\(document\.documentId\)\}/);
   assert.match(css, /\.image-size-tools button \{[\s\S]*display: grid;[\s\S]*place-items: center;[\s\S]*justify-self: center;[\s\S]*text-align: center;/);
   assert.match(css, /\.image-size-tools \.image-copy-reference \{[\s\S]*display: none;/);
   assert.match(css, /\.paper-sheet\.shows-image-captions\.numbers-image-captions \.image-size-tools \.image-copy-reference \{[\s\S]*display: flex;/);

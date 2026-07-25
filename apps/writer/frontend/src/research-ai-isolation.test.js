@@ -13,11 +13,12 @@ function between(source, startMarker, endMarker) {
 }
 
 test("every AI request path stays independent from the research library state", async () => {
-  const app = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
+  const requestActions = await readFile(new URL("./controllers/ai-request-actions.js", import.meta.url), "utf8");
+  const applyActions = await readFile(new URL("./controllers/ai-apply-actions.js", import.meta.url), "utf8");
   const requestPaths = [
-    between(app, "const handleStartAiOptimize", "const handleAiChatPresetSelect"),
-    between(app, "const handleSendAiChat", "const handleClearAiChat"),
-    between(app, "const handleApplyAiBlock", "const shellClassName"),
+    between(requestActions, "const handleStartAiOptimize", "const handleSendAiChat"),
+    between(requestActions, "const handleSendAiChat", "const handleClearAiChat"),
+    between(applyActions, "const handleApplyAiBlock", "const handleManualAiApplyTarget"),
   ];
   for (const requestPath of requestPaths) {
     assert.doesNotMatch(requestPath, RESEARCH_STATE_PATTERN);
@@ -25,8 +26,8 @@ test("every AI request path stays independent from the research library state", 
 });
 
 test("AI context builders serialize only writing metadata, body, and document images", async () => {
-  const app = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
-  const builders = between(app, "function buildAiPromptInput", "function summarizeSelectedText");
+  const context = await readFile(new URL("./ai/context.js", import.meta.url), "utf8");
+  const builders = between(context, "function buildAiPromptInput", "function summarizeSelectedText");
   assert.doesNotMatch(builders, RESEARCH_STATE_PATTERN);
   assert.doesNotMatch(builders, /citationSources|footnotes|workspacePath|relativePath|url|notes/);
   assert.match(builders, /title/);
@@ -36,9 +37,10 @@ test("AI context builders serialize only writing metadata, body, and document im
 });
 
 test("optimization requests remain free-form and receive no direct-apply placement protocol", async () => {
-  const app = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
-  const builder = between(app, "function buildAiPromptInput", "function buildAiChatContextSignature");
-  const optimizeRequest = between(app, "const handleStartAiOptimize", "const handleAiChatPresetSelect");
+  const requestActions = await readFile(new URL("./controllers/ai-request-actions.js", import.meta.url), "utf8");
+  const context = await readFile(new URL("./ai/context.js", import.meta.url), "utf8");
+  const builder = between(context, "function buildAiPromptInput", "function buildAiChatContextSignature");
+  const optimizeRequest = between(requestActions, "const handleStartAiOptimize", "const handleSendAiChat");
   assert.match(builder, /AI_PROMPT_PREFIX/);
   assert.match(builder, /promptParts\.filter\(Boolean\)\.join\("\\n\\n"\)/);
   assert.doesNotMatch(builder, /manifest|optimizationContext|targetBlockIds|anchorBlockId/);

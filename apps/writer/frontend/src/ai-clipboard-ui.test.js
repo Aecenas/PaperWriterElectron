@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const source = fs.readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
+const source = fs.readFileSync(new URL("./ai/usage.js", import.meta.url), "utf8");
 
 test("AI block copy delegates rich clipboard writes to the application bridge", () => {
   const start = source.indexOf("async function copyAiBlockToClipboard");

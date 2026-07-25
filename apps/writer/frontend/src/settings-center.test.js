@@ -2,11 +2,21 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { readAppStylesSync } from "./style-test-utils.js";
 
 const source = fs.readFileSync(fileURLToPath(new URL("./SettingsCenter.jsx", import.meta.url)), "utf8");
 const css = fs.readFileSync(fileURLToPath(new URL("./settings-center.css", import.meta.url)), "utf8");
-const appCss = fs.readFileSync(fileURLToPath(new URL("./styles.css", import.meta.url)), "utf8");
+const appCss = readAppStylesSync();
 const appSource = fs.readFileSync(fileURLToPath(new URL("./App.jsx", import.meta.url)), "utf8");
+const templateDialogSource = fs.readFileSync(fileURLToPath(new URL("./templates/LetterTemplateDialog.jsx", import.meta.url)), "utf8");
+const aiSettingsSource = [
+  "./ai-settings/AiSettingsDialog.jsx",
+  "./ai-settings/AiProviderSidebar.jsx",
+  "./ai-settings/AiTaskModelsPanel.jsx",
+  "./ai-settings/AiProviderPanel.jsx",
+].map((path) => fs.readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8")).join("\n");
+const aiRequestParamsSource = fs.readFileSync(fileURLToPath(new URL("./ai-settings/AiRequestParamsEditor.jsx", import.meta.url)), "utf8");
+const aiSettingsModelSource = fs.readFileSync(fileURLToPath(new URL("./ai-settings/model.js", import.meta.url)), "utf8");
 const uiInteractionsSource = fs.readFileSync(fileURLToPath(new URL("./ui-interactions.js", import.meta.url)), "utf8");
 
 test("settings center is a first-level launcher with two destinations", () => {
@@ -53,8 +63,8 @@ test("the launcher exits before opening a standalone second-level panel", () => 
   const settingsRender = appSource.slice(appSource.indexOf("<SettingsCenter"), appSource.indexOf("<HelpCenterDialog"));
   assert.doesNotMatch(settingsRender, /\bembedded\b|aiContent|templateContent|onSectionChange/);
   assert.match(appSource, /targetTabId: current\.targetTabId[\s\S]*?activeTabIdRef\.current/);
-  assert.match(appSource, /selectionOnly \|\| manageOnly \? "" : selectedLetterTemplate\.id/);
-  assert.match(appSource, /manageOnly \? SYSTEM_TEMPLATE_GROUPS\[0\]\.id : getLetterTemplateGroupId\(selectedLetterTemplate\)/);
+  assert.match(templateDialogSource, /selectionOnly \|\| manageOnly \? "" : selectedLetterTemplate\.id/);
+  assert.match(templateDialogSource, /manageOnly \? SYSTEM_TEMPLATE_GROUPS\[0\]\.id : getLetterTemplateGroupId\(selectedLetterTemplate\)/);
   assert.match(appSource, /document=\{\{ letterTemplateId: newDocumentTemplateId \}\}/);
   assert.doesNotMatch(appSource, /const settingsTemplateDocument/);
   assert.match(appSource, /\{ \.\.\.current, open: false, section: "" \}/);
@@ -62,37 +72,37 @@ test("the launcher exits before opening a standalone second-level panel", () => 
 
 test("standalone second-level panels trap focus and return to the settings trigger", () => {
   assert.match(uiInteractionsSource, /export function dialogFocusableElements/);
-  assert.match(appSource, /closeButtonRef\.current\?\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(appSource, /returnFocusRef\?\.current \|\| previouslyFocused/);
-  assert.match(appSource, /className=\{embedded \? "template-dialog-embed" : "template-dialog-overlay dialog-scrim dialog-scrim--large"\}[\s\S]*?event\.target === event\.currentTarget/);
-  assert.match(appSource, /aria-label=\{selectionOnly \? "关闭模板选择" : manageOnly \? "关闭模板配置" : "关闭信笺模板"\}/);
-  assert.match(appSource, /if \(modelEditor\)[\s\S]*?setModelEditor\(null\)[\s\S]*?else if \(providerCreator\)[\s\S]*?onClose\?\.\(\)/);
+  assert.match(templateDialogSource, /closeButtonRef\.current\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(templateDialogSource, /returnFocusRef\?\.current \|\| previouslyFocused/);
+  assert.match(templateDialogSource, /className=\{embedded \? "template-dialog-embed" : "template-dialog-overlay dialog-scrim dialog-scrim--large"\}[\s\S]*?event\.target === event\.currentTarget/);
+  assert.match(templateDialogSource, /aria-label=\{selectionOnly \? "关闭模板选择" : manageOnly \? "关闭模板配置" : "关闭信笺模板"\}/);
+  assert.match(aiSettingsSource, /if \(modelEditor\)[\s\S]*?setModelEditor\(null\)[\s\S]*?else if \(providerCreator\)[\s\S]*?onClose\?\.\(\)/);
 });
 
 test("AI settings separates base models from a data-driven task-model page", () => {
-  assert.match(appSource, /const AI_TASK_MODEL_DEFINITIONS = \[/);
-  assert.match(appSource, /id: "applyResolver"[\s\S]*?label: "直接应用定位"/);
-  assert.match(appSource, /只判断优化块在正文中的替换或插入位置，不参与内容优化与改写/);
-  assert.match(appSource, /<strong>基础模型<\/strong>/);
-  assert.match(appSource, /className=\{activePanel === "tasks" \? "ai-task-model-nav selected"/);
-  assert.match(appSource, /<h2 id="ai-settings-title">任务模型<\/h2>/);
-  assert.match(appSource, /AI_TASK_MODEL_DEFINITIONS\.map\(\(task\) =>/);
-  assert.match(appSource, /ariaLabel=\{`\$\{task\.label\}供应商`\}/);
-  assert.match(appSource, /ariaLabel=\{`\$\{task\.label\}模型`\}/);
-  assert.match(appSource, /title="任务请求参数"/);
-  assert.match(appSource, /aiTaskRequestParamsForEditor/);
-  assert.match(appSource, /compact[\s\S]*?flat[\s\S]*?title="任务请求参数"/);
-  assert.match(appSource, /已显示所选模型参数；修改或新增字段仅用于当前任务/);
-  assert.match(appSource, /任务将继承基础模型中的 Codex 推理强度/);
-  assert.match(appSource, /requestTaskProviderChange/);
-  assert.match(appSource, /taskProviderConfirm/);
-  assert.match(appSource, /resolverProviderGroups\.map\(\(provider\) => \(\{ value: provider\.id, label: provider\.label \}\)\)/);
-  assert.match(appSource, /value=\{modelAvailable \? effectiveModelKey : ""\}/);
-  assert.match(appSource, /未单独指定，当前跟随默认模型/);
-  assert.match(appSource, /taskModelNavLabel[\s\S]*?跟随默认/);
-  assert.match(appSource, /原任务模型已失效，请重新选择/);
-  assert.doesNotMatch(appSource, /<optgroup/);
-  assert.doesNotMatch(appSource, /ai-apply-resolver-section/);
+  assert.match(aiSettingsModelSource, /export const AI_TASK_MODEL_DEFINITIONS = \[/);
+  assert.match(aiSettingsModelSource, /id: "applyResolver"[\s\S]*?label: "直接应用定位"/);
+  assert.match(aiSettingsModelSource, /只判断优化块在正文中的替换或插入位置，不参与内容优化与改写/);
+  assert.match(aiSettingsSource, /<strong>基础模型<\/strong>/);
+  assert.match(aiSettingsSource, /className=\{activePanel === "tasks" \? "ai-task-model-nav selected"/);
+  assert.match(aiSettingsSource, /<h2 id="ai-settings-title">任务模型<\/h2>/);
+  assert.match(aiSettingsSource, /AI_TASK_MODEL_DEFINITIONS\.map\(\(task\) =>/);
+  assert.match(aiSettingsSource, /ariaLabel=\{`\$\{task\.label\}供应商`\}/);
+  assert.match(aiSettingsSource, /ariaLabel=\{`\$\{task\.label\}模型`\}/);
+  assert.match(aiSettingsSource, /title="任务请求参数"/);
+  assert.match(aiSettingsSource, /aiTaskRequestParamsForEditor/);
+  assert.match(aiSettingsSource, /compact[\s\S]*?flat[\s\S]*?title="任务请求参数"/);
+  assert.match(aiSettingsSource, /已显示所选模型参数；修改或新增字段仅用于当前任务/);
+  assert.match(aiSettingsSource, /任务将继承基础模型中的 Codex 推理强度/);
+  assert.match(aiSettingsSource, /requestTaskProviderChange/);
+  assert.match(aiSettingsSource, /taskProviderConfirm/);
+  assert.match(aiSettingsSource, /resolverProviderGroups\.map\(\(provider\) => \(\{ value: provider\.id, label: provider\.label \}\)\)/);
+  assert.match(aiSettingsSource, /value=\{modelAvailable \? effectiveModelKey : ""\}/);
+  assert.match(aiSettingsSource, /未单独指定，当前跟随默认模型/);
+  assert.match(aiSettingsSource, /taskModelNavLabel[\s\S]*?跟随默认/);
+  assert.match(aiSettingsSource, /原任务模型已失效，请重新选择/);
+  assert.doesNotMatch(aiSettingsSource, /<optgroup/);
+  assert.doesNotMatch(aiSettingsSource, /ai-apply-resolver-section/);
 });
 
 test("task-model navigation is divided, responsive and keyboard-visible", () => {
@@ -107,27 +117,27 @@ test("task-model navigation is divided, responsive and keyboard-visible", () => 
 });
 
 test("AI model request parameter controls and subdialogs use product-styled components", () => {
-  assert.match(appSource, /className="ai-model-table ai-http-model-table"/);
-  assert.match(appSource, /ariaLabel=\{`\$\{model\.name\} 推理强度`\}/);
-  assert.match(appSource, /<span>请求参数<\/span>/);
-  assert.match(appSource, /className="ai-model-params-control"/);
-  assert.match(appSource, /<AiRequestParamsEditor/);
-  assert.match(appSource, /disabled=\{busy\}[\s\S]*?flat[\s\S]*?title="请求参数"/);
-  assert.match(appSource, /className="ai-request-param-info"/);
-  assert.match(appSource, /className="ai-request-param-key-field"[\s\S]*?<input[\s\S]*?className="ai-request-param-error"/);
-  assert.match(appSource, /className="ai-request-param-add-button"/);
-  assert.match(appSource, /className="ai-request-param-value-input"/);
-  assert.doesNotMatch(appSource, /className="ai-request-param-add-select"/);
-  assert.match(appSource, /app-info-tooltip-bubble/);
-  assert.doesNotMatch(appSource, /title=\{rowHint\}/);
-  assert.match(appSource, /ai-request-param-json-field/);
-  assert.match(appSource, /expandedJsonRows\.has\(row\.id\)/);
-  assert.doesNotMatch(appSource, /<small className="ai-request-param-hint"/);
-  assert.match(appSource, /<span>context_window<\/span>/);
-  assert.match(appSource, /<span>max_output_tokens<\/span>/);
-  assert.match(appSource, /不会作为请求参数发送/);
-  assert.match(appSource, /ariaLabel=\{`\$\{row\.key \|\| `参数 \$\{index \+ 1\}`\}类型`\}/);
-  assert.doesNotMatch(appSource, /ariaLabel="模型推理强度"/);
+  assert.match(aiSettingsSource, /className="ai-model-table ai-http-model-table"/);
+  assert.match(aiSettingsSource, /ariaLabel=\{`\$\{model\.name\} 推理强度`\}/);
+  assert.match(aiSettingsSource, /<span>请求参数<\/span>/);
+  assert.match(aiSettingsSource, /className="ai-model-params-control"/);
+  assert.match(aiSettingsSource, /<AiRequestParamsEditor/);
+  assert.match(aiSettingsSource, /disabled=\{busy\}[\s\S]*?flat[\s\S]*?title="请求参数"/);
+  assert.match(aiRequestParamsSource, /className="ai-request-param-info"/);
+  assert.match(aiRequestParamsSource, /className="ai-request-param-key-field"[\s\S]*?<input[\s\S]*?className="ai-request-param-error"/);
+  assert.match(aiRequestParamsSource, /className="ai-request-param-add-button"/);
+  assert.match(aiRequestParamsSource, /className="ai-request-param-value-input"/);
+  assert.doesNotMatch(aiRequestParamsSource, /className="ai-request-param-add-select"/);
+  assert.match(aiRequestParamsSource, /app-info-tooltip-bubble/);
+  assert.doesNotMatch(aiRequestParamsSource, /title=\{rowHint\}/);
+  assert.match(aiRequestParamsSource, /ai-request-param-json-field/);
+  assert.match(aiRequestParamsSource, /expandedJsonRows\.has\(row\.id\)/);
+  assert.doesNotMatch(aiRequestParamsSource, /<small className="ai-request-param-hint"/);
+  assert.match(aiSettingsSource, /<span>context_window<\/span>/);
+  assert.match(aiSettingsSource, /<span>max_output_tokens<\/span>/);
+  assert.match(aiSettingsSource, /不会作为请求参数发送/);
+  assert.match(aiRequestParamsSource, /ariaLabel=\{`\$\{row\.key \|\| `参数 \$\{index \+ 1\}`\}类型`\}/);
+  assert.doesNotMatch(aiSettingsSource, /ariaLabel="模型推理强度"/);
   assert.match(appCss, /\.ai-settings-subdialog-backdrop\s*\{[\s\S]*?backdrop-filter:\s*none/);
   assert.match(appCss, /\.ai-request-param-row\s*\{/);
   assert.match(appCss, /\.ai-request-param-value-input/);

@@ -7,11 +7,16 @@ import {
   shouldConfirmAiModeChange,
   shouldConfirmAiModeExit,
 } from "./ai-mode-chooser-model.js";
+import { AI_MODEL_REQUIRED_MESSAGE } from "./ai-settings/model.js";
+import { readAppStylesSync } from "./style-test-utils.js";
 
 const appSource = fs.readFileSync(fileURLToPath(new URL("./App.jsx", import.meta.url)), "utf8");
+const modeActionsSource = fs.readFileSync(fileURLToPath(new URL("./controllers/ai-mode-actions.js", import.meta.url)), "utf8");
+const modeStateSource = fs.readFileSync(fileURLToPath(new URL("./controllers/ai-mode-state.js", import.meta.url)), "utf8");
+const topNavSource = fs.readFileSync(fileURLToPath(new URL("./app-shell/TopNav.jsx", import.meta.url)), "utf8");
 const chooserSource = fs.readFileSync(fileURLToPath(new URL("./AiModeChooser.jsx", import.meta.url)), "utf8");
 const chooserCss = fs.readFileSync(fileURLToPath(new URL("./ai-mode-chooser.css", import.meta.url)), "utf8");
-const appCss = fs.readFileSync(fileURLToPath(new URL("./styles.css", import.meta.url)), "utf8");
+const appCss = readAppStylesSync();
 const modeArtwork = [
   "./assets/ai-modes/ai-optimize-card-idle-v3.png",
   "./assets/ai-modes/ai-optimize-card-selected-v3.png",
@@ -31,16 +36,16 @@ test("describes AI modes and confirms only destructive active transitions", () =
 });
 
 test("keeps mode button labels stable and replaces the old AI dropdown", () => {
-  assert.match(appSource, /<span>AI模式<\/span>/);
-  assert.doesNotMatch(appSource, /<span>退出 AI<\/span>/);
-  assert.doesNotMatch(appSource, /menuId="ai"/);
-  assert.match(appSource, /aria-pressed=\{aiMode\}/);
-  assert.match(appSource, /aria-expanded=\{aiModeChooserOpen\}/);
+  assert.match(topNavSource, /<span>AI模式<\/span>/);
+  assert.doesNotMatch(topNavSource, /<span>退出 AI<\/span>/);
+  assert.doesNotMatch(topNavSource, /menuId="ai"/);
+  assert.match(topNavSource, /aria-pressed=\{aiMode\}/);
+  assert.match(topNavSource, /aria-expanded=\{aiModeChooserOpen\}/);
   assert.match(appSource, /requestAiModeChange/);
   assert.match(appSource, /requestExitAiMode/);
   assert.match(appSource, /onToggleAiModeChooser=\{toggleAiModeChooser\}/);
-  assert.match(appSource, /if \(!aiHasUsableProvider\) \{[\s\S]*?openAiSettings\(\);[\s\S]*?duration: 5000, dismissible: true/);
-  assert.match(appSource, /必须配置好至少一个可用模型/);
+  assert.match(modeActionsSource, /if \(!aiHasUsableProvider\) \{[\s\S]*?openAiSettings\(\);[\s\S]*?duration: 5000, dismissible: true/);
+  assert.equal(AI_MODEL_REQUIRED_MESSAGE, "必须配置好至少一个可用模型，才能进入 AI 模式。配置完成后，再次点击“AI模式”即可。");
   assert.match(appSource, /<StatusToast status=\{status\} onClose=\{dismissStatus\}/);
   assert.match(appCss, /\.status-toast\s*\{[\s\S]*?z-index:\s*280[\s\S]*?backdrop-filter:\s*none/);
   assert.match(appCss, /\.status-toast-dismiss/);
@@ -135,7 +140,8 @@ test("uses flowing active-state color with a reduced-motion fallback", () => {
   assert.match(appCss, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(appCss, /\.nav-menu-trigger\.focus-mode-trigger\.active > svg/);
   assert.match(appCss, /\.nav-menu-trigger\.ai-feature-trigger\.active > span/);
-  assert.match(appSource, /setAiPageTransition\(kind\)/);
+  assert.match(modeActionsSource, /setAiPageTransition\(kind\)/);
+  assert.match(modeStateSource, /AI_MODE_PAGE_TRANSITION_MS = 560/);
   assert.match(appSource, /ai-mode-page-enter/);
   assert.match(appCss, /@keyframes aiModePageReveal/);
   assert.match(appCss, /\.app-shell\.ai-mode-page-enter \.work-surface/);

@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import {
   MAX_BROWSER_AI_MODELS,
   MAX_BROWSER_AI_PROVIDERS,
@@ -13,6 +11,7 @@ import {
   publicBrowserAiConfig,
   safeBrowserProviderId,
 } from "./browser-ai-config.js";
+import { browserBridge } from "./bridge.js";
 
 test("rejects reserved or malformed provider ids before map insertion", () => {
   assert.equal(safeBrowserProviderId("custom-safe_1.2"), "custom-safe_1.2");
@@ -154,12 +153,24 @@ test("browser external URLs allow only bounded http, https and mailto links", ()
   }
 });
 
-test("browser bridge opens only the normalized external URL", () => {
-  const source = fs.readFileSync(fileURLToPath(new URL("./bridge.js", import.meta.url)), "utf8");
-  const start = source.indexOf("openExternal: async");
-  const end = source.indexOf("loadAutosave:", start);
-  const openExternalSource = source.slice(start, end);
-  assert.match(openExternalSource, /normalizeBrowserExternalUrl\(url\)/);
-  assert.match(openExternalSource, /window\.open\(safeUrl,/);
-  assert.doesNotMatch(openExternalSource, /window\.open\(String\(url/);
+test("browser bridge opens only the normalized external URL", async () => {
+  const previousWindow = globalThis.window;
+  const opened = [];
+  globalThis.window = {
+    open: (...args) => {
+      opened.push(args);
+      return {};
+    },
+  };
+  try {
+    assert.deepEqual(await browserBridge.openExternal("javascript:alert(1)"), {
+      ok: false,
+      error: "unsupported-or-invalid-url",
+    });
+    assert.deepEqual(await browserBridge.openExternal(" https://example.com/path "), { ok: true });
+    assert.deepEqual(opened, [["https://example.com/path", "_blank", "noopener,noreferrer"]]);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
 });

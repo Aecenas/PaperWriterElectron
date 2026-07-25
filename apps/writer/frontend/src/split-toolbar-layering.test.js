@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import test from "node:test";
+import { readAppStylesSync } from "./style-test-utils.js";
 
-const css = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const css = readAppStylesSync();
 
 function ruleZIndex(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

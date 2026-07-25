@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { summarizeSessionTabs } from "./document-workspace/model.js";
 
 const source = fs.readFileSync(fileURLToPath(new URL("./App.jsx", import.meta.url)), "utf8");
 
@@ -23,9 +24,20 @@ function ordered(fragment, markers) {
 }
 
 test("recovery sessions persist the workspace base revision and mark stale restores external", () => {
-  const summary = between("function summarizeSessionTabs", "function createDocumentTab");
-  assert.match(summary, /recoverySourcePath:\s*typeof tab\?\.recoverySourcePath/);
-  assert.match(summary, /recoveryBaseRevision:\s*normalizeSessionDiskRevision\(tab\?\.recoveryBaseRevision \|\| tab\?\.diskRevision\)/);
+  const diskRevision = { size: 12, mtimeMs: 34, sha256: "a".repeat(64) };
+  assert.deepEqual(summarizeSessionTabs([{
+    path: "C:\\letters\\draft.letterpaper",
+    recoveryPath: "C:\\recovery\\draft.letterpaper",
+    recoverySourcePath: 42,
+    diskRevision,
+  }]), [{
+    path: "C:\\letters\\draft.letterpaper",
+    recoveryPath: "C:\\recovery\\draft.letterpaper",
+    recoveryId: "",
+    recoverySourcePath: "C:\\letters\\draft.letterpaper",
+    recoveryBaseRevision: diskRevision,
+    temporary: false,
+  }]);
 
   const restore = between("if (restoreEntries.length)", "const handleSelectTab");
   ordered(restore, [

@@ -9,6 +9,8 @@ export const IMAGE_CAPTION_MAX_CHARS = 500;
 export const IMAGE_TEXT_MAX_CHARS = 240;
 export const MEDIA_FILE_NAME_MAX_CHARS = 240;
 export const MEDIA_MIME_MAX_CHARS = 128;
+export const AUDIO_MAX_BYTES = 20 * 1024 * 1024;
+export const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 
 export function normalizeDocumentTitle(value, fallback = "未命名信笺") {
   if (typeof value !== "string") return fallback;

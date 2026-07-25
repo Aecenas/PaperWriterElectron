@@ -101,6 +101,114 @@ test.describe("P1 interaction regressions", () => {
     expect(pageErrors).toEqual([]);
   });
 
+  test("an opened document keeps its path and revision contract when edited and saved", async ({ page }) => {
+    const documentPath = "C:\\e2e\\editable.letterpaper";
+    await installDesktopBridgeFixture(page, {
+      documents: {
+        [documentPath]: createTestDocument({
+          documentId: "50000000-0000-4000-8000-000000000001",
+          title: "待编辑信笺",
+          body: "SAVE-BEFORE-SENTINEL",
+        }),
+      },
+      activePath: documentPath,
+    });
+    const pageErrors = await openPaperWriter(page);
+
+    await page.getByLabel("文章标题").fill("已保存信笺");
+    await page.locator(".canvas.active-pane .ProseMirror").fill("SAVE-AFTER-SENTINEL");
+    await page.keyboard.press("Control+s");
+
+    await expect.poll(() => page.evaluate(() => (
+      window.__paperWriterE2E.calls.saveDocument.length
+    ))).toBe(1);
+    const saved = await page.evaluate(() => (
+      window.__paperWriterE2E.calls.saveDocument.at(-1)
+    ));
+    expect(saved.currentPath).toBe(documentPath);
+    expect(saved.saveAs).toBe(false);
+    expect(saved.document.title).toBe("已保存信笺");
+    expect(saved.document.html).toContain("SAVE-AFTER-SENTINEL");
+    expect(saved.expectedRevision).toEqual({
+      size: expect.any(Number),
+      mtimeMs: 1,
+      sha256: "a".repeat(64),
+    });
+    await expect(page.locator(".statusbar")).toContainText("已写入工作区");
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("editable export keeps the selected format, target, and frozen document contract", async ({ page }) => {
+    const documentPath = "C:\\e2e\\export-source.letterpaper";
+    await installDesktopBridgeFixture(page, {
+      documents: {
+        [documentPath]: createTestDocument({
+          documentId: "50000000-0000-4000-8000-000000000002",
+          title: "交换格式导出",
+          body: "EDITABLE-EXPORT-SENTINEL",
+        }),
+      },
+      activePath: documentPath,
+    });
+    const pageErrors = await openPaperWriter(page);
+
+    await page.getByRole("button", { name: "导出", exact: true }).click();
+    await page.getByRole("menuitem", { name: /导出信笺/ }).click();
+    const dialog = page.getByRole("dialog", { name: "导出" });
+    await dialog.getByRole("radio", { name: /Markdown/ }).check();
+    await dialog.getByRole("button", { name: "选择位置" }).click();
+    await expect(dialog.getByLabel("导出路径")).toHaveValue("交换格式导出.md");
+    await dialog.getByRole("button", { name: "开始导出" }).click();
+    await expect(dialog.getByText("MARKDOWN 导出完成")).toBeVisible();
+
+    const exportCalls = await page.evaluate(() => ({
+      pick: window.__paperWriterE2E.calls.pickExportPath.at(-1),
+      editable: window.__paperWriterE2E.calls.exportEditable.at(-1),
+    }));
+    expect(exportCalls.pick).toEqual({
+      format: "markdown",
+      suggestedName: "交换格式导出",
+      initialDirectory: "",
+    });
+    expect(exportCalls.editable.format).toBe("markdown");
+    expect(exportCalls.editable.targetPath).toBe("交换格式导出.md");
+    expect(exportCalls.editable.document.title).toBe("交换格式导出");
+    expect(exportCalls.editable.document.html).toContain("EDITABLE-EXPORT-SENTINEL");
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("a clean workspace acknowledges the Electron close handshake exactly once", async ({ page }) => {
+    const documentPath = "C:\\e2e\\close-ready.letterpaper";
+    await installDesktopBridgeFixture(page, {
+      documents: {
+        [documentPath]: createTestDocument({
+          documentId: "50000000-0000-4000-8000-000000000003",
+          title: "关闭握手",
+        }),
+      },
+      activePath: documentPath,
+    });
+    const pageErrors = await openPaperWriter(page);
+
+    await page.evaluate(() => {
+      window.__paperWriterE2E.emit("app:close-request", { requestId: "close-e2e-1" });
+    });
+
+    await expect.poll(() => page.evaluate(() => (
+      window.__paperWriterE2E.calls.closeReady.length
+    ))).toBe(1);
+    const handshake = await page.evaluate(() => ({
+      ready: window.__paperWriterE2E.calls.closeReady,
+      canceled: window.__paperWriterE2E.calls.closeCanceled,
+    }));
+    expect(handshake.ready).toEqual([{ requestId: "close-e2e-1" }]);
+    expect(handshake.canceled).toEqual([]);
+
+    expect(pageErrors).toEqual([]);
+  });
+
   test("read-only documents lock editing, AI entry, save, and citation mutations", async ({ page }) => {
     const documentPath = "C:\\e2e\\future-format.letterpaper";
     const readOnlyDocument = createTestDocument({
