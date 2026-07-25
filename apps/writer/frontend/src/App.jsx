@@ -169,10 +169,7 @@ import {
   findWorkspaceView,
   getActiveWorkspaceView,
   normalizeWorkspaceSplitRatio,
-  openWorkspaceDocument,
   removeWorkspaceViews,
-  restoreWorkspaceGroupsSnapshot,
-  selectWorkspaceView,
 } from "./workspace-groups.js";
 import {
   deleteRecoveryBestEffort,
@@ -181,7 +178,6 @@ import {
   restoreEditorSelectionWithoutHistory,
   sameDocumentPath,
   selectAutosaveSnapshotTabs,
-  sessionTabSignature,
   snapshotRevisionIsCurrent,
 } from "./editor-lifecycle.js";
 import {
@@ -219,12 +215,15 @@ import {
   createWorkspaceGroupsController,
   deriveWorkspaceGroupItems,
 } from "./document-workspace/workspace-groups-controller.js";
+import {
+  createDocumentSessionController,
+  describeDocumentSessionPersistence,
+} from "./document-workspace/document-session-controller.js";
 import { listFolderWithTimeout } from "./document-workspace/folder-listing.js";
 import {
   createBlankDocument,
   createDocumentTab,
   documentRuntimeKey,
-  documentTabResourceKey,
   estimateSerializedBytes,
   inferTitle,
   normalizeDocument,
@@ -232,7 +231,6 @@ import {
   recoveryTabId,
   summarizeDocumentCache,
   summarizeSessionTabs,
-  summarizeWorkspaceGroups,
   workspaceDocumentView,
 } from "./document-workspace/model.js";
 import { replacePathPrefix } from "./document-workspace/path-model.js";
@@ -270,7 +268,6 @@ export default function App() {
     rightSplitTabId,
     rightSplitTabIdRef,
     sessionClosePendingRef,
-    sessionRef,
     sessionRestoredRef,
     sessionStatePort,
     setActivePane,
@@ -452,7 +449,7 @@ export default function App() {
   const readyRef = useRef(false);
   const editorSelectionRef = useRef(null);
   const { updateFlowRef, updateResultResetTimerRef } = useUpdateFlowRefs();
-  const restoreRunRef = useRef(0);
+  const documentSessionControllerRef = useRef(null);
   const mainCanvasRef = useRef(null);
   const rightCanvasRef = useRef(null);
   const workSurfaceRef = useRef(null);
@@ -1420,39 +1417,22 @@ export default function App() {
 
   useEffect(() => bridge.onWindowFocus?.(() => verifyOpenDiskRevisions()), [verifyOpenDiskRevisions]);
 
-  const activeSessionPath = currentPath
-    || openTabs.find((tab) => tab.id === activeTabId)?.recoveryPath
-    || "";
-  const sessionPathSignature = useMemo(
-    () => sessionTabSignature(activeSessionPath, openTabs),
-    [activeSessionPath, openTabs],
+  const sessionPersistenceDescriptor = useMemo(
+    () => describeDocumentSessionPersistence({
+      activeTabId,
+      currentPath,
+      groups: workspaceGroups,
+      tabs: openTabs,
+    }),
+    [activeTabId, currentPath, openTabs, workspaceGroups],
   );
-  const workspaceGroupsSessionSnapshot = useMemo(
-    () => summarizeWorkspaceGroups(workspaceGroups, openTabs),
-    [openTabs, workspaceGroups],
-  );
-  const workspaceGroupsSessionSignature = useMemo(
-    () => JSON.stringify(workspaceGroupsSessionSnapshot),
-    [workspaceGroupsSessionSnapshot],
-  );
+  const {
+    sessionPathSignature,
+    workspaceGroupsSessionSignature,
+  } = sessionPersistenceDescriptor;
 
   useEffect(() => {
-    if (!sessionRestoredRef.current) {
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      const liveTabs = openTabsRef.current.map((tab) => (
-        tab.id === activeTabIdRef.current ? { ...tab, path: currentPathRef.current } : tab
-      ));
-      persistSession({
-        activePath: currentPathRef.current
-          || liveTabs.find((tab) => tab.id === activeTabIdRef.current)?.recoveryPath
-          || "",
-        tabs: summarizeSessionTabs(liveTabs),
-        workspaceGroups: summarizeWorkspaceGroups(workspaceGroupsRef.current, liveTabs),
-      });
-    }, 220);
-    return () => window.clearTimeout(timer);
+    return documentSessionControllerRef.current?.schedulePersistence();
   }, [persistSession, sessionPathSignature, workspaceGroupsSessionSignature]);
 
   useAiConfigLifecycle({
@@ -1737,6 +1717,185 @@ export default function App() {
   }, [updateDocumentSplitRatio]);
 
   const commitWorkspaceGroups = groupStorePort.commitWorkspaceGroups;
+  const sessionFolderLifecyclePort = useMemo(() => Object.freeze({
+    async restoreSessionFolder({
+      activePath,
+      commitSessionPatch,
+      isActiveRestore,
+      savedFolderPath,
+    }) {
+      let folderPath = savedFolderPath;
+      let defaultFolderPath = "";
+      if (!folderPath) {
+        try {
+          const paths = await bridge.getPaths?.();
+          defaultFolderPath = paths?.documents || "";
+          folderPath = defaultFolderPath;
+        } catch {
+          folderPath = "";
+        }
+      }
+      if (!folderPath) return;
+
+      const folderRestoreRequest = folderRequestControllerRef.current.begin("view");
+      folderPathRef.current = folderPath;
+      bridge.debugLog?.("renderer:restore:folder-selected", {
+        folderPath,
+        source: savedFolderPath ? "session" : "documents-default",
+      });
+      if (
+        isActiveRestore()
+        && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
+      ) {
+        setFolderState((previous) => ({
+          ...previous,
+          rootPath: previous.rootPath || folderPath,
+          path: folderPath,
+          loading: true,
+        }));
+      }
+      try {
+        const result = await listFolderWithTimeout(folderPath);
+        if (
+          isActiveRestore()
+          && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
+          && !result?.canceled
+        ) {
+          bridge.debugLog?.("renderer:restore:folder-applied", {
+            folderPath,
+            folders: result.folders?.length || 0,
+            files: result.files?.length || 0,
+          });
+          const restoredFolderPath = result.folderPath || folderPath;
+          folderPathRef.current = restoredFolderPath;
+          setFolderState({
+            rootPath: folderPath,
+            path: restoredFolderPath,
+            parentPath: result.parentPath || "",
+            folders: result.folders || [],
+            files: result.files || [],
+            entries: result.entries || [
+              ...(result.folders || []),
+              ...(result.files || []),
+            ],
+            loading: false,
+            error: "",
+          });
+        } else if (
+          isActiveRestore()
+          && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
+        ) {
+          throw new Error("folder list canceled");
+        }
+      } catch (error) {
+        bridge.debugLog?.("renderer:restore:folder-fallback", {
+          folderPath,
+          message: error?.message,
+        });
+        if (
+          isActiveRestore()
+          && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
+        ) {
+          try {
+            const paths = defaultFolderPath
+              ? { documents: defaultFolderPath }
+              : await bridge.getPaths?.();
+            const fallbackPath = paths?.documents || "";
+            const fallback = fallbackPath
+              ? await listFolderWithTimeout(fallbackPath)
+              : null;
+            if (!folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
+              // A newer folder navigation owns the tree now.
+            } else if (fallbackPath && !fallback?.canceled) {
+              folderPathRef.current = fallback.folderPath || fallbackPath;
+              setFolderState({
+                rootPath: fallback.folderPath || fallbackPath,
+                path: fallback.folderPath || fallbackPath,
+                parentPath: fallback.parentPath || "",
+                folders: fallback.folders || [],
+                files: fallback.files || [],
+                entries: fallback.entries || [
+                  ...(fallback.folders || []),
+                  ...(fallback.files || []),
+                ],
+                loading: false,
+                error: "",
+              });
+              commitSessionPatch({
+                folderPath: fallback.folderPath || fallbackPath,
+                activePath: "",
+              });
+            } else {
+              folderPathRef.current = folderPath;
+              setFolderState({
+                rootPath: folderPath,
+                path: folderPath,
+                parentPath: "",
+                files: [],
+                folders: [],
+                entries: [],
+                loading: false,
+                error: "文件树读取超时或失败",
+              });
+            }
+          } catch {
+            if (folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
+              folderPathRef.current = folderPath;
+              setFolderState({
+                rootPath: folderPath,
+                path: folderPath,
+                parentPath: "",
+                files: [],
+                folders: [],
+                entries: [],
+                loading: false,
+                error: "文件树读取超时或失败",
+              });
+            }
+          }
+        }
+      } finally {
+        folderRequestControllerRef.current.finish(folderRestoreRequest);
+      }
+    },
+  }), []);
+  const documentSessionController = useMemo(
+    () => createDocumentSessionController({
+      applyDocument,
+      debugPort: {
+        log: (event, payload) => bridge.debugLog?.(event, payload),
+      },
+      documentIoPort: {
+        getDocumentRevision: (path) => bridge.getDocumentRevision?.(path),
+        openDocumentPath: (path) => bridge.openDocumentPath(path),
+      },
+      documentRuntimePort: documentTabRuntimePort,
+      documentStorePort,
+      folderLifecyclePort: sessionFolderLifecyclePort,
+      groupStorePort,
+      letterTemplates,
+      researchStatePort: {
+        commitActiveItem: setActiveLibraryItem,
+        commitItem: (viewId, item) => {
+          setResearchItemsByViewId((previous) => ({
+            ...previous,
+            [viewId]: item,
+          }));
+        },
+      },
+      sessionStatePort,
+    }),
+    [
+      applyDocument,
+      documentStorePort,
+      documentTabRuntimePort,
+      groupStorePort,
+      letterTemplates,
+      sessionFolderLifecyclePort,
+      sessionStatePort,
+    ],
+  );
+  documentSessionControllerRef.current = documentSessionController;
   const workspaceGroupsController = useMemo(
     () => createWorkspaceGroupsController({
       documentStorePort,
@@ -1856,248 +2015,8 @@ export default function App() {
     if (!editor || sessionRestoredRef.current) {
       return undefined;
     }
-    let canceled = false;
-    const runId = restoreRunRef.current + 1;
-    restoreRunRef.current = runId;
-    const isActiveRestore = () => !canceled && restoreRunRef.current === runId;
-    const restoreSession = async () => {
-      const { folderPath: savedFolderPath, activePath } = sessionRef.current;
-      const restoreEntries = [...summarizeSessionTabs(sessionRef.current.tabs || [])];
-      if (activePath && !restoreEntries.some((entry) => sameDocumentPath(entry.path, activePath))) {
-        restoreEntries.push({ path: activePath, temporary: false });
-      }
-      let folderPath = savedFolderPath;
-      let defaultFolderPath = "";
-      bridge.debugLog?.("renderer:restore:start", {
-        savedFolderPath,
-        activePath,
-        tabs: restoreEntries.length,
-      });
-      if (!folderPath) {
-        try {
-          const paths = await bridge.getPaths?.();
-          defaultFolderPath = paths?.documents || "";
-          folderPath = defaultFolderPath;
-        } catch {
-          folderPath = "";
-        }
-      }
-      if (folderPath) {
-        const folderRestoreRequest = folderRequestControllerRef.current.begin("view");
-        folderPathRef.current = folderPath;
-        bridge.debugLog?.("renderer:restore:folder-selected", {
-          folderPath,
-          source: savedFolderPath ? "session" : "documents-default",
-        });
-        if (isActiveRestore() && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
-          setFolderState((previous) => ({
-            ...previous,
-            rootPath: previous.rootPath || folderPath,
-            path: folderPath,
-            loading: true,
-          }));
-        }
-        try {
-          const result = await listFolderWithTimeout(folderPath);
-          if (
-            isActiveRestore()
-            && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
-            && !result?.canceled
-          ) {
-            bridge.debugLog?.("renderer:restore:folder-applied", {
-              folderPath,
-              folders: result.folders?.length || 0,
-              files: result.files?.length || 0,
-            });
-            const restoredFolderPath = result.folderPath || folderPath;
-            folderPathRef.current = restoredFolderPath;
-            setFolderState({
-              rootPath: folderPath,
-              path: restoredFolderPath,
-              parentPath: result.parentPath || "",
-              folders: result.folders || [],
-              files: result.files || [],
-              entries: result.entries || [...(result.folders || []), ...(result.files || [])],
-              loading: false,
-              error: "",
-            });
-          } else if (isActiveRestore() && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
-            throw new Error("folder list canceled");
-          }
-        } catch (error) {
-          bridge.debugLog?.("renderer:restore:folder-fallback", {
-            folderPath,
-            message: error?.message,
-          });
-          if (isActiveRestore() && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
-            try {
-              const paths = defaultFolderPath ? { documents: defaultFolderPath } : await bridge.getPaths?.();
-              const fallbackPath = paths?.documents || "";
-              const fallback = fallbackPath ? await listFolderWithTimeout(fallbackPath) : null;
-              if (!folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
-                // A newer folder navigation owns the tree now.
-              } else if (fallbackPath && !fallback?.canceled) {
-                folderPathRef.current = fallback.folderPath || fallbackPath;
-                setFolderState({
-                  rootPath: fallback.folderPath || fallbackPath,
-                  path: fallback.folderPath || fallbackPath,
-                  parentPath: fallback.parentPath || "",
-                  folders: fallback.folders || [],
-                  files: fallback.files || [],
-                  entries: fallback.entries || [...(fallback.folders || []), ...(fallback.files || [])],
-                  loading: false,
-                  error: "",
-                });
-                persistSession({ folderPath: fallback.folderPath || fallbackPath, activePath: "" });
-              } else {
-                folderPathRef.current = folderPath;
-                setFolderState({
-                  rootPath: folderPath,
-                  path: folderPath,
-                  parentPath: "",
-                  files: [],
-                  folders: [],
-                  entries: [],
-                  loading: false,
-                  error: "文件树读取超时或失败",
-                });
-              }
-            } catch {
-              if (folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
-                folderPathRef.current = folderPath;
-                setFolderState({
-                  rootPath: folderPath,
-                  path: folderPath,
-                  parentPath: "",
-                  files: [],
-                  folders: [],
-                  entries: [],
-                  loading: false,
-                  error: "文件树读取超时或失败",
-                });
-              }
-            }
-          }
-        } finally {
-          folderRequestControllerRef.current.finish(folderRestoreRequest);
-        }
-      }
-      if (restoreEntries.length) {
-        const restoredTabs = [];
-        for (const restoreEntry of restoreEntries) {
-          const restorePath = restoreEntry.recoveryPath || restoreEntry.path;
-          try {
-            const result = await bridge.openDocumentPath(restorePath);
-            if (!isActiveRestore()) {
-              return;
-            }
-            if (!result?.canceled && result?.document) {
-              const normalized = normalizeDocument(result.document, letterTemplates);
-              const restoredFromRecovery = Boolean(restoreEntry.recoveryPath || restoreEntry.temporary);
-              if (restoredFromRecovery) {
-                const logicalPath = restoreEntry.temporary ? "" : restoreEntry.path;
-                const recoverySourcePath = restoreEntry.recoverySourcePath || logicalPath;
-                const recoveryBaseRevision = normalizeSessionDiskRevision(restoreEntry.recoveryBaseRevision);
-                const logicalRevision = logicalPath ? await bridge.getDocumentRevision?.(logicalPath).catch?.(() => null) : null;
-                const currentDiskRevision = normalizeSessionDiskRevision(logicalRevision?.diskRevision);
-                const sourceMatches = !logicalPath || !recoverySourcePath || sameDocumentPath(logicalPath, recoverySourcePath);
-                const externalChanged = Boolean(logicalPath && (
-                  !sourceMatches
-                  || !recoveryBaseRevision
-                  || !sameDiskRevision(currentDiskRevision, recoveryBaseRevision)
-                ));
-                restoredTabs.push(createDocumentTab(normalized, logicalPath, true, {
-                    recoveryPath: result.path,
-                    recoveryId: restoreEntry.recoveryId || result.recoveryId,
-                    recoverySourcePath,
-                    recoveryBaseRevision,
-                    recoveryRevision: 0,
-                    recoveredTemporary: true,
-                    diskRevision: recoveryBaseRevision,
-                    readOnly: result.readOnly,
-                    externalChanged,
-                  }));
-              } else {
-                restoredTabs.push(createDocumentTab(normalized, result.path, false, { diskRevision: result.diskRevision, readOnly: result.readOnly }));
-              }
-            }
-          } catch {
-            // Missing or unreadable session files are skipped.
-          }
-        }
-        if (isActiveRestore() && restoredTabs.length) {
-          const restoredAt = Date.now();
-          restoredTabs.forEach((tab) => {
-            documentTabRuntimePort.ensure(tab.id, {
-              dirty: tab.dirty,
-              diskRevision: tab.diskRevision,
-              lastEditAt: tab.dirty ? restoredAt : null,
-              liveUpdatedAt: tab.document?.updatedAt,
-              recoveryRevision: tab.recoveryRevision,
-            });
-          });
-          const legacyActiveTab = restoredTabs.find((tab) => sameDocumentPath(tab.path || tab.recoveryPath, activePath)) || restoredTabs[0];
-          let fallbackGroups = createWorkspaceGroupsState(workspaceDocumentView(restoredTabs[0]), {
-            splitRatio: workspaceGroupsRef.current.splitRatio,
-          });
-          for (const tab of restoredTabs.slice(1)) {
-            fallbackGroups = openWorkspaceDocument(fallbackGroups, WORKSPACE_GROUP_ID.PRIMARY, workspaceDocumentView(tab));
-          }
-          fallbackGroups = selectWorkspaceView(fallbackGroups, WORKSPACE_GROUP_ID.PRIMARY, legacyActiveTab.id);
-          const restoredGroups = restoreWorkspaceGroupsSnapshot(sessionRef.current.workspaceGroups, {
-            documents: restoredTabs.map(workspaceDocumentView),
-            fallbackState: fallbackGroups,
-            fallbackPrimaryDocument: workspaceDocumentView(legacyActiveTab),
-            resolveDocumentTabId: (resourceKey) => {
-              const tab = restoredTabs.find((candidate) => documentTabResourceKey(candidate) === resourceKey);
-              return tab ? workspaceDocumentView(tab) : null;
-            },
-          }) || fallbackGroups;
-          const restoredPrimaryView = getActiveWorkspaceView(restoredGroups, WORKSPACE_GROUP_ID.PRIMARY);
-          const activeTab = restoredTabs.find((tab) => tab.id === restoredPrimaryView?.tabId) || legacyActiveTab;
-          setOpenTabs(restoredTabs);
-          commitWorkspaceGroups(restoredGroups);
-          activeTabIdRef.current = activeTab.id;
-          setActiveTabId(activeTab.id);
-          applyDocument(activeTab.document, activeTab.path, activeTab.dirty);
-          const restoredSecondaryView = getActiveWorkspaceView(restoredGroups, WORKSPACE_GROUP_ID.SECONDARY);
-          if (restoredGroups.focusedGroup === WORKSPACE_GROUP_ID.SECONDARY && restoredSecondaryView) {
-            setActivePane("right");
-            if (restoredSecondaryView.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
-              const restoredResearchItem = restoredSecondaryView.relativePath
-                ? {
-                    type: "file",
-                    relativePath: restoredSecondaryView.relativePath,
-                    name: restoredSecondaryView.titleSnapshot || displayNameFromPath(restoredSecondaryView.relativePath),
-                  }
-                : null;
-              if (restoredResearchItem) {
-                setResearchItemsByViewId((previous) => ({ ...previous, [restoredSecondaryView.viewId]: restoredResearchItem }));
-                setActiveLibraryItem(restoredResearchItem);
-              }
-            }
-          } else {
-            setActivePane("main");
-          }
-          persistSession({
-            activePath: activeTab.path || activeTab.recoveryPath,
-            tabs: summarizeSessionTabs(restoredTabs),
-            workspaceGroups: summarizeWorkspaceGroups(restoredGroups, restoredTabs),
-          });
-        } else if (isActiveRestore()) {
-          persistSession({ activePath: "", tabs: [] });
-        }
-      }
-      if (isActiveRestore()) {
-        sessionRestoredRef.current = true;
-        bridge.debugLog?.("renderer:restore:complete", { runId });
-      }
-    };
-    restoreSession();
-    return () => {
-      canceled = true;
-      bridge.debugLog?.("renderer:restore:canceled", { runId });
-    };
+    const restoreOperation = documentSessionController.beginRestore();
+    return () => restoreOperation?.cancel();
   }, [applyDocument, commitWorkspaceGroups, editor, letterTemplates, persistSession]);
 
   const handleSelectTab = useCallback(

@@ -5,13 +5,21 @@ import { fileURLToPath } from "node:url";
 import { summarizeSessionTabs } from "./document-workspace/model.js";
 
 const source = fs.readFileSync(fileURLToPath(new URL("./App.jsx", import.meta.url)), "utf8");
+const sessionControllerSource = fs.readFileSync(
+  fileURLToPath(new URL("./document-workspace/document-session-controller.js", import.meta.url)),
+  "utf8",
+);
 
-function between(startMarker, endMarker, fromIndex = 0) {
-  const start = source.indexOf(startMarker, fromIndex);
-  const end = source.indexOf(endMarker, start + startMarker.length);
+function betweenSource(targetSource, startMarker, endMarker, fromIndex = 0) {
+  const start = targetSource.indexOf(startMarker, fromIndex);
+  const end = targetSource.indexOf(endMarker, start + startMarker.length);
   assert.notEqual(start, -1, `missing marker: ${startMarker}`);
   assert.notEqual(end, -1, `missing marker: ${endMarker}`);
-  return source.slice(start, end);
+  return targetSource.slice(start, end);
+}
+
+function between(startMarker, endMarker, fromIndex = 0) {
+  return betweenSource(source, startMarker, endMarker, fromIndex);
 }
 
 function ordered(fragment, markers) {
@@ -39,16 +47,22 @@ test("recovery sessions persist the workspace base revision and mark stale resto
     temporary: false,
   }]);
 
-  const restore = between("if (restoreEntries.length)", "const handleSelectTab");
+  const restore = betweenSource(
+    sessionControllerSource,
+    "const openRestoredTab",
+    "const restoreDocumentsAndGroups",
+  );
   ordered(restore, [
-    "const recoveryBaseRevision = normalizeSessionDiskRevision(restoreEntry.recoveryBaseRevision)",
-    "const logicalRevision = logicalPath ? await bridge.getDocumentRevision?.(logicalPath)",
-    "const currentDiskRevision = normalizeSessionDiskRevision(logicalRevision?.diskRevision)",
+    "const recoveryBaseRevision = normalizeSessionDiskRevision(",
+    "logicalRevision = await documentIoPort.getDocumentRevision(logicalPath)",
+    "const currentDiskRevision = normalizeSessionDiskRevision(",
     "const externalChanged = Boolean(logicalPath",
   ]);
   assert.match(restore, /!sourceMatches\s*\|\|\s*!recoveryBaseRevision\s*\|\|\s*!sameDiskRevision\(currentDiskRevision, recoveryBaseRevision\)/s);
   assert.match(restore, /diskRevision:\s*recoveryBaseRevision/);
   assert.match(restore, /externalChanged/);
+  assert.match(source, /getDocumentRevision: \(path\) => bridge\.getDocumentRevision\?\.\(path\)/);
+  assert.match(source, /const restoreOperation = documentSessionController\.beginRestore\(\)/);
   assert.match(source, /const activeWorkPersistenceState = deriveTabPersistenceState\(/);
   assert.match(source, /persistenceState=\{activeWorkPersistenceState\}/);
   assert.match(source, /externalVersion=\{Boolean\(activeWorkTab\?\.externalChanged\)\}/);

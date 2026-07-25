@@ -203,7 +203,7 @@ test("successful saves commit clean state before best-effort recovery cleanup", 
 
 test("multi-tab save boundaries use revisions captured with the document snapshots", () => {
   const snapshotStart = source.indexOf("const snapshotLiveTabs");
-  const snapshotEnd = source.indexOf("const activeSessionPath", snapshotStart);
+  const snapshotEnd = source.indexOf("const sessionPersistenceDescriptor", snapshotStart);
   const snapshotSource = source.slice(snapshotStart, snapshotEnd);
   assert.match(snapshotSource, /captureDocumentWorkspaceSnapshot\(\{/);
   assert.match(snapshotSource, /revisionPort: documentRevisionPort/);

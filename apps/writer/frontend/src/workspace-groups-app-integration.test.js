@@ -5,6 +5,7 @@ import test from "node:test";
 const appSource = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
 const aiLayoutPortSource = await readFile(new URL("./document-workspace/ai-layout-port.js", import.meta.url), "utf8");
 const groupsControllerSource = await readFile(new URL("./document-workspace/workspace-groups-controller.js", import.meta.url), "utf8");
+const sessionControllerSource = await readFile(new URL("./document-workspace/document-session-controller.js", import.meta.url), "utf8");
 const topNavSource = await readFile(new URL("./app-shell/TopNav.jsx", import.meta.url), "utf8");
 const pdfSource = await readFile(new URL("./research/PdfReader.jsx", import.meta.url), "utf8");
 const knowledgeDocumentPortSource = await readFile(new URL("./document-workspace/knowledge-document-port.js", import.meta.url), "utf8");
@@ -12,12 +13,16 @@ const knowledgeDerivedSource = await readFile(new URL("./controllers/knowledge-d
 const knowledgeReferenceActionsSource = await readFile(new URL("./controllers/knowledge-reference-actions.js", import.meta.url), "utf8");
 const knowledgeRelationshipsSource = await readFile(new URL("./controllers/knowledge-relationships.js", import.meta.url), "utf8");
 
-test("App persists and restores the v3 two-group session by stable resources", () => {
-  assert.match(appSource, /summarizeWorkspaceGroups\(workspaceGroupsRef\.current, liveTabs\)/);
-  assert.match(appSource, /restoreWorkspaceGroupsSnapshot\(sessionRef\.current\.workspaceGroups/);
-  assert.match(appSource, /resolveDocumentTabId: \(resourceKey\)/);
-  assert.match(appSource, /workspaceGroups: summarizeWorkspaceGroups\(restoredGroups, restoredTabs\)/);
-  assert.match(appSource, /220\);/);
+test("App composes session lifecycle effects through the document session controller", () => {
+  assert.match(appSource, /describeDocumentSessionPersistence\(\{/);
+  assert.match(appSource, /documentSessionControllerRef\.current\?\.schedulePersistence\(\)/);
+  assert.match(appSource, /createDocumentSessionController\(\{/);
+  assert.match(appSource, /const restoreOperation = documentSessionController\.beginRestore\(\)/);
+  assert.match(sessionControllerSource, /const restoredGroups = restoreWorkspaceGroupsSnapshot\(/);
+  assert.match(sessionControllerSource, /resolveDocumentTabId: \(resourceKey\)/);
+  assert.match(sessionControllerSource, /workspaceGroups: summarizeWorkspaceGroups\(restoredGroups, restoredTabs\)/);
+  assert.match(sessionControllerSource, /DOCUMENT_SESSION_PERSIST_DELAY_MS = 220/);
+  assert.doesNotMatch(appSource, /restoreWorkspaceGroupsSnapshot\(sessionRef\.current\.workspaceGroups/);
 });
 
 test("global shortcuts resolve the focused group and route PDF search", () => {
