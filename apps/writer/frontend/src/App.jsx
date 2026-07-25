@@ -164,22 +164,14 @@ import { CitationSourceDialog, FootnoteDialog, KnowledgeReferencePopover } from 
 import {
   WORKSPACE_GROUP_ID,
   WORKSPACE_VIEW_KIND,
-  closeWorkspaceView,
-  createDocumentWorkspaceView,
-  createWorkspaceGroupsState,
-  findWorkspaceView,
   getActiveWorkspaceView,
   normalizeWorkspaceSplitRatio,
-  removeWorkspaceViews,
 } from "./workspace-groups.js";
 import {
-  deleteRecoveryBestEffort,
   readEditorSelectionState,
   replaceEditorContentWithoutHistory,
   restoreEditorSelectionWithoutHistory,
   sameDocumentPath,
-  selectAutosaveSnapshotTabs,
-  snapshotRevisionIsCurrent,
 } from "./editor-lifecycle.js";
 import {
   AUDIO_MAX_BYTES,
@@ -211,6 +203,10 @@ import {
   serializePaneDocument,
 } from "./document-workspace/editor-runtime.js";
 import { useDocumentRuntimeKernel } from "./document-workspace/document-runtime-kernel.js";
+import {
+  createDocumentPersistenceController,
+  createDocumentPersistenceRuntimeState,
+} from "./document-workspace/document-persistence-controller.js";
 import { useDocumentWorkspaceState } from "./document-workspace/workspace-state.js";
 import {
   createWorkspaceGroupsController,
@@ -229,12 +225,10 @@ import {
   inferTitle,
   normalizeDocument,
   paperCanvasViewModel,
-  recoveryTabId,
   summarizeDocumentCache,
   summarizeSessionTabs,
   workspaceDocumentView,
 } from "./document-workspace/model.js";
-import { normalizeSessionDiskRevision } from "./document-workspace/revisions.js";
 
 
 export default function App() {
@@ -267,7 +261,6 @@ export default function App() {
     openTabsRef,
     rightSplitTabId,
     rightSplitTabIdRef,
-    sessionClosePendingRef,
     sessionRestoredRef,
     sessionStatePort,
     setActivePane,
@@ -450,6 +443,14 @@ export default function App() {
   const editorSelectionRef = useRef(null);
   const { updateFlowRef, updateResultResetTimerRef } = useUpdateFlowRefs();
   const documentSessionControllerRef = useRef(null);
+  const documentPersistenceControllerRef = useRef(null);
+  const documentPersistenceRuntimeStateRef = useRef(null);
+  if (!documentPersistenceRuntimeStateRef.current) {
+    documentPersistenceRuntimeStateRef.current = (
+      createDocumentPersistenceRuntimeState()
+    );
+  }
+  const persistenceViewStateRef = useRef({ aiMode: false });
   const mainCanvasRef = useRef(null);
   const rightCanvasRef = useRef(null);
   const workSurfaceRef = useRef(null);
@@ -550,10 +551,8 @@ export default function App() {
     promptDialogResolverRef,
   } = usePromiseDialogResolverRefs();
   const syncAiStreamChatMessages = useAiStreamChatMessagesSlot(aiStreamRegistry);
-  const autosaveRunningRef = useRef(false);
-  const autosaveErrorAtRef = useRef(0);
-  const tabClosePendingIdsRef = useRef(new Set());
   const workspaceSearchRequestRef = useRef("");
+  persistenceViewStateRef.current = { aiMode };
   folderStateRef.current = folderState;
   folderPathRef.current = folderState.path;
   expandedFoldersRef.current = expandedFolders;
@@ -602,14 +601,6 @@ export default function App() {
 
   const releaseTabRuntimeState = useCallback((tabId) => {
     documentTabRuntimePort.release(tabId);
-  }, []);
-
-  const queueTabSave = useCallback(async (tabId, operation) => {
-    return documentSaveQueuePort.enqueue(tabId, operation);
-  }, []);
-
-  const waitForTabSave = useCallback(async (tabId) => {
-    await documentSaveQueuePort.wait(tabId);
   }, []);
 
   const mainEditorExtensions = useMemo(() => createPaperEditorExtensions(), []);
@@ -2049,6 +2040,175 @@ export default function App() {
   );
   documentSessionControllerRef.current = documentSessionController;
 
+  const documentPersistenceController = useMemo(
+    () => createDocumentPersistenceController({
+      applicationPort: {
+        applyDocument,
+        captureSaveDocument: ({ isRightSplit }) => (
+          isRightSplit ? getRightSplitSaveDocument() : getSaveDocument()
+        ),
+        commitActiveResearchItem: setActiveLibraryItem,
+        migrateDocumentRuntimeKey: migrateAiRequestDocumentKey,
+        openConflictComparison: ({ document: comparisonDocument, targetTab }) => {
+          const comparisonId = addOrActivateDocumentTab(
+            comparisonDocument,
+            "",
+            false,
+            { readOnly: true },
+          );
+          if (comparisonId) {
+            rightSplitTabIdRef.current = targetTab.id;
+            setRightSplitTabId(targetTab.id);
+            setActivePane("main");
+          }
+          return comparisonId;
+        },
+        readSaveContext: () => {
+          const documentSnapshot = documentStorePort.read();
+          const groupSnapshot = groupStorePort.read();
+          const activeSecondary = getActiveWorkspaceView(
+            groupSnapshot.groups,
+            WORKSPACE_GROUP_ID.SECONDARY,
+          );
+          if (
+            groupSnapshot.activePane === "right"
+            && activeSecondary?.kind === WORKSPACE_VIEW_KIND.RESEARCH
+          ) {
+            return { blockedByResearch: true };
+          }
+          const rightTab = documentSnapshot.tabs.find(
+            (tab) => tab.id === groupSnapshot.rightSplitTabId,
+          );
+          const isRightSplit = !persistenceViewStateRef.current.aiMode
+            && groupSnapshot.activePane === "right"
+            && Boolean(
+              groupSnapshot.rightSplitTabId
+              && groupSnapshot.rightSplitTabId
+                !== documentSnapshot.activeTabId
+              && rightTab?.document
+              && rightSplitEditorRuntimeRef.current,
+            );
+          return {
+            blockedByResearch: false,
+            isRightSplit,
+            targetTab: isRightSplit
+              ? rightTab
+              : documentSnapshot.tabs.find(
+                  (tab) => tab.id === documentSnapshot.activeTabId,
+                ),
+          };
+        },
+        refreshFolder: workspaceFileNavigationPort.refreshFolder,
+        resolveResearchItem: (view) => (
+          researchItemsByViewIdRef.current[view.viewId]
+          || (view.sourceId
+            ? librarySourcesRef.current.find(
+                (source) => source.id === view.sourceId,
+              )
+            : null)
+          || null
+        ),
+      },
+      dialogPort: {
+        confirmTabClose: () => showConfirmDialog({
+          tone: "warning",
+          icon: FileText,
+          eyebrow: "未保存的信笺",
+          title: "这个文件尚未保存",
+          message: "要关闭这个信笺吗？",
+          detail: "关闭后，这个信笺中尚未保存的修改不会写入文件。",
+          cancelValue: "cancel",
+          actions: [
+            { value: "close", label: "关闭信笺", variant: "danger", icon: X },
+            { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
+          ],
+        }),
+        confirmWindowClose: ({ dirtyTabs }) => showConfirmDialog({
+          tone: "save",
+          icon: Save,
+          eyebrow: "关闭前确认",
+          title: dirtyTabs.length > 1 ? `${dirtyTabs.length} 篇信笺尚未保存` : "当前信笺尚未保存",
+          message: "选择保存并关闭，会先保存已有文件。",
+          detail: "未命名信笺会保存为临时会话文件，下次启动会恢复打开。",
+          cancelValue: "cancel",
+          actions: [
+            { value: "save", label: "保存并关闭", variant: "primary", icon: Save, autoFocus: true },
+            { value: "discard", label: "不保存", variant: "secondary" },
+            { value: "cancel", label: "取消", variant: "ghost" },
+          ],
+        }),
+        resolveSaveConflict: ({ result }) => showConfirmDialog({
+          tone: "warning",
+          icon: RefreshCw,
+          eyebrow: "检测到外部版本",
+          title: "磁盘上的信笺已被其他程序修改",
+          message: "磁盘版本已保留；当前内存稿也已保存为带时间戳的本机冲突副本。",
+          detail: result.conflictCopyPath,
+          cancelValue: "cancel",
+          actions: [
+            { value: "compare", label: "对照查看", variant: "primary" },
+            { value: "reload", label: "重新载入磁盘版", variant: "secondary" },
+            { value: "overwrite", label: "明确覆盖磁盘版", variant: "danger" },
+            { value: "cancel", label: "稍后处理", variant: "ghost" },
+          ],
+        }),
+      },
+      dirtyPort: documentDirtyPort,
+      documentIoPort: {
+        closeCanceled: (payload) => bridge.closeCanceled?.(payload),
+        closeReady: (payload) => bridge.closeReady?.(payload),
+        deleteTempDocument: (recoveryId) => bridge.deleteTempDocument?.(recoveryId),
+        openDocumentPath: (path) => bridge.openDocumentPath(path),
+        saveDocument: (...args) => bridge.saveDocument(...args),
+        saveTempDocument: (...args) => bridge.saveTempDocument?.(...args),
+      },
+      documentStorePort,
+      groupStorePort,
+      letterTemplates,
+      lifecyclePort: {
+        onCloseRequest: (handler) => bridge.onCloseRequest?.(handler),
+        onWindowBlur: (handler) => bridge.onWindowBlur?.(handler),
+      },
+      newDocumentTemplateId,
+      notificationPort: {
+        show: showStatus,
+      },
+      revisionPort: documentRevisionPort,
+      runtimeState: documentPersistenceRuntimeStateRef.current,
+      saveQueuePort: documentSaveQueuePort,
+      sessionStatePort,
+      snapshotPort: {
+        snapshot: snapshotLiveTabs,
+      },
+      tabRuntimePort: documentTabRuntimePort,
+      timerPort: {
+        clearInterval: (timer) => window.clearInterval(timer),
+        setInterval: (callback, delay) => window.setInterval(callback, delay),
+      },
+    }),
+    [
+      addOrActivateDocumentTab,
+      applyDocument,
+      documentDirtyPort,
+      documentRevisionPort,
+      documentSaveQueuePort,
+      documentStorePort,
+      documentTabRuntimePort,
+      getRightSplitSaveDocument,
+      getSaveDocument,
+      groupStorePort,
+      letterTemplates,
+      migrateAiRequestDocumentKey,
+      newDocumentTemplateId,
+      sessionStatePort,
+      showConfirmDialog,
+      showStatus,
+      snapshotLiveTabs,
+      workspaceFileNavigationPort,
+    ],
+  );
+  documentPersistenceControllerRef.current = documentPersistenceController;
+
   useEffect(() => {
     if (!editor || sessionRestoredRef.current) {
       return undefined;
@@ -2093,115 +2253,7 @@ export default function App() {
     [applyDocument, moveWorkspaceGroupDocument, snapshotLiveTabs],
   );
 
-  const handleCloseTab = useCallback(
-    async (tabId) => {
-      if (tabClosePendingIdsRef.current.has(tabId)) return;
-      tabClosePendingIdsRef.current.add(tabId);
-      try {
-      await waitForTabSave(tabId);
-      let snapshot = snapshotLiveTabs({ includeEditorJson: true });
-      let closingTab = snapshot.find((tab) => tab.id === tabId);
-      if (!closingTab) {
-        return;
-      }
-      const groupsBeforeClose = workspaceGroupsRef.current;
-      const location = findWorkspaceView(groupsBeforeClose, tabId);
-      const isActive = location?.groupId === WORKSPACE_GROUP_ID.SECONDARY
-        ? groupsBeforeClose.secondary.activeViewId === location.view.viewId
-        : tabId === activeTabId;
-      const isDirty = closingTab.dirty;
-      if (isDirty) {
-        const promptedRevision = documentRevisionPort.readLiveRevision(tabId);
-        const decision = await showConfirmDialog({
-          tone: "warning",
-          icon: FileText,
-          eyebrow: "未保存的信笺",
-          title: "这个文件尚未保存",
-          message: "要关闭这个信笺吗？",
-          detail: "关闭后，这个信笺中尚未保存的修改不会写入文件。",
-          cancelValue: "cancel",
-          actions: [
-            { value: "close", label: "关闭信笺", variant: "danger", icon: X },
-            { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
-          ],
-        });
-        if (decision !== "close") {
-          return;
-        }
-        if (documentRevisionPort.readLiveRevision(tabId) !== promptedRevision) {
-          showStatus("关闭确认期间信笺又有修改，请再次确认", "warning");
-          return;
-        }
-        snapshot = snapshotLiveTabs({ includeEditorJson: true });
-        closingTab = snapshot.find((tab) => tab.id === tabId);
-        if (!closingTab) return;
-      }
-      if (closingTab.recoveryPath) {
-        await bridge.deleteTempDocument?.(recoveryTabId(closingTab)).catch?.(() => {});
-      }
-      const remaining = snapshot.filter((tab) => tab.id !== tabId);
-      if (!remaining.length) {
-        const blank = createBlankDocument(letterTemplates, newDocumentTemplateId);
-        const nextTab = createDocumentTab(blank);
-        const nextGroups = createWorkspaceGroupsState(workspaceDocumentView(nextTab), { splitRatio: groupsBeforeClose.splitRatio });
-        commitWorkspaceGroups(nextGroups);
-        setActivePane("main");
-        openTabsRef.current = [nextTab];
-        setOpenTabs([nextTab]);
-        activeTabIdRef.current = nextTab.id;
-        setActiveTabId(nextTab.id);
-        applyDocument(blank, "", false, { scrollState: nextTab.scrollState });
-        releaseTabRuntimeState(tabId);
-        return;
-      }
-      let nextTabs = remaining;
-      let nextGroups = groupsBeforeClose;
-      if (location?.groupId === WORKSPACE_GROUP_ID.PRIMARY && groupsBeforeClose.primary.views.length <= 1) {
-        const blank = createBlankDocument(letterTemplates, newDocumentTemplateId);
-        const blankTab = createDocumentTab(blank);
-        nextTabs = [...remaining, blankTab];
-        const blankView = createDocumentWorkspaceView(workspaceDocumentView(blankTab));
-        nextGroups = {
-          ...groupsBeforeClose,
-          primary: { views: [blankView], activeViewId: blankView.viewId },
-          focusedGroup: WORKSPACE_GROUP_ID.PRIMARY,
-        };
-      } else if (location) {
-        nextGroups = closeWorkspaceView(groupsBeforeClose, location.groupId, location.view.viewId);
-      } else {
-        nextGroups = removeWorkspaceViews(groupsBeforeClose, { tabId });
-      }
-      openTabsRef.current = nextTabs;
-      setOpenTabs(nextTabs);
-      releaseTabRuntimeState(tabId);
-      commitWorkspaceGroups(nextGroups);
-      const nextPrimaryView = getActiveWorkspaceView(nextGroups, WORKSPACE_GROUP_ID.PRIMARY);
-      const nextPrimaryTab = nextTabs.find((tab) => tab.id === nextPrimaryView?.tabId);
-      if (location?.groupId === WORKSPACE_GROUP_ID.PRIMARY && nextPrimaryTab) {
-        activeTabIdRef.current = nextPrimaryTab.id;
-        setActiveTabId(nextPrimaryTab.id);
-        applyDocument(nextPrimaryTab.document, nextPrimaryTab.path, nextPrimaryTab.dirty, { editorJson: nextPrimaryTab.editorJson, scrollState: nextPrimaryTab.scrollState });
-        if (isActive) setActivePane("main");
-      } else if (location?.groupId === WORKSPACE_GROUP_ID.SECONDARY && isActive) {
-        const nextSecondary = getActiveWorkspaceView(nextGroups, WORKSPACE_GROUP_ID.SECONDARY);
-        if (!nextSecondary) {
-          setActiveLibraryItem(null);
-          setActivePane("main");
-        } else {
-          if (nextSecondary.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
-            setActiveLibraryItem(researchItemsByViewId[nextSecondary.viewId]
-              || (nextSecondary.sourceId ? librarySources.find((source) => source.id === nextSecondary.sourceId) : null)
-              || null);
-          }
-          setActivePane("right");
-        }
-      }
-      } finally {
-        tabClosePendingIdsRef.current.delete(tabId);
-      }
-    },
-    [activeTabId, applyDocument, commitWorkspaceGroups, letterTemplates, librarySources, newDocumentTemplateId, releaseTabRuntimeState, researchItemsByViewId, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave],
-  );
+  const handleCloseTab = documentPersistenceController.closeTab;
 
   const handleCloseGroupView = useCallback(
     (groupId, viewId) => closeWorkspaceGroupView(
@@ -2270,9 +2322,8 @@ export default function App() {
     const fallbackFolderPath = folderStateRef.current.path;
     const initiallyAffected = openTabsRef.current.filter((tab) => pathIsSameOrInside(tab.path, entry.path));
     const affectedIds = initiallyAffected.map((tab) => tab.id);
-    affectedIds.forEach((tabId) => tabClosePendingIdsRef.current.add(tabId));
+    const barrier = await documentPersistenceController.diskMutationBarrierPort.acquire(affectedIds);
     try {
-      await Promise.all(affectedIds.map((tabId) => waitForTabSave(tabId)));
       const snapshot = snapshotLiveTabs({ includeEditorJson: true });
       const affectedTabs = snapshot.filter((tab) => pathIsSameOrInside(tab.path, entry.path));
       const dirtyAffectedTabs = affectedTabs.filter((tab) => tab.dirty);
@@ -2323,9 +2374,9 @@ export default function App() {
         snapshot,
       });
     } finally {
-      affectedIds.forEach((tabId) => tabClosePendingIdsRef.current.delete(tabId));
+      barrier.release();
     }
-  }, [showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave, workspaceFileMutationPort]);
+  }, [documentPersistenceController, showConfirmDialog, showStatus, snapshotLiveTabs, workspaceFileMutationPort]);
 
   const handleMoveTreeEntry = workspaceFileMutationPort.moveEntry;
   const handleToggleFolder = workspaceFileNavigationPort.toggleFolder;
@@ -2353,516 +2404,13 @@ export default function App() {
     [rightSplitEditor, structureWorkEditor],
   );
 
-  const handleSave = useCallback(
-    async (saveAs) => {
-      try {
-        const focusedSecondaryView = getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY);
-        if (activePane === "right" && focusedSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
-          showStatus("当前活动标签是资料；请先切回信笺再保存", "warning");
-          return;
-        }
-        const targetTab = splitPaneActive && rightSplitTab
-          ? rightSplitTab
-          : openTabsRef.current.find((tab) => tab.id === activeTabIdRef.current);
-        if (!targetTab) return;
-        if (sessionClosePendingRef.current || tabClosePendingIdsRef.current.has(targetTab.id)) return;
-        const recoveryIdToDelete = targetTab.recoveryPath ? recoveryTabId(targetTab) : "";
-        const nextDocument = targetTab.id === rightSplitTab?.id && splitPaneActive
-          ? getRightSplitSaveDocument()
-          : getSaveDocument();
-        if (!nextDocument) return;
-        if (targetTab.readOnly || nextDocument?._readOnlyFutureSchema) {
-          showStatus("此信笺使用未来格式，当前版本只能只读打开", "warning");
-          return;
-        }
-        const revision = documentRevisionPort.readLiveRevision(targetTab.id);
-        const previousDocumentKey = documentRuntimeKey(targetTab.path, targetTab.id);
-        const reservedPaths = openTabsRef.current
-          .filter((tab) => tab.id !== targetTab.id && tab.path)
-          .map((tab) => tab.path);
-        const expectedRevision = documentRevisionPort.readDiskRevision(targetTab.id)
-          || targetTab.diskRevision
-          || null;
-        let result = await queueTabSave(targetTab.id, () => (
-          bridge.saveDocument(nextDocument, targetTab.path, saveAs, reservedPaths, expectedRevision)
-        ));
-        if (result?.conflict) {
-          const conflictedTabs = openTabsRef.current.map((tab) => (
-            tab.id === targetTab.id ? { ...tab, externalChanged: true } : tab
-          ));
-          openTabsRef.current = conflictedTabs;
-          setOpenTabs(conflictedTabs);
-          const decision = await showConfirmDialog({
-            tone: "warning",
-            icon: RefreshCw,
-            eyebrow: "检测到外部版本",
-            title: "磁盘上的信笺已被其他程序修改",
-            message: "磁盘版本已保留；当前内存稿也已保存为带时间戳的本机冲突副本。",
-            detail: result.conflictCopyPath,
-            cancelValue: "cancel",
-            actions: [
-              { value: "compare", label: "对照查看", variant: "primary" },
-              { value: "reload", label: "重新载入磁盘版", variant: "secondary" },
-              { value: "overwrite", label: "明确覆盖磁盘版", variant: "danger" },
-              { value: "cancel", label: "稍后处理", variant: "ghost" },
-            ],
-          });
-          if (decision === "overwrite") {
-            result = await queueTabSave(targetTab.id, () => bridge.saveDocument(
-              nextDocument,
-              targetTab.path,
-              false,
-              reservedPaths,
-              result.actualRevision,
-              { conflictAction: "overwrite" },
-            ));
-            if (result?.conflict) {
-              const conflictedAgainTabs = openTabsRef.current.map((tab) => (
-                tab.id === targetTab.id ? { ...tab, externalChanged: true } : tab
-              ));
-              openTabsRef.current = conflictedAgainTabs;
-              setOpenTabs(conflictedAgainTabs);
-              showStatus("确认覆盖期间又检测到新的外部版本；未覆盖磁盘，并再次保留了本机冲突副本", "warning");
-              return;
-            }
-          } else if (decision === "reload") {
-            const reloaded = await bridge.openDocumentPath(targetTab.path);
-            if (!reloaded?.canceled && reloaded?.document) {
-              documentRevisionPort.commitDiskRevision(targetTab.id, reloaded.diskRevision);
-              documentDirtyPort.markClean(targetTab.id);
-              documentDirtyPort.commitRecoveryRevision(targetTab.id, null);
-              const normalizedReload = normalizeDocument(reloaded.document, letterTemplates);
-              const nextTabs = openTabsRef.current.map((tab) => tab.id === targetTab.id ? {
-                ...tab,
-                document: normalizedReload,
-                dirty: false,
-                diskRevision: reloaded.diskRevision,
-                recoveryPath: "",
-                recoveryId: "",
-                recoverySourcePath: "",
-                recoveryBaseRevision: null,
-                recoveryRevision: null,
-                recoveredTemporary: false,
-                externalChanged: false,
-              } : tab);
-              openTabsRef.current = nextTabs;
-              setOpenTabs(nextTabs);
-              if (targetTab.id === activeTabIdRef.current) applyDocument(normalizedReload, targetTab.path, false);
-              await deleteRecoveryBestEffort(bridge.deleteTempDocument, recoveryIdToDelete);
-            }
-            showStatus("已重新载入磁盘版本；内存稿保留在冲突副本中", "success");
-            return;
-          } else if (decision === "compare") {
-            const diskResult = await bridge.openDocumentPath(targetTab.path);
-            if (!diskResult?.canceled && diskResult?.document) {
-              const comparisonId = addOrActivateDocumentTab({
-                ...diskResult.document,
-                title: `${diskResult.document.title || targetTab.title || "未命名信笺"}（磁盘版本对照）`,
-              }, "", false, { readOnly: true });
-              if (comparisonId) {
-                rightSplitTabIdRef.current = targetTab.id;
-                setRightSplitTabId(targetTab.id);
-                setActivePane("main");
-              }
-            }
-            showStatus("已在只读视图中打开磁盘版本；右侧保留当前内存稿，冲突副本也已写入磁盘", "success");
-            return;
-          } else {
-            showStatus("两个版本都已保留，正文未被覆盖", "warning");
-            return;
-          }
-        }
-        if (result?.canceled) return;
-        if (!result?.path) throw new Error("保存完成后没有返回文件路径");
-        const unchanged = documentRevisionPort.readLiveRevision(targetTab.id) === revision;
-        const savedDocument = normalizeDocument(result.document || nextDocument, letterTemplates);
-        if (result.diskRevision) {
-          documentRevisionPort.commitDiskRevision(targetTab.id, result.diskRevision);
-        }
-        migrateAiRequestDocumentKey(previousDocumentKey, documentRuntimeKey(result.path, targetTab.id));
-        const latestSnapshot = unchanged ? openTabsRef.current : snapshotLiveTabs({ includeEditorJson: true });
-        const latestTargetTab = latestSnapshot.find((tab) => tab.id === targetTab.id) || targetTab;
-        const livePersistedDocument = unchanged
-          ? savedDocument
-          : mergePersistedDocumentIdentity(latestTargetTab.document || nextDocument, savedDocument);
-        let recoveryWrite = null;
-        let recoveryWriteError = null;
-        if (unchanged) {
-          documentDirtyPort.markClean(targetTab.id);
-          documentDirtyPort.commitRecoveryRevision(targetTab.id, null);
-        } else {
-          try {
-            recoveryWrite = await queueTabSave(targetTab.id, () => bridge.saveTempDocument?.(
-              livePersistedDocument,
-              recoveryTabId(latestTargetTab),
-            ));
-            if (recoveryWrite?.canceled || !recoveryWrite?.path) throw new Error("恢复缓存未生成文件");
-          } catch (error) {
-            recoveryWriteError = error;
-          }
-        }
-        const commitSnapshot = unchanged
-          ? latestSnapshot
-          : snapshotLiveTabs({ includeEditorJson: true });
-        const commitTargetTab = commitSnapshot.find((tab) => tab.id === targetTab.id) || latestTargetTab;
-        const committedLiveDocument = unchanged
-          ? livePersistedDocument
-          : mergePersistedDocumentIdentity(commitTargetTab.document || livePersistedDocument, savedDocument);
-        const nextTabs = commitSnapshot.map((tab) => (
-          tab.id === targetTab.id
-            ? {
-                ...tab,
-                path: result.path,
-                recoveryPath: unchanged ? "" : (recoveryWrite?.path || tab.recoveryPath || ""),
-                recoveryId: unchanged ? "" : (recoveryWrite?.recoveryId || tab.recoveryId || recoveryTabId(tab)),
-                recoverySourcePath: unchanged ? "" : (recoveryWrite?.path ? result.path : tab.recoverySourcePath || ""),
-                recoveryBaseRevision: unchanged ? null : (recoveryWrite?.path ? normalizeSessionDiskRevision(result.diskRevision) : tab.recoveryBaseRevision || null),
-                recoveryRevision: unchanged
-                  ? null
-                  : (recoveryWrite?.path ? latestTargetTab.snapshotRevision : tab.recoveryRevision),
-                recoveredTemporary: unchanged ? false : Boolean(recoveryWrite?.path || tab.recoveryPath),
-                title: committedLiveDocument.title,
-                document: committedLiveDocument,
-                diskRevision: result.diskRevision || tab.diskRevision,
-                externalChanged: false,
-                dirty: !unchanged,
-              }
-            : tab
-        ));
-        openTabsRef.current = nextTabs;
-        setOpenTabs(nextTabs);
-        const committedTargetRuntime = nextTabs.find((tab) => tab.id === targetTab.id);
-        documentDirtyPort.commitRecoveryRevision(
-          targetTab.id,
-          committedTargetRuntime?.recoveryRevision,
-        );
-        if (targetTab.id === activeTabIdRef.current) {
-          currentPathRef.current = result.path;
-          setCurrentPath(result.path);
-          dirtyRef.current = !unchanged;
-          setDirty(!unchanged);
-          documentStateRef.current = committedLiveDocument;
-          setDocumentState(committedLiveDocument);
-        }
-        const activeSessionTab = nextTabs.find((tab) => tab.id === activeTabIdRef.current) || nextTabs[0];
-        persistSession({ activePath: activeSessionTab?.path || activeSessionTab?.recoveryPath || "", tabs: summarizeSessionTabs(nextTabs) });
-        refreshFolder();
-        const recoveryCleaned = unchanged
-          ? await deleteRecoveryBestEffort(bridge.deleteTempDocument, recoveryIdToDelete)
-          : true;
-        if (unchanged && !recoveryCleaned) {
-          showStatus("文档已保存，但旧恢复文件清理失败", "warning");
-        } else if (!unchanged && recoveryWriteError) {
-          showStatus(`已写入点击保存时的版本，但后续编辑写入恢复缓存失败：${recoveryWriteError?.message || "稍后将重试"}`, "warning");
-        } else if (!unchanged) {
-          showStatus("已写入点击保存时的版本；保存期间的新编辑已写入恢复缓存", "success");
-        } else {
-          showStatus(targetTab.id === rightSplitTab?.id && splitPaneActive ? "右分屏信笺已保存" : "文档已保存", "success");
-        }
-      } catch (error) {
-        showStatus(error?.message || "文档保存失败", "warning");
-      }
-    },
-    [activePane, addOrActivateDocumentTab, applyDocument, getRightSplitSaveDocument, getSaveDocument, letterTemplates, migrateAiRequestDocumentKey, persistSession, queueTabSave, refreshFolder, rightSplitTab, showConfirmDialog, showStatus, snapshotLiveTabs, splitPaneActive],
-  );
+  const handleSave = documentPersistenceController.save;
 
-  useEffect(() => {
-    const unsubscribe = bridge.onCloseRequest?.(async (payload = {}) => {
-      if (sessionClosePendingRef.current) return;
-      sessionClosePendingRef.current = true;
-      let closeCommitted = false;
-      try {
-      await documentSaveQueuePort.waitAll();
-      const snapshot = snapshotLiveTabs();
-      const dirtyTabs = snapshot.filter((tab) => tab.dirty);
-      const promptedRevisions = new Map(
-        dirtyTabs.map((tab) => [tab.id, tab.snapshotRevision]),
-      );
-      let finalTabs = snapshot;
-
-      if (dirtyTabs.length) {
-        const decision = await showConfirmDialog({
-          tone: "save",
-          icon: Save,
-          eyebrow: "关闭前确认",
-          title: dirtyTabs.length > 1 ? `${dirtyTabs.length} 篇信笺尚未保存` : "当前信笺尚未保存",
-          message: "选择保存并关闭，会先保存已有文件。",
-          detail: "未命名信笺会保存为临时会话文件，下次启动会恢复打开。",
-          cancelValue: "cancel",
-          actions: [
-            { value: "save", label: "保存并关闭", variant: "primary", icon: Save, autoFocus: true },
-            { value: "discard", label: "不保存", variant: "secondary" },
-            { value: "cancel", label: "取消", variant: "ghost" },
-          ],
-        });
-        if (decision === "cancel" || !decision) {
-          await bridge.closeCanceled?.(payload);
-          return;
-        }
-
-        if (decision === "discard") {
-          const latestSnapshot = snapshotLiveTabs();
-          const changedWhileConfirming = latestSnapshot.some((tab) => (
-            tab.dirty
-            && (
-              !promptedRevisions.has(tab.id)
-              || tab.snapshotRevision !== promptedRevisions.get(tab.id)
-            )
-          ));
-          if (changedWhileConfirming) {
-            showStatus("关闭确认期间文档又有修改，请再次确认", "warning");
-            await bridge.closeCanceled?.(payload);
-            return;
-          }
-          const latestDirtyTabs = latestSnapshot.filter((tab) => tab.dirty);
-          await Promise.allSettled(
-            latestDirtyTabs.filter((tab) => !tab.path && tab.recoveryPath)
-              .map((tab) => bridge.deleteTempDocument?.(recoveryTabId(tab))),
-          );
-          const discardedIds = new Set(latestDirtyTabs.filter((tab) => !tab.path).map((tab) => tab.id));
-          finalTabs = latestSnapshot.filter((tab) => !discardedIds.has(tab.id));
-        }
-
-        if (decision === "save") {
-          finalTabs = snapshotLiveTabs();
-          const savedTabs = [];
-          try {
-            for (const tab of finalTabs) {
-              if (!snapshotRevisionIsCurrent(tab, documentRevisionPort)) {
-                showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
-                await bridge.closeCanceled?.(payload);
-                return;
-              }
-              if (!tab.dirty) {
-                savedTabs.push(tab);
-                continue;
-              }
-              const result = await queueTabSave(tab.id, () => (tab.path
-                ? bridge.saveDocument(
-                    tab.document,
-                    tab.path,
-                    false,
-                    [],
-                    documentRevisionPort.readDiskRevision(tab.id)
-                      || tab.diskRevision
-                      || null,
-                  )
-                : bridge.saveTempDocument?.(tab.document, recoveryTabId(tab))));
-              if (result?.conflict) {
-                throw new Error(`检测到外部版本；内存稿已保存为冲突副本：${result.conflictCopyPath}`);
-              }
-              if (result?.canceled || !result?.path) {
-                await bridge.closeCanceled?.(payload);
-                return;
-              }
-              if (tab.path && result.diskRevision) {
-                documentRevisionPort.commitDiskRevision(tab.id, result.diskRevision);
-              }
-              if (!snapshotRevisionIsCurrent(tab, documentRevisionPort)) {
-                showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
-                await bridge.closeCanceled?.(payload);
-                return;
-              }
-              savedTabs.push({
-                ...tab,
-                path: tab.path ? result.path : "",
-                recoveryPath: tab.path ? "" : result.path,
-                recoveryId: tab.path ? "" : (result.recoveryId || recoveryTabId(tab)),
-                recoveredTemporary: !tab.path,
-                document: result.document || tab.document,
-                diskRevision: result.diskRevision || tab.diskRevision,
-                recoverySourcePath: tab.path ? "" : tab.recoverySourcePath,
-                recoveryBaseRevision: tab.path ? null : tab.recoveryBaseRevision,
-                recoveryRevision: tab.path ? null : tab.snapshotRevision,
-                dirty: !tab.path,
-              });
-            }
-            const savedSnapshotById = new Map(savedTabs.map((tab) => [tab.id, tab]));
-            const changedAfterSaving = openTabsRef.current.some((tab) => {
-              const savedSnapshot = savedSnapshotById.get(tab.id);
-              return !savedSnapshot
-                || !snapshotRevisionIsCurrent(savedSnapshot, documentRevisionPort);
-            });
-            if (changedAfterSaving) {
-              showStatus("保存期间文档又有修改，请确认内容后再次关闭", "warning");
-              await bridge.closeCanceled?.(payload);
-              return;
-            }
-            finalTabs = savedTabs;
-          } catch (error) {
-            showStatus(error?.message || "关闭前保存失败", "warning");
-            await bridge.closeCanceled?.(payload);
-            return;
-          }
-        }
-      }
-
-      const activeTab = finalTabs.find((tab) => tab.id === activeTabIdRef.current) || finalTabs[0];
-      persistSession({
-        activePath: activeTab?.path || activeTab?.recoveryPath || "",
-        tabs: summarizeSessionTabs(finalTabs),
-      });
-      await bridge.closeReady?.(payload);
-      closeCommitted = true;
-      } finally {
-        if (!closeCommitted) sessionClosePendingRef.current = false;
-      }
-    });
-    return () => unsubscribe?.();
-  }, [persistSession, queueTabSave, showConfirmDialog, showStatus, snapshotLiveTabs]);
-
-  useEffect(() => {
-    const timer = window.setInterval(async () => {
-      if (autosaveRunningRef.current || sessionClosePendingRef.current) return;
-      autosaveRunningRef.current = true;
-      try {
-        const snapshot = snapshotLiveTabs();
-        const dirtyTabs = selectAutosaveSnapshotTabs(
-          snapshot,
-          documentSaveQueuePort,
-          tabClosePendingIdsRef.current,
-        );
-        if (!dirtyTabs.length) return;
-        const updates = new Map();
-        for (const tab of dirtyTabs) {
-          if (
-            documentSaveQueuePort.hasPending(tab.id)
-            || !snapshotRevisionIsCurrent(tab, documentRevisionPort)
-          ) {
-            continue;
-          }
-          try {
-            const result = await queueTabSave(tab.id, () => bridge.saveTempDocument?.(tab.document, recoveryTabId(tab)));
-            if (result?.canceled || !result?.path) throw new Error("自动保存没有生成可恢复文件");
-            updates.set(tab.id, {
-              path: result.path,
-              sourcePath: tab.path || "",
-              baseRevision: normalizeSessionDiskRevision(
-                documentRevisionPort.readDiskRevision(tab.id)
-                  || tab.diskRevision,
-              ),
-              recoveryId: result.recoveryId || recoveryTabId(tab),
-              snapshotRevision: tab.snapshotRevision,
-            });
-          } catch (error) {
-            const now = Date.now();
-            if (now - autosaveErrorAtRef.current > 5 * 60 * 1000) {
-              autosaveErrorAtRef.current = now;
-              showStatus(error?.message || "自动保存失败，将在稍后重试", "warning");
-            }
-          }
-        }
-        if (!updates.size) return;
-        const appliedUpdates = new Map();
-        const nextTabs = openTabsRef.current.map((tab) => {
-          const update = updates.get(tab.id);
-          if (!update) return tab;
-          const targetUnchanged = sameDocumentPath(tab.path || "", update.sourcePath);
-          if (!targetUnchanged) return tab;
-          appliedUpdates.set(tab.id, update);
-          return {
-            ...tab,
-            recoveryPath: update.path,
-            recoveryId: update.recoveryId,
-            recoverySourcePath: update.sourcePath,
-            recoveryBaseRevision: update.baseRevision,
-            recoveryRevision: update.snapshotRevision,
-            recoveredTemporary: true,
-            dirty: true,
-          };
-        });
-        openTabsRef.current = nextTabs;
-        setOpenTabs(nextTabs);
-        appliedUpdates.forEach((update, tabId) => {
-          documentDirtyPort.commitRecoveryRevision(
-            tabId,
-            update.snapshotRevision,
-          );
-        });
-        const activeId = activeTabIdRef.current;
-        persistSession({
-          activePath: nextTabs.find((tab) => tab.id === activeId)?.path
-            || nextTabs.find((tab) => tab.id === activeId)?.recoveryPath
-            || "",
-          tabs: summarizeSessionTabs(nextTabs),
-        });
-      } finally {
-        autosaveRunningRef.current = false;
-      }
-    }, 30000);
-
-    return () => window.clearInterval(timer);
-  }, [persistSession, queueTabSave, showStatus, snapshotLiveTabs]);
-
-  const flushDirtyWorkspaceTabs = useCallback(async ({ idleOnly = false } = {}) => {
-    if (sessionClosePendingRef.current) return;
-    const now = Date.now();
-    const snapshot = snapshotLiveTabs();
-    const candidates = snapshot.filter((tab) => tab.path && tab.dirty && !tab.readOnly && !tab.externalChanged
-      && (!idleOnly || now - (documentRevisionPort.readLastEditAt(tab.id) || now) >= 5 * 60 * 1000));
-    for (const tab of candidates) {
-      if (
-        documentSaveQueuePort.hasPending(tab.id)
-        || !snapshotRevisionIsCurrent(tab, documentRevisionPort)
-      ) continue;
-      try {
-        const expectedRevision = documentRevisionPort.readDiskRevision(tab.id)
-          || tab.diskRevision
-          || null;
-        const result = await queueTabSave(tab.id, () => bridge.saveDocument(tab.document, tab.path, false, [], expectedRevision));
-        if (result?.conflict) {
-          setOpenTabs((previous) => {
-            const next = previous.map((item) => item.id === tab.id ? { ...item, externalChanged: true } : item);
-            openTabsRef.current = next;
-            return next;
-          });
-          showStatus(`检测到外部版本；本机稿已保留为冲突副本`, "warning");
-          continue;
-        }
-        if (!result?.path) continue;
-        if (result.diskRevision) {
-          documentRevisionPort.commitDiskRevision(tab.id, result.diskRevision);
-        }
-        if (!snapshotRevisionIsCurrent(tab, documentRevisionPort)) continue;
-        documentDirtyPort.markClean(tab.id);
-        documentDirtyPort.commitRecoveryRevision(tab.id, null);
-        const nextTabs = openTabsRef.current.map((item) => item.id === tab.id ? {
-          ...item,
-          document: result.document || tab.document,
-          diskRevision: result.diskRevision,
-          recoveryPath: "",
-          recoveryId: "",
-          recoverySourcePath: "",
-          recoveryBaseRevision: null,
-          recoveryRevision: null,
-          recoveredTemporary: false,
-          dirty: false,
-          externalChanged: false,
-        } : item);
-        openTabsRef.current = nextTabs;
-        setOpenTabs(nextTabs);
-        if (tab.id === activeTabIdRef.current) {
-          dirtyRef.current = false;
-          setDirty(false);
-        }
-        if (tab.recoveryPath) await bridge.deleteTempDocument?.(recoveryTabId(tab)).catch?.(() => {});
-      } catch (error) {
-        const timestamp = Date.now();
-        if (timestamp - autosaveErrorAtRef.current > 5 * 60 * 1000) {
-          autosaveErrorAtRef.current = timestamp;
-          showStatus(error?.message || "工作区自动写入失败，将继续保留恢复缓存", "warning");
-        }
-      }
-    }
-    persistSession({ tabs: summarizeSessionTabs(openTabsRef.current) });
-  }, [persistSession, queueTabSave, showStatus, snapshotLiveTabs]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => flushDirtyWorkspaceTabs({ idleOnly: true }), 30000);
-    return () => window.clearInterval(timer);
-  }, [flushDirtyWorkspaceTabs]);
-
-  useEffect(() => bridge.onWindowBlur?.(() => flushDirtyWorkspaceTabs({ idleOnly: false })), [flushDirtyWorkspaceTabs]);
+  useEffect(() => (
+    documentPersistenceControllerRef.current?.startLifecycle({
+      resolveController: () => documentPersistenceControllerRef.current,
+    })
+  ), []);
 
   const {
     handleOpenExportDialog,

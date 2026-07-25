@@ -7,6 +7,7 @@ const controllersIndexSource = await readFile(new URL("./controllers/index.js", 
 const aiLayoutPortSource = await readFile(new URL("./document-workspace/ai-layout-port.js", import.meta.url), "utf8");
 const groupsControllerSource = await readFile(new URL("./document-workspace/workspace-groups-controller.js", import.meta.url), "utf8");
 const sessionControllerSource = await readFile(new URL("./document-workspace/document-session-controller.js", import.meta.url), "utf8");
+const persistenceControllerSource = await readFile(new URL("./document-workspace/document-persistence-controller.js", import.meta.url), "utf8");
 const topNavSource = await readFile(new URL("./app-shell/TopNav.jsx", import.meta.url), "utf8");
 const pdfSource = await readFile(new URL("./research/PdfReader.jsx", import.meta.url), "utf8");
 const knowledgeDocumentPortSource = await readFile(new URL("./document-workspace/knowledge-document-port.js", import.meta.url), "utf8");
@@ -26,6 +27,27 @@ test("App composes session lifecycle effects through the document session contro
   assert.match(appSource, /folderLifecyclePort: workspaceFileLifecyclePort/);
   assert.doesNotMatch(appSource, /sessionFolderLifecyclePort/);
   assert.doesNotMatch(appSource, /restoreWorkspaceGroupsSnapshot\(sessionRef\.current\.workspaceGroups/);
+});
+
+test("App composes durable writes through one persistence controller boundary", () => {
+  assert.match(appSource, /createDocumentPersistenceController\(\{/);
+  assert.match(appSource, /createDocumentPersistenceRuntimeState\(\)/);
+  assert.match(appSource, /runtimeState: documentPersistenceRuntimeStateRef\.current/);
+  assert.match(appSource, /const handleCloseTab = documentPersistenceController\.closeTab/);
+  assert.match(appSource, /const handleSave = documentPersistenceController\.save/);
+  assert.match(appSource, /documentPersistenceControllerRef\.current\?\.startLifecycle\(\{/);
+  assert.match(appSource, /resolveController: \(\) => documentPersistenceControllerRef\.current/);
+  assert.match(appSource, /\}\), \[\]\);/);
+  assert.match(appSource, /confirmTabClose: \(\) => showConfirmDialog\(\{/);
+  assert.match(appSource, /title: "这个文件尚未保存"/);
+  assert.match(appSource, /confirmWindowClose: \(\{ dirtyTabs \}\) => showConfirmDialog\(\{/);
+  assert.match(appSource, /title: dirtyTabs\.length > 1 \? `\$\{dirtyTabs\.length\} 篇信笺尚未保存` : "当前信笺尚未保存"/);
+  assert.match(appSource, /resolveSaveConflict: \(\{ result \}\) => showConfirmDialog\(\{/);
+  assert.match(appSource, /title: "磁盘上的信笺已被其他程序修改"/);
+  assert.match(appSource, /groupSnapshot\.rightSplitTabId\s*!== documentSnapshot\.activeTabId/);
+  assert.doesNotMatch(appSource, /autosaveRunningRef|autosaveErrorAtRef|tabClosePendingIdsRef|sessionClosePendingRef/);
+  assert.doesNotMatch(appSource, /const queueTabSave|const waitForTabSave|const flushDirtyWorkspaceTabs/);
+  assert.match(persistenceControllerSource, /const startLifecycle = \(\{ resolveController \} = \{\}\) => \{/);
 });
 
 test("App composes file-workspace actions and lifecycle through the public controller barrel", () => {
@@ -90,10 +112,28 @@ test("App composes file-workspace actions and lifecycle through the public contr
     "delete barrier composition must have explicit source boundaries",
   );
   const deleteComposition = appSource.slice(deleteStart, deleteEnd);
-  assert.match(deleteComposition, /tabClosePendingIdsRef\.current\.add\(tabId\)/);
   assert.match(
     deleteComposition,
-    /await Promise\.all\(affectedIds\.map\(\(tabId\) => waitForTabSave\(tabId\)\)\)/,
+    /documentPersistenceController\.diskMutationBarrierPort\.acquire\(affectedIds\)/,
+  );
+  const barrierAcquire = deleteComposition.indexOf("diskMutationBarrierPort.acquire(affectedIds)");
+  const snapshotCapture = deleteComposition.indexOf("snapshotLiveTabs({ includeEditorJson: true })");
+  const revisionCapture = deleteComposition.indexOf("const promptedRevisions");
+  const confirmation = deleteComposition.indexOf("showConfirmDialog({");
+  const revisionRecheck = deleteComposition.indexOf("documentRevisionPort.readLiveRevision(tabId) !== revision");
+  const diskDelete = deleteComposition.indexOf("workspaceFileMutationPort.deleteOnDisk(entry)");
+  const stateCommit = deleteComposition.indexOf("workspaceFileMutationPort.commitDeleteResult({");
+  const barrierRelease = deleteComposition.indexOf("barrier.release()");
+  assert.ok(
+    barrierAcquire >= 0
+      && snapshotCapture > barrierAcquire
+      && revisionCapture > snapshotCapture
+      && confirmation > revisionCapture
+      && revisionRecheck > confirmation
+      && diskDelete > revisionRecheck
+      && stateCommit > diskDelete
+      && barrierRelease > stateCommit,
+    "delete must preserve barrier, snapshot, confirmation, disk-write and commit order",
   );
   assert.match(deleteComposition, /showConfirmDialog\(\{/);
   assert.match(deleteComposition, /documentRevisionPort\.readLiveRevision\(tabId\)/);
@@ -105,7 +145,7 @@ test("App composes file-workspace actions and lifecycle through the public contr
 test("global shortcuts resolve the focused group and route PDF search", () => {
   assert.match(appSource, /key === "w"[\s\S]*handleCloseGroupView\(focusedGroupId, focusedView\.viewId\)/);
   assert.match(appSource, /focusedResearch[\s\S]*new CustomEvent\("paper-pdf-find"\)/);
-  assert.match(appSource, /当前活动标签是资料；请先切回信笺再保存/);
+  assert.match(persistenceControllerSource, /当前活动标签是资料；请先切回信笺再保存/);
   assert.match(pdfSource, /addEventListener\("paper-pdf-find", openPdfSearch\)/);
 });
 

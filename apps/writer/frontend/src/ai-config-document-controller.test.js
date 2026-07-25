@@ -381,11 +381,13 @@ test("App keeps AI config hooks at their anchors and controllers cannot reach ra
     lifecycleSource,
     documentStateSource,
     configActionsSource,
+    persistenceControllerSource,
   ] = await Promise.all([
     readFile(new URL("./App.jsx", import.meta.url), "utf8"),
     readFile(new URL("./controllers/ai-config-lifecycle.js", import.meta.url), "utf8"),
     readFile(new URL("./controllers/ai-document-state.js", import.meta.url), "utf8"),
     readFile(new URL("./controllers/ai-config-actions.js", import.meta.url), "utf8"),
+    readFile(new URL("./document-workspace/document-persistence-controller.js", import.meta.url), "utf8"),
   ]);
   const appBody = appSource.slice(appSource.indexOf("export default function App()"));
   const orderedMarkers = [
@@ -423,8 +425,9 @@ test("App keeps AI config hooks at their anchors and controllers cannot reach ra
   );
   assert.doesNotMatch(appBody, /bridge\.getAiConfig|bridge\.saveAiConfig/);
   assert.doesNotMatch(appBody, /const updateDocumentAiStateForKey = useCallback/);
+  assert.match(appBody, /migrateDocumentRuntimeKey: migrateAiRequestDocumentKey/);
   assert.match(
-    appBody,
-    /migrateAiRequestDocumentKey\(previousDocumentKey, documentRuntimeKey\(result\.path, targetTab\.id\)\)/,
+    persistenceControllerSource,
+    /applicationPort\.migrateDocumentRuntimeKey\?\.\(\s*previousDocumentKey,\s*documentRuntimeKey\(result\.path, targetTab\.id\),\s*\)/,
   );
 });

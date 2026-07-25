@@ -13,6 +13,7 @@ const knowledgeLifecycleSource = fs.readFileSync(fileURLToPath(new URL("./contro
 const aiDocumentPortSource = fs.readFileSync(fileURLToPath(new URL("./document-workspace/ai-document-port.js", import.meta.url)), "utf8");
 const aiStreamRegistrySource = fs.readFileSync(fileURLToPath(new URL("./controllers/ai-stream-registry.js", import.meta.url)), "utf8");
 const workspaceGroupsControllerSource = fs.readFileSync(fileURLToPath(new URL("./document-workspace/workspace-groups-controller.js", import.meta.url)), "utf8");
+const persistenceControllerSource = fs.readFileSync(fileURLToPath(new URL("./document-workspace/document-persistence-controller.js", import.meta.url)), "utf8");
 
 test("editor update handlers do not serialize or publish the complete document", () => {
   const mainStart = source.indexOf("onUpdate: ({ transaction }) => {", source.indexOf("const mainEditorOptions"));
@@ -43,12 +44,12 @@ test("document switches rebuild editor state so undo cannot cross tab boundaries
 });
 
 test("autosave includes unnamed tabs and keeps recovery paths separate", () => {
-  assert.match(source, /bridge\.saveTempDocument/);
-  assert.match(source, /recoveryPath: update\.path/);
-  assert.match(source, /recoveryId: update\.recoveryId/);
-  assert.match(source, /recoveryId: result\.recoveryId/);
-  assert.match(source, /deleteTempDocument\?\.\(recoveryTabId\(/);
-  assert.match(source, /autosaveRunningRef\.current/);
+  assert.match(persistenceControllerSource, /documentIoPort\.saveTempDocument/);
+  assert.match(persistenceControllerSource, /recoveryPath: update\.path/);
+  assert.match(persistenceControllerSource, /recoveryId: update\.recoveryId/);
+  assert.match(persistenceControllerSource, /recoveryId: result\.recoveryId/);
+  assert.match(persistenceControllerSource, /deleteTempDocument\?\.\(\s*recoveryTabId\(/);
+  assert.match(persistenceControllerSource, /recoveryAutosaveRunning/);
 });
 
 test("editor groups accept additional tabs without evicting an existing document", () => {
@@ -109,9 +110,10 @@ test("status metrics subscribe to primitive fields instead of rerendering the wh
 test("closing a right-group document uses the lifecycle snapshot boundary", () => {
   assert.match(source, /<GroupTabStrip[\s\S]*groupId=\{WORKSPACE_GROUP_ID\.SECONDARY\}/);
   assert.match(source, /onClose=\{\(viewId\) => handleCloseGroupView\(WORKSPACE_GROUP_ID\.SECONDARY, viewId\)\}/);
-  const closeStart = source.indexOf("const handleCloseTab");
-  const closeEnd = source.indexOf("const handleCloseGroupView", closeStart);
-  assert.match(source.slice(closeStart, closeEnd), /snapshotLiveTabs\(\{ includeEditorJson: true \}\)/);
+  assert.match(source, /const handleCloseTab = documentPersistenceController\.closeTab/);
+  const closeStart = persistenceControllerSource.indexOf("const closeTab = async");
+  const closeEnd = persistenceControllerSource.indexOf("const closeWindow = async", closeStart);
+  assert.match(persistenceControllerSource.slice(closeStart, closeEnd), /snapshotTabs\(\{ includeEditorJson: true \}\)/);
   assert.doesNotMatch(source, /className="right-split-close"/);
 });
 
@@ -160,46 +162,47 @@ test("comment decorations map through ordinary typing instead of rebuilding all 
 });
 
 test("discard-close aborts when a document changes while confirmation is open", () => {
-  const start = source.indexOf("bridge.onCloseRequest");
-  const end = source.indexOf("bridge.onCloseRequest", start + 1);
-  const closeSource = source.slice(start, end > start ? end : undefined);
+  const start = persistenceControllerSource.indexOf("const closeWindow = async");
+  const end = persistenceControllerSource.indexOf("const runRecoveryAutosave = async", start);
+  const closeSource = persistenceControllerSource.slice(start, end);
   assert.match(closeSource, /promptedRevisions/);
   assert.match(closeSource, /changedWhileConfirming/);
-  assert.match(closeSource, /latestSnapshot = snapshotLiveTabs\(\)/);
-  assert.match(closeSource, /bridge\.closeCanceled/);
-  assert.match(closeSource, /sessionClosePendingRef\.current = true/);
-  assert.match(closeSource, /await documentSaveQueuePort\.waitAll\(\)/);
+  assert.match(closeSource, /latestSnapshot = snapshotTabs\(\)/);
+  assert.match(closeSource, /documentIoPort\.closeCanceled/);
+  assert.match(closeSource, /sessionStatePort\.beginClose\(\)/);
+  assert.match(closeSource, /await saveQueuePort\.waitAll\(\)/);
+  assert.match(source, /documentPersistenceControllerRef\.current\?\.startLifecycle\(\{/);
 });
 
 test("single-tab close also rechecks the document revision after confirmation", () => {
-  const start = source.indexOf("const handleCloseTab");
-  const end = source.indexOf("const handleCloseGroupView", start);
+  const start = persistenceControllerSource.indexOf("const closeTab = async");
+  const end = persistenceControllerSource.indexOf("const closeWindow = async", start);
   assert.ok(start >= 0 && end > start, "single-tab close source boundaries must exist");
-  const closeSource = source.slice(start, end);
+  const closeSource = persistenceControllerSource.slice(start, end);
   assert.match(closeSource, /promptedRevision/);
-  assert.match(closeSource, /documentRevisionPort\.readLiveRevision\(tabId\)/);
-  assert.match(closeSource, /snapshot = snapshotLiveTabs\(\{ includeEditorJson: true \}\)/);
-  assert.match(closeSource, /tabClosePendingIdsRef\.current\.add\(tabId\)/);
-  assert.match(closeSource, /await waitForTabSave\(tabId\)/);
+  assert.match(closeSource, /revisionPort\.readLiveRevision\(\s*normalizedTabId/);
+  assert.match(closeSource, /snapshot = snapshotTabs\(\{ includeEditorJson: true \}\)/);
+  assert.match(closeSource, /pendingTabCloses\.add\(normalizedTabId\)/);
+  assert.match(closeSource, /await saveQueuePort\.wait\(normalizedTabId\)/);
 });
 
 test("autosave skips tabs while close or discard is pending", () => {
-  const start = source.indexOf("const timer = window.setInterval(async () =>");
-  const end = source.indexOf("}, 60000)", start);
-  const autosaveSource = source.slice(start, end);
-  assert.match(autosaveSource, /sessionClosePendingRef\.current/);
-  assert.match(autosaveSource, /selectAutosaveSnapshotTabs\([\s\S]*tabClosePendingIdsRef\.current/);
+  const start = persistenceControllerSource.indexOf("const runRecoveryAutosave = async");
+  const end = persistenceControllerSource.indexOf("const flushDirtyWorkspaceTabs = async", start);
+  const autosaveSource = persistenceControllerSource.slice(start, end);
+  assert.match(autosaveSource, /sessionStatePort\.isClosePending\(\)/);
+  assert.match(autosaveSource, /selectAutosaveSnapshotTabs\([\s\S]*pendingTabCloses/);
 });
 
 test("successful saves commit clean state before best-effort recovery cleanup", () => {
-  const start = source.indexOf("const handleSave = useCallback");
-  const end = source.indexOf("bridge.onCloseRequest", start);
-  const saveSource = source.slice(start, end);
-  const stateCommit = saveSource.indexOf("openTabsRef.current = nextTabs");
+  const start = persistenceControllerSource.indexOf("const save = async");
+  const end = persistenceControllerSource.indexOf("const closeTab = async", start);
+  const saveSource = persistenceControllerSource.slice(start, end);
+  const stateCommit = saveSource.indexOf("commitTabs(nextTabs)");
   const cleanup = saveSource.indexOf("deleteRecoveryBestEffort");
   assert.ok(stateCommit > 0 && cleanup > stateCommit);
   assert.match(saveSource, /文档已保存，但旧恢复文件清理失败/);
-  assert.doesNotMatch(saveSource, /await bridge\.deleteTempDocument/);
+  assert.doesNotMatch(saveSource, /await documentIoPort\.deleteTempDocument/);
 });
 
 test("multi-tab save boundaries use revisions captured with the document snapshots", () => {
@@ -210,26 +213,26 @@ test("multi-tab save boundaries use revisions captured with the document snapsho
   assert.match(snapshotSource, /revisionPort: documentRevisionPort/);
   assert.doesNotMatch(snapshotSource, /snapshotTabsWithRevisions/);
 
-  const closeStart = source.indexOf("bridge.onCloseRequest");
-  const autosaveStart = source.indexOf("const timer = window.setInterval", closeStart);
-  const closeSource = source.slice(closeStart, autosaveStart);
+  const closeStart = persistenceControllerSource.indexOf("const closeWindow = async");
+  const autosaveStart = persistenceControllerSource.indexOf("const runRecoveryAutosave = async", closeStart);
+  const closeSource = persistenceControllerSource.slice(closeStart, autosaveStart);
   assert.match(closeSource, /tab\.snapshotRevision/);
-  assert.match(closeSource, /snapshotRevisionIsCurrent\(tab, documentRevisionPort\)/);
+  assert.match(closeSource, /snapshotRevisionIsCurrent\(tab, revisionPort\)/);
   assert.doesNotMatch(closeSource, /RevisionByTabRef/);
 
-  const autosaveEnd = source.indexOf("const handleKeyDown", autosaveStart);
-  const autosaveSource = source.slice(autosaveStart, autosaveEnd);
+  const autosaveEnd = persistenceControllerSource.indexOf("const flushDirtyWorkspaceTabs = async", autosaveStart);
+  const autosaveSource = persistenceControllerSource.slice(autosaveStart, autosaveEnd);
   assert.match(autosaveSource, /snapshotRevision: tab\.snapshotRevision/);
-  assert.match(autosaveSource, /snapshotRevisionIsCurrent\(tab, documentRevisionPort\)/);
+  assert.match(autosaveSource, /snapshotRevisionIsCurrent\(tab, revisionPort\)/);
   assert.doesNotMatch(autosaveSource, /RevisionByTabRef/);
 });
 
 test("autosave never queues an old target while Save As is pending", () => {
-  const start = source.indexOf("const timer = window.setInterval");
-  const end = source.indexOf("const handleKeyDown", start);
-  const autosaveSource = source.slice(start, end);
-  assert.match(autosaveSource, /selectAutosaveSnapshotTabs\([\s\S]*documentSaveQueuePort/);
-  assert.match(autosaveSource, /documentSaveQueuePort\.hasPending\(tab\.id\)/);
+  const start = persistenceControllerSource.indexOf("const runRecoveryAutosave = async");
+  const end = persistenceControllerSource.indexOf("const flushDirtyWorkspaceTabs = async", start);
+  const autosaveSource = persistenceControllerSource.slice(start, end);
+  assert.match(autosaveSource, /selectAutosaveSnapshotTabs\([\s\S]*saveQueuePort/);
+  assert.match(autosaveSource, /saveQueuePort\.hasPending\(tab\.id\)/);
   assert.match(autosaveSource, /sourcePath: tab\.path \|\| ""/);
   assert.match(autosaveSource, /targetUnchanged/);
   assert.match(autosaveSource, /appliedUpdates\.set\(tab\.id, update\)/);
