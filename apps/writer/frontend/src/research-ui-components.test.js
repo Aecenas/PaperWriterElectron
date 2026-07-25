@@ -154,7 +154,7 @@ test("research browsing path resets with the root and closes a stale research pa
   assert.match(refresh, /hasOpenResearchViewsForLibrary\(previousLibraryId\)/);
   assert.match(lifecycle, /removeOpenResearchViews\(\(view\) => !libraryId \|\| view\.libraryId !== libraryId\)/);
   assert.match(refresh, /!controller\.isCurrent\(request\)[\s\S]*?researchRootRef\.current\?\.libraryId !== libraryId[\s\S]*?\) return entries/);
-  assert.match(app, /const researchViewsPort = \{/);
+  assert.match(app, /researchViewsPort: workspaceResearchViewsPort/);
   assert.match(app, /currentRelativePath=\{researchCurrentRelativePath\}/);
   assert.match(app, /onNavigatePath=\{handleNavigateResearchPath\}/);
   assert.match(sidebar, /资料区位置/);
@@ -166,17 +166,28 @@ test("research root refresh stays independent from volatile open-view caches", a
   const app = await source("./App.jsx");
   const lifecycle = await source("./controllers/research-lifecycle.js");
   const state = await source("./controllers/research-state.js");
-  const start = app.indexOf("const removeOpenResearchViews");
-  const end = app.indexOf("const handleToggleRightSplit", start);
+  const controller = await source("./document-workspace/workspace-groups-controller.js");
+  const start = app.indexOf("const workspaceGroupsController = useMemo");
+  const end = app.indexOf("useEffect(() =>", start);
   assert.ok(start >= 0 && end > start);
-  const callback = app.slice(start, end);
+  const composition = app.slice(start, end);
 
   assert.match(state, /const librarySourcesRef = useRef\(librarySources\)/);
   assert.match(state, /const researchItemsByViewIdRef = useRef\(researchItemsByViewId\)/);
-  assert.match(callback, /researchItemsByViewIdRef\.current\[active\.viewId\]/);
-  assert.match(callback, /librarySourcesRef\.current\.find/);
-  assert.match(callback, /\}, \[commitWorkspaceGroups\]\);/);
-  assert.doesNotMatch(callback, /\[commitWorkspaceGroups,\s*librarySources,\s*researchItemsByViewId\]/);
+  assert.match(composition, /researchItemsByViewIdRef\.current\[view\.viewId\]/);
+  assert.match(composition, /librarySourcesRef\.current\.find/);
+  assert.match(
+    composition,
+    /\[documentStorePort, groupStorePort, letterTemplates, showStatus\]/,
+  );
+  assert.doesNotMatch(
+    composition,
+    /\[documentStorePort,\s*groupStorePort,\s*librarySources,\s*researchItemsByViewId\]/,
+  );
+  assert.doesNotMatch(
+    controller,
+    /librarySourcesRef|researchItemsByViewIdRef|setLibrarySources|setResearchItemsByViewId/,
+  );
   assert.match(lifecycle, /useEffect\(\(\) => \{\s*void refreshResearchRoot\(\);\s*\}, \[refreshResearchRoot\]\);/);
   assert.match(app, /useResearchMountLifecycle\(refreshResearchRoot\)/);
 });
@@ -284,9 +295,11 @@ test("static research previews cover sanitized DOCX, markdown, text, tables and 
 test("the unified group tab strip owns all research title chrome", async () => {
   const jsx = await source("./SecondaryResearchPane.jsx");
   const app = await source("./App.jsx");
+  const controller = await source("./document-workspace/workspace-groups-controller.js");
   assert.doesNotMatch(jsx, /ResearchPaneTab|secondary-research-header/);
   assert.match(app, /<GroupTabStrip[\s\S]*groupId=\{WORKSPACE_GROUP_ID\.SECONDARY\}/);
-  assert.match(app, /metaLabel: researchType === "pdf" \? `PDF · \$\{page\}`/);
+  assert.match(app, /deriveWorkspaceGroupItems\(\{/);
+  assert.match(controller, /return `PDF · \$\{Number\(viewState\?\.page\) \|\| 1\}`/);
 });
 
 test("secondary document and research panes share one aligned hard split", async () => {

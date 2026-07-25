@@ -12,6 +12,7 @@ const editorDecorationsSource = fs.readFileSync(fileURLToPath(new URL("./editor/
 const knowledgeLifecycleSource = fs.readFileSync(fileURLToPath(new URL("./controllers/knowledge-lifecycle.js", import.meta.url)), "utf8");
 const aiDocumentPortSource = fs.readFileSync(fileURLToPath(new URL("./document-workspace/ai-document-port.js", import.meta.url)), "utf8");
 const aiStreamRegistrySource = fs.readFileSync(fileURLToPath(new URL("./controllers/ai-stream-registry.js", import.meta.url)), "utf8");
+const workspaceGroupsControllerSource = fs.readFileSync(fileURLToPath(new URL("./document-workspace/workspace-groups-controller.js", import.meta.url)), "utf8");
 
 test("editor update handlers do not serialize or publish the complete document", () => {
   const mainStart = source.indexOf("onUpdate: ({ transaction }) => {", source.indexOf("const mainEditorOptions"));
@@ -54,10 +55,12 @@ test("editor groups accept additional tabs without evicting an existing document
   const start = source.indexOf("const addOrActivateDocumentTab");
   const end = source.indexOf("useEffect(() =>", start);
   const addTabSource = source.slice(start, end);
-  assert.match(addTabSource, /const nextTabs = canReplaceBlank \? \[tab\] : \[\.\.\.snapshot, tab\]/);
-  assert.match(addTabSource, /openWorkspaceDocument\(workspaceGroupsRef\.current, requestedGroup/);
-  assert.doesNotMatch(addTabSource, /tabCapacityFull/);
-  assert.doesNotMatch(addTabSource, /snapshot\.slice\(1\)/);
+  assert.match(addTabSource, /addOrActivateWorkspaceDocumentTab\(/);
+  assert.match(addTabSource, /snapshotTabs: snapshotLiveTabs/);
+  assert.match(workspaceGroupsControllerSource, /const nextTabs = canReplaceBlank\s*\? \[tab\]\s*:\s*\[\.\.\.snapshot, tab\]/);
+  assert.match(workspaceGroupsControllerSource, /openWorkspaceDocument\([\s\S]*groupState\.groups,[\s\S]*requestedGroup/);
+  assert.doesNotMatch(workspaceGroupsControllerSource, /tabCapacityFull/);
+  assert.doesNotMatch(workspaceGroupsControllerSource, /snapshot\.slice\(1\)/);
 });
 
 test("dirty tab updates do not reserialize every cached editor document", () => {

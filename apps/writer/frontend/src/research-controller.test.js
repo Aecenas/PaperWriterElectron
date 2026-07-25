@@ -204,8 +204,9 @@ test("research source and web refreshes reject stale same-scope results", async 
 });
 
 test("research wiring preserves hook order and exposes only a narrow workspace-view port", async () => {
-  const [app, refresh, state] = await Promise.all([
+  const [app, groupsController, refresh, state] = await Promise.all([
     readFile(new URL("./App.jsx", import.meta.url), "utf8"),
+    readFile(new URL("./document-workspace/workspace-groups-controller.js", import.meta.url), "utf8"),
     readFile(new URL("./controllers/research-refresh.js", import.meta.url), "utf8"),
     readFile(new URL("./controllers/research-state.js", import.meta.url), "utf8"),
   ]);
@@ -254,7 +255,18 @@ test("research wiring preserves hook order and exposes only a narrow workspace-v
     previousIndex = index;
   }
 
-  assert.match(app, /const researchViewsPort = \{[\s\S]*?closeActiveResearchView,[\s\S]*?getOpenResearchViews,[\s\S]*?hasOpenResearchViewsForLibrary,[\s\S]*?openResearchPreviewView,[\s\S]*?removeOpenResearchViews,[\s\S]*?updateOpenResearchTargets,/);
+  assert.match(app, /researchViewsPort: workspaceResearchViewsPort/);
+  assert.match(app, /const researchViewsPort = \{[\s\S]*workspaceResearchViewsPort/);
+  for (const method of [
+    "closeActiveResearchView",
+    "getOpenResearchViews",
+    "hasOpenResearchViewsForLibrary",
+    "openResearchPreviewView",
+    "removeOpenResearchViews",
+    "updateOpenResearchTargets",
+  ]) {
+    assert.match(groupsController, new RegExp(`${method}[,:]`));
+  }
   assert.match(app, /useResearchState\(writingWorkspaceRoot\)/);
   assert.match(app, /useResearchRefreshActions\(\{/);
   assert.match(app, /useResearchMountLifecycle\(refreshResearchRoot\)/);

@@ -141,7 +141,6 @@ import {
 import {
   DEFAULT_LETTER_TEMPLATES,
   LetterTemplateDialog,
-  getLetterTemplate,
 } from "./templates/index.js";
 import { CURRENT_RELEASE_VERSION } from "./release-notes.js";
 import { applyDocumentTextReplacements, moveActiveDocumentSearchMatch, searchDocumentText } from "./document-search.js";
@@ -169,21 +168,12 @@ import {
   createWorkspaceGroupsState,
   findWorkspaceView,
   getActiveWorkspaceView,
-  moveWorkspaceDocument,
-  normalizeWorkspaceGroupsState,
   normalizeWorkspaceSplitRatio,
   openWorkspaceDocument,
-  openWorkspaceResearch,
   removeWorkspaceViews,
-  reorderWorkspaceView,
   restoreWorkspaceGroupsSnapshot,
   selectWorkspaceView,
-  updateWorkspaceResearchTarget,
-  updateWorkspaceResearchViewState,
 } from "./workspace-groups.js";
-import {
-  researchPreviewKind,
-} from "./research-ui-model.js";
 import {
   deleteRecoveryBestEffort,
   readEditorSelectionState,
@@ -225,6 +215,10 @@ import {
 } from "./document-workspace/editor-runtime.js";
 import { useDocumentRuntimeKernel } from "./document-workspace/document-runtime-kernel.js";
 import { useDocumentWorkspaceState } from "./document-workspace/workspace-state.js";
+import {
+  createWorkspaceGroupsController,
+  deriveWorkspaceGroupItems,
+} from "./document-workspace/workspace-groups-controller.js";
 import { listFolderWithTimeout } from "./document-workspace/folder-listing.js";
 import {
   createBlankDocument,
@@ -705,59 +699,24 @@ export default function App() {
     workspaceCitationSources,
     writingWorkspaceRoot,
   });
-  const primaryGroupTabs = useMemo(() => workspaceGroups.primary.views.map((view) => {
-    const tab = openTabs.find((candidate) => candidate.id === view.tabId);
-    const tabDocument = tab?.id === activeTabId ? documentState : tab?.document;
-    return tab ? {
-      viewId: view.viewId,
-      tabId: tab.id,
-      kind: WORKSPACE_VIEW_KIND.DOCUMENT,
-      title: tab.title,
-      path: tab.path,
-      dirty: tab.dirty,
-      letterTemplateId: getLetterTemplate(tabDocument, letterTemplates).id,
-    } : null;
-  }).filter(Boolean), [activeTabId, documentState.letterTemplateId, documentState.templateId, letterTemplates, openTabs, workspaceGroups.primary.views]);
-  const secondaryGroupTabs = useMemo(() => workspaceGroups.secondary.views.map((view) => {
-    if (view.kind === WORKSPACE_VIEW_KIND.DOCUMENT) {
-      const tab = openTabs.find((candidate) => candidate.id === view.tabId);
-      return tab ? {
-        viewId: view.viewId,
-        tabId: tab.id,
-        kind: WORKSPACE_VIEW_KIND.DOCUMENT,
-        title: tab.title,
-        path: tab.path,
-        dirty: tab.dirty,
-        letterTemplateId: getLetterTemplate(tab.document, letterTemplates).id,
-      } : null;
-    }
-    const item = researchItemsByViewId[view.viewId]
-      || (view.sourceId ? librarySources.find((source) => source.id === view.sourceId) : null)
-      || (activeSecondaryView?.viewId === view.viewId ? activeLibraryItem : null);
-    const title = item?.title || item?.name || item?.fileName || view.titleSnapshot || view.relativePath || "未命名资料";
-    const inferredResearchType = item?.type === "web"
-      ? "web"
-      : researchPreviewKind(item || { type: "file", relativePath: view.relativePath });
-    const researchType = inferredResearchType === "unsupported"
-      ? (view.researchType || "file")
-      : inferredResearchType;
-    const page = Number(view.viewState?.page) || 1;
-    return {
-      viewId: view.viewId,
-      kind: WORKSPACE_VIEW_KIND.RESEARCH,
-      researchType,
-      title,
-      path: view.relativePath || "",
-      metaLabel: researchType === "pdf" ? `PDF · ${page}` : ({
-        web: "网页",
-        docx: "DOCX",
-        markdown: "Markdown",
-        text: "文本",
-        table: "表格",
-        image: "图片",
-      }[researchType] || "资料"),
-    };
-  }).filter(Boolean), [activeLibraryItem, activeSecondaryView?.viewId, letterTemplates, librarySources, openTabs, researchItemsByViewId, workspaceGroups.secondary.views]);
+  const primaryGroupTabs = useMemo(() => deriveWorkspaceGroupItems({
+    activeDocument: documentState,
+    activeTabId,
+    groupId: WORKSPACE_GROUP_ID.PRIMARY,
+    letterTemplates,
+    openTabs,
+    views: workspaceGroups.primary.views,
+  }), [activeTabId, documentState.letterTemplateId, documentState.templateId, letterTemplates, openTabs, workspaceGroups.primary.views]);
+  const secondaryGroupTabs = useMemo(() => deriveWorkspaceGroupItems({
+    activeResearchItem: activeLibraryItem,
+    activeSecondaryView,
+    groupId: WORKSPACE_GROUP_ID.SECONDARY,
+    letterTemplates,
+    librarySources,
+    openTabs,
+    researchItemsByViewId,
+    views: workspaceGroups.secondary.views,
+  }), [activeLibraryItem, activeSecondaryView?.viewId, letterTemplates, librarySources, openTabs, researchItemsByViewId, workspaceGroups.secondary.views]);
   usePendingCitationPageLifecycle({
     page: derivePendingCitationPage({
       activeLibraryItem,
@@ -1778,202 +1737,119 @@ export default function App() {
   }, [updateDocumentSplitRatio]);
 
   const commitWorkspaceGroups = groupStorePort.commitWorkspaceGroups;
+  const workspaceGroupsController = useMemo(
+    () => createWorkspaceGroupsController({
+      documentStorePort,
+      groupStorePort,
+      letterTemplates,
+      researchResolver: {
+        clearError: () => setActiveResearchError(""),
+        commitItem: (viewId, item) => {
+          setResearchItemsByViewId((previous) => ({
+            ...previous,
+            [viewId]: item,
+          }));
+        },
+        destroyView: (viewId) => bridge.destroyResearchWebView?.(viewId),
+        removeItems: (viewIds) => {
+          setResearchItemsByViewId((previous) => {
+            const copy = { ...previous };
+            viewIds.forEach((viewId) => delete copy[viewId]);
+            return copy;
+          });
+        },
+        renameItems: (viewIds, {
+          itemPatch,
+          nextPath,
+          previousPath,
+        }) => {
+          setResearchItemsByViewId((previous) => {
+            const copy = { ...previous };
+            for (const viewId of viewIds) {
+              if (copy[viewId]) {
+                copy[viewId] = {
+                  ...copy[viewId],
+                  ...itemPatch,
+                  relativePath: `${nextPath}${String(
+                    copy[viewId].relativePath || "",
+                  ).slice(previousPath.length)}`,
+                };
+              }
+            }
+            return copy;
+          });
+        },
+        resolveItem: (view) => (
+          researchItemsByViewIdRef.current[view.viewId]
+          || (view.sourceId
+            ? librarySourcesRef.current.find(
+              (source) => source.id === view.sourceId,
+            )
+            : null)
+          || null
+        ),
+        setActiveItem: setActiveLibraryItem,
+      },
+      statusPort: {
+        show: showStatus,
+      },
+    }),
+    [documentStorePort, groupStorePort, letterTemplates, showStatus],
+  );
+  const {
+    addOrActivateDocumentTab: addOrActivateWorkspaceDocumentTab,
+    closeGroupView: closeWorkspaceGroupView,
+    moveGroupDocument: moveWorkspaceGroupDocument,
+    reconcileTabs: reconcileWorkspaceTabs,
+    reorderGroupView: reorderWorkspaceGroupView,
+    researchViewsPort: workspaceResearchViewsPort,
+    selectGroupView: selectWorkspaceGroupView,
+    selectTab: selectWorkspaceTab,
+    toggleRightSplit: toggleWorkspaceRightSplit,
+    updateResearchViewState: commitResearchViewState,
+  } = workspaceGroupsController;
+  const {
+    removeOpenResearchViews,
+    updateOpenResearchTargets,
+  } = workspaceResearchViewsPort;
 
   useEffect(() => {
-    if (!openTabs.length) return;
-    const tabById = new Map(openTabs.map((tab) => [tab.id, tab]));
-    setWorkspaceGroups((previous) => {
-      const refreshViews = (views, allowResearch) => (views || []).flatMap((view) => {
-        if (view.kind === WORKSPACE_VIEW_KIND.RESEARCH) return allowResearch ? [view] : [];
-        const tab = tabById.get(view.tabId);
-        return tab ? [createDocumentWorkspaceView(workspaceDocumentView(tab))] : [];
-      });
-      let primaryViews = refreshViews(previous.primary.views, false);
-      let secondaryViews = refreshViews(previous.secondary.views, true);
-      const assignedTabIds = new Set([...primaryViews, ...secondaryViews]
-        .filter((view) => view.kind === WORKSPACE_VIEW_KIND.DOCUMENT)
-        .map((view) => view.tabId));
-      for (const tab of openTabs) {
-        if (!assignedTabIds.has(tab.id)) {
-          primaryViews.push(createDocumentWorkspaceView(workspaceDocumentView(tab)));
-          assignedTabIds.add(tab.id);
-        }
-      }
-      if (!primaryViews.length) {
-        const firstSecondaryDocumentIndex = secondaryViews.findIndex((view) => view.kind === WORKSPACE_VIEW_KIND.DOCUMENT);
-        if (firstSecondaryDocumentIndex >= 0) {
-          primaryViews = [secondaryViews[firstSecondaryDocumentIndex]];
-          secondaryViews = secondaryViews.filter((_, index) => index !== firstSecondaryDocumentIndex);
-        } else {
-          primaryViews = [createDocumentWorkspaceView(workspaceDocumentView(openTabs[0]))];
-        }
-      }
-      const candidate = normalizeWorkspaceGroupsState({
-        ...previous,
-        primary: { views: primaryViews, activeViewId: previous.primary.activeViewId },
-        secondary: { views: secondaryViews, activeViewId: previous.secondary.activeViewId },
-      }, { fallbackPrimaryDocument: workspaceDocumentView(openTabs[0]) });
-      return JSON.stringify(candidate) === JSON.stringify(previous) ? previous : candidate;
-    });
+    reconcileWorkspaceTabs(openTabs);
   }, [openTabs]);
 
-  const updateOpenResearchTargets = useCallback((libraryId, previousPath, nextPath, itemPatch = {}) => {
-    let nextGroups = workspaceGroupsRef.current;
-    const changedViewIds = [];
-    for (const view of nextGroups.secondary.views) {
-      if (view.kind !== WORKSPACE_VIEW_KIND.RESEARCH || view.libraryId !== libraryId || !view.relativePath) continue;
-      if (view.relativePath !== previousPath && !view.relativePath.startsWith(`${previousPath}/`)) continue;
-      const suffix = view.relativePath.slice(previousPath.length);
-      nextGroups = updateWorkspaceResearchTarget(nextGroups, view.viewId, { libraryId, relativePath: `${nextPath}${suffix}` });
-      changedViewIds.push(view.viewId);
-    }
-    if (nextGroups !== workspaceGroupsRef.current) commitWorkspaceGroups(nextGroups);
-    if (changedViewIds.length) {
-      setResearchItemsByViewId((previous) => {
-        const copy = { ...previous };
-        for (const viewId of changedViewIds) {
-          if (copy[viewId]) copy[viewId] = { ...copy[viewId], ...itemPatch, relativePath: `${nextPath}${String(copy[viewId].relativePath || "").slice(previousPath.length)}` };
-        }
-        return copy;
-      });
-    }
-  }, [commitWorkspaceGroups]);
-
-  const removeOpenResearchViews = useCallback((selector) => {
-    const state = workspaceGroupsRef.current;
-    const removedIds = state.secondary.views.filter((view) => (
-      view.kind === WORKSPACE_VIEW_KIND.RESEARCH && selector(view)
-    )).map((view) => view.viewId);
-    if (!removedIds.length) return;
-    removedIds.forEach((viewId) => { void bridge.destroyResearchWebView?.(viewId); });
-    const next = removeWorkspaceViews(state, new Set(removedIds));
-    commitWorkspaceGroups(next);
-    setResearchItemsByViewId((previous) => {
-      const copy = { ...previous };
-      removedIds.forEach((viewId) => delete copy[viewId]);
-      return copy;
-    });
-    const active = getActiveWorkspaceView(next, WORKSPACE_GROUP_ID.SECONDARY);
-    if (!active) {
-      setActiveLibraryItem(null);
-      setActivePane("main");
-    } else if (active.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
-      setActiveLibraryItem(researchItemsByViewIdRef.current[active.viewId]
-        || (active.sourceId ? librarySourcesRef.current.find((source) => source.id === active.sourceId) : null)
-        || null);
-    }
-  }, [commitWorkspaceGroups]);
-
-  const handleToggleRightSplit = useCallback((tabId) => {
-    const state = workspaceGroupsRef.current;
-    const location = findWorkspaceView(state, tabId);
-    if (!location || location.view.kind !== WORKSPACE_VIEW_KIND.DOCUMENT) return;
-    const targetGroup = location.groupId === WORKSPACE_GROUP_ID.PRIMARY
-      ? WORKSPACE_GROUP_ID.SECONDARY
-      : WORKSPACE_GROUP_ID.PRIMARY;
-    if (location.groupId === WORKSPACE_GROUP_ID.PRIMARY && state.primary.views.length <= 1) {
-      showStatus("左侧编辑组至少需要保留一个信笺", "warning");
-      return;
-    }
-    const snapshot = snapshotLiveTabs({ includeEditorJson: true });
-    openTabsRef.current = snapshot;
-    setOpenTabs(snapshot);
-    const next = moveWorkspaceDocument(state, location.view.viewId, targetGroup, state[targetGroup].views.length);
-    if (next === state) return;
-    commitWorkspaceGroups(next);
-    if (targetGroup === WORKSPACE_GROUP_ID.PRIMARY) {
-      const target = snapshot.find((tab) => tab.id === tabId);
-      if (target) {
-        activeTabIdRef.current = target.id;
-        setActiveTabId(target.id);
-        applyDocument(target.document, target.path, target.dirty, { editorJson: target.editorJson, scrollState: target.scrollState });
-      }
-      setActivePane("main");
-    } else {
-      const nextPrimary = getActiveWorkspaceView(next, WORKSPACE_GROUP_ID.PRIMARY);
-      const primaryTab = snapshot.find((tab) => tab.id === nextPrimary?.tabId);
-      if (primaryTab && tabId === activeTabIdRef.current) {
-        activeTabIdRef.current = primaryTab.id;
-        setActiveTabId(primaryTab.id);
-        applyDocument(primaryTab.document, primaryTab.path, primaryTab.dirty, { editorJson: primaryTab.editorJson, scrollState: primaryTab.scrollState });
-      }
-      setActivePane("right");
-    }
-    showStatus(targetGroup === WORKSPACE_GROUP_ID.SECONDARY ? "已移到右侧编辑组" : "已移到左侧编辑组", "success");
-  }, [applyDocument, commitWorkspaceGroups, showStatus, snapshotLiveTabs]);
+  const handleToggleRightSplit = useCallback(
+    (tabId) => toggleWorkspaceRightSplit(tabId, {
+      applyDocument,
+      snapshotTabs: snapshotLiveTabs,
+    }),
+    [applyDocument, snapshotLiveTabs, toggleWorkspaceRightSplit],
+  );
 
   const addOrActivateDocumentTab = useCallback(
-    (nextDocument, nextPath = "", nextDirty = false, options = {}) => {
-      const normalized = normalizeDocument(nextDocument, letterTemplates);
-      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
-      const existingTab = nextPath ? snapshot.find((tab) => sameDocumentPath(tab.path, nextPath)) : null;
-      if (existingTab) {
-        openTabsRef.current = snapshot;
-        setOpenTabs(snapshot);
-        const location = findWorkspaceView(workspaceGroupsRef.current, existingTab.id);
-        if (location?.groupId === WORKSPACE_GROUP_ID.SECONDARY) {
-          commitWorkspaceGroups(selectWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY, location.view.viewId));
-          setActivePane("right");
-        } else {
-          const nextGroups = location
-            ? selectWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.PRIMARY, location.view.viewId)
-            : openWorkspaceDocument(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.PRIMARY, workspaceDocumentView(existingTab));
-          commitWorkspaceGroups(nextGroups);
-          activeTabIdRef.current = existingTab.id;
-          setActiveTabId(existingTab.id);
-          setActivePane("main");
-          if (existingTab.id !== activeTabId) {
-            applyDocument(existingTab.document, existingTab.path, existingTab.dirty, { editorJson: existingTab.editorJson, scrollState: existingTab.scrollState });
-          }
-        }
-        return existingTab.id;
-      }
-      const requestedGroup = options.groupId === WORKSPACE_GROUP_ID.SECONDARY
-        || (!options.groupId && activePane === "right" && workspaceGroupsRef.current.secondary.views.length)
-        ? WORKSPACE_GROUP_ID.SECONDARY
-        : WORKSPACE_GROUP_ID.PRIMARY;
-      const onlyTab = snapshot.length === 1 ? snapshot[0] : null;
-      const canReplaceBlank = requestedGroup === WORKSPACE_GROUP_ID.PRIMARY
-        && (nextPath || options.replaceBlank)
-        && onlyTab
-        && !onlyTab.path
-        && !onlyTab.dirty
-        && !currentPath
-        && !dirty;
-      const tab = createDocumentTab(normalized, nextPath, nextDirty, options);
-      documentTabRuntimePort.ensure(tab.id, {
-        dirty: nextDirty,
-        diskRevision: options.diskRevision,
-        lastEditAt: nextDirty ? Date.now() : null,
-        liveUpdatedAt: normalized.updatedAt,
-        recoveryRevision: tab.recoveryRevision,
-      });
-      const nextTabs = canReplaceBlank ? [tab] : [...snapshot, tab];
-      openTabsRef.current = nextTabs;
-      setOpenTabs(nextTabs);
-      let nextGroups;
-      if (canReplaceBlank) {
-        const view = createDocumentWorkspaceView(workspaceDocumentView(tab));
-        nextGroups = {
-          ...workspaceGroupsRef.current,
-          primary: { views: [view], activeViewId: view.viewId },
-          focusedGroup: WORKSPACE_GROUP_ID.PRIMARY,
-        };
-      } else {
-        nextGroups = openWorkspaceDocument(workspaceGroupsRef.current, requestedGroup, workspaceDocumentView(tab));
-      }
-      commitWorkspaceGroups(nextGroups);
-      if (requestedGroup === WORKSPACE_GROUP_ID.PRIMARY) {
-        activeTabIdRef.current = tab.id;
-        setActiveTabId(tab.id);
-        setActivePane("main");
-        applyDocument(normalized, nextPath, nextDirty, { scrollState: tab.scrollState });
-      } else {
-        setActivePane("right");
-      }
-      return tab.id;
-    },
-    [activePane, activeTabId, applyDocument, commitWorkspaceGroups, currentPath, dirty, letterTemplates, snapshotLiveTabs],
+    (
+      nextDocument,
+      nextPath = "",
+      nextDirty = false,
+      options = {},
+    ) => addOrActivateWorkspaceDocumentTab(
+      nextDocument,
+      nextPath,
+      nextDirty,
+      options,
+      {
+        applyDocument,
+        initializeTabRuntime: (tabId, initialState) => (
+          documentTabRuntimePort.ensure(tabId, initialState)
+        ),
+        snapshotTabs: snapshotLiveTabs,
+      },
+    ),
+    [
+      addOrActivateWorkspaceDocumentTab,
+      applyDocument,
+      documentTabRuntimePort,
+      snapshotLiveTabs,
+    ],
   );
 
   useEffect(() => {
@@ -2225,109 +2101,48 @@ export default function App() {
   }, [applyDocument, commitWorkspaceGroups, editor, letterTemplates, persistSession]);
 
   const handleSelectTab = useCallback(
-    (tabId) => {
-      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
-      const target = snapshot.find((tab) => tab.id === tabId);
-      if (!target) {
-        return;
-      }
-      openTabsRef.current = snapshot;
-      setOpenTabs(snapshot);
-      const location = findWorkspaceView(workspaceGroupsRef.current, target.id);
-      if (location?.groupId === WORKSPACE_GROUP_ID.SECONDARY) {
-        commitWorkspaceGroups(selectWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY, location.view.viewId));
-        setActivePane("right");
-        return;
-      }
-      const nextGroups = location
-        ? selectWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.PRIMARY, location.view.viewId)
-        : openWorkspaceDocument(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.PRIMARY, workspaceDocumentView(target));
-      commitWorkspaceGroups(nextGroups);
-      activeTabIdRef.current = target.id;
-      setActiveTabId(target.id);
-      setActivePane("main");
-      if (target.id !== activeTabId) {
-        applyDocument(target.document, target.path, target.dirty, { editorJson: target.editorJson, scrollState: target.scrollState });
-      }
-    },
-    [activeTabId, applyDocument, commitWorkspaceGroups, snapshotLiveTabs],
+    (tabId) => selectWorkspaceTab(tabId, {
+      applyDocument,
+      snapshotTabs: snapshotLiveTabs,
+    }),
+    [applyDocument, selectWorkspaceTab, snapshotLiveTabs],
   );
 
-  const handleSelectGroupView = useCallback((groupId, viewId) => {
-    const state = workspaceGroupsRef.current;
-    const group = state[groupId];
-    const view = group?.views?.find((candidate) => candidate.viewId === viewId);
-    if (!view) return;
-    if (view.kind === WORKSPACE_VIEW_KIND.DOCUMENT) {
-      handleSelectTab(view.tabId);
-      return;
-    }
-    const snapshot = snapshotLiveTabs({ includeEditorJson: true });
-    openTabsRef.current = snapshot;
-    setOpenTabs(snapshot);
-    const next = selectWorkspaceView(state, WORKSPACE_GROUP_ID.SECONDARY, viewId);
-    commitWorkspaceGroups(next);
-    setActivePane("right");
-    const item = researchItemsByViewId[viewId]
-      || (view.sourceId ? librarySources.find((source) => source.id === view.sourceId) : null)
-      || null;
-    setActiveLibraryItem(item);
-    setActiveResearchError("");
-  }, [commitWorkspaceGroups, handleSelectTab, librarySources, researchItemsByViewId, snapshotLiveTabs]);
+  const handleSelectGroupView = useCallback(
+    (groupId, viewId) => selectWorkspaceGroupView(
+      groupId,
+      viewId,
+      {
+        applyDocument,
+        snapshotTabs: snapshotLiveTabs,
+      },
+    ),
+    [applyDocument, selectWorkspaceGroupView, snapshotLiveTabs],
+  );
 
-  const handleReorderGroupView = useCallback((groupId, viewId, beforeViewId) => {
-    const state = workspaceGroupsRef.current;
-    const views = state[groupId]?.views || [];
-    const fromIndex = views.findIndex((view) => view.viewId === viewId);
-    if (fromIndex < 0) return;
-    let toIndex = beforeViewId ? views.findIndex((view) => view.viewId === beforeViewId) : views.length - 1;
-    if (toIndex < 0) toIndex = views.length - 1;
-    if (beforeViewId && fromIndex < toIndex) toIndex -= 1;
-    commitWorkspaceGroups(reorderWorkspaceView(state, groupId, viewId, toIndex));
-  }, [commitWorkspaceGroups]);
+  const handleReorderGroupView = useCallback(
+    (groupId, viewId, beforeViewId) => reorderWorkspaceGroupView(
+      groupId,
+      viewId,
+      beforeViewId,
+    ),
+    [reorderWorkspaceGroupView],
+  );
 
-  const handleMoveGroupDocument = useCallback((viewId, targetGroupId, beforeViewId = null) => {
-    const state = workspaceGroupsRef.current;
-    const location = findWorkspaceView(state, viewId);
-    if (!location || location.view.kind !== WORKSPACE_VIEW_KIND.DOCUMENT) return;
-    if (location.groupId === targetGroupId) {
-      handleReorderGroupView(targetGroupId, viewId, beforeViewId);
-      return;
-    }
-    if (location.groupId === WORKSPACE_GROUP_ID.PRIMARY && state.primary.views.length <= 1) {
-      showStatus("左侧编辑组至少需要保留一个信笺", "warning");
-      return;
-    }
-    const targetViews = state[targetGroupId]?.views || [];
-    let insertionIndex = beforeViewId ? targetViews.findIndex((view) => view.viewId === beforeViewId) : targetViews.length;
-    if (insertionIndex < 0) insertionIndex = targetViews.length;
-    const snapshot = snapshotLiveTabs({ includeEditorJson: true });
-    openTabsRef.current = snapshot;
-    setOpenTabs(snapshot);
-    const next = moveWorkspaceDocument(state, location.view.viewId, targetGroupId, insertionIndex);
-    if (next === state) return;
-    commitWorkspaceGroups(next);
-    if (targetGroupId === WORKSPACE_GROUP_ID.PRIMARY) {
-      const tab = snapshot.find((candidate) => candidate.id === location.view.tabId);
-      if (tab) {
-        activeTabIdRef.current = tab.id;
-        setActiveTabId(tab.id);
-        applyDocument(tab.document, tab.path, tab.dirty, { editorJson: tab.editorJson, scrollState: tab.scrollState });
-      }
-      setActivePane("main");
-    } else {
-      if (location.view.tabId === activeTabIdRef.current) {
-        const nextPrimary = getActiveWorkspaceView(next, WORKSPACE_GROUP_ID.PRIMARY);
-        const primaryTab = snapshot.find((candidate) => candidate.id === nextPrimary?.tabId);
-        if (primaryTab) {
-          activeTabIdRef.current = primaryTab.id;
-          setActiveTabId(primaryTab.id);
-          applyDocument(primaryTab.document, primaryTab.path, primaryTab.dirty, { editorJson: primaryTab.editorJson, scrollState: primaryTab.scrollState });
-        }
-      }
-      setActivePane("right");
-    }
-  }, [applyDocument, commitWorkspaceGroups, handleReorderGroupView, showStatus, snapshotLiveTabs]);
+  const handleMoveGroupDocument = useCallback(
+    (viewId, targetGroupId, beforeViewId = null) => (
+      moveWorkspaceGroupDocument(
+        viewId,
+        targetGroupId,
+        beforeViewId,
+        {
+          applyDocument,
+          snapshotTabs: snapshotLiveTabs,
+        },
+      )
+    ),
+    [applyDocument, moveWorkspaceGroupDocument, snapshotLiveTabs],
+  );
 
   const handleCloseTab = useCallback(
     async (tabId) => {
@@ -2439,37 +2254,14 @@ export default function App() {
     [activeTabId, applyDocument, commitWorkspaceGroups, letterTemplates, librarySources, newDocumentTemplateId, releaseTabRuntimeState, researchItemsByViewId, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave],
   );
 
-  const handleCloseGroupView = useCallback(async (groupId, viewId) => {
-    const state = workspaceGroupsRef.current;
-    const view = state[groupId]?.views?.find((candidate) => candidate.viewId === viewId);
-    if (!view) return;
-    if (view.kind === WORKSPACE_VIEW_KIND.DOCUMENT) {
-      await handleCloseTab(view.tabId);
-      return;
-    }
-    void bridge.destroyResearchWebView?.(viewId);
-    const next = closeWorkspaceView(state, groupId, viewId);
-    commitWorkspaceGroups(next);
-    setResearchItemsByViewId((previous) => {
-      if (!(viewId in previous)) return previous;
-      const copy = { ...previous };
-      delete copy[viewId];
-      return copy;
-    });
-    const nextSecondary = getActiveWorkspaceView(next, WORKSPACE_GROUP_ID.SECONDARY);
-    if (!nextSecondary) {
-      setActiveLibraryItem(null);
-      setActiveResearchError("");
-      setActivePane("main");
-      return;
-    }
-    if (nextSecondary.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
-      setActiveLibraryItem(researchItemsByViewId[nextSecondary.viewId]
-        || (nextSecondary.sourceId ? librarySources.find((source) => source.id === nextSecondary.sourceId) : null)
-        || null);
-    }
-    setActivePane("right");
-  }, [commitWorkspaceGroups, handleCloseTab, librarySources, researchItemsByViewId]);
+  const handleCloseGroupView = useCallback(
+    (groupId, viewId) => closeWorkspaceGroupView(
+      groupId,
+      viewId,
+      { closeDocumentTab: handleCloseTab },
+    ),
+    [closeWorkspaceGroupView, handleCloseTab],
+  );
 
   const handleNew = useCallback((groupId) => {
     const tabId = addOrActivateDocumentTab(
@@ -3996,47 +3788,17 @@ export default function App() {
     workspaceGroupsRef,
     writingWorkspaceRoot,
   });
-  const hasOpenResearchViewsForLibrary = useCallback((libraryId) => (
-    workspaceGroupsRef.current.secondary.views.some((view) => (
-      view.kind === WORKSPACE_VIEW_KIND.RESEARCH && view.libraryId === libraryId
-    ))
-  ), []);
-
-  const getOpenResearchViews = useCallback(
-    () => workspaceGroupsRef.current.secondary.views,
-    [],
+  const openResearchPreviewView = useCallback(
+    (options) => workspaceResearchViewsPort.openResearchPreviewView(
+      options,
+      { snapshotTabs: snapshotLiveTabs },
+    ),
+    [snapshotLiveTabs, workspaceResearchViewsPort],
   );
-
-  const openResearchPreviewView = useCallback(({ item, researchType, target, titleSnapshot }) => {
-    if (rightSplitTabIdRef.current) {
-      const snapshot = snapshotLiveTabs({ includeEditorJson: true });
-      openTabsRef.current = snapshot;
-      setOpenTabs(snapshot);
-    }
-    const nextGroups = openWorkspaceResearch(workspaceGroupsRef.current, {
-      ...target,
-      titleSnapshot,
-      researchType,
-    });
-    const activeView = getActiveWorkspaceView(nextGroups, WORKSPACE_GROUP_ID.SECONDARY);
-    commitWorkspaceGroups(nextGroups);
-    if (activeView) setResearchItemsByViewId((previous) => ({ ...previous, [activeView.viewId]: item }));
-    setActivePane("right");
-    setActiveLibraryItem(item);
-    setActiveResearchError("");
-  }, [commitWorkspaceGroups, snapshotLiveTabs]);
-
-  const closeActiveResearchView = useCallback(() => {
-    const active = getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY);
-    if (active?.kind === WORKSPACE_VIEW_KIND.RESEARCH) {
-      void handleCloseGroupView(WORKSPACE_GROUP_ID.SECONDARY, active.viewId);
-    }
-  }, [handleCloseGroupView]);
-
   const researchViewsPort = {
-    closeActiveResearchView,
-    getOpenResearchViews,
-    hasOpenResearchViewsForLibrary,
+    closeActiveResearchView: workspaceResearchViewsPort.closeActiveResearchView,
+    getOpenResearchViews: workspaceResearchViewsPort.getOpenResearchViews,
+    hasOpenResearchViewsForLibrary: workspaceResearchViewsPort.hasOpenResearchViewsForLibrary,
     openResearchPreviewView,
     removeOpenResearchViews,
     updateOpenResearchTargets,
@@ -4192,14 +3954,10 @@ export default function App() {
     structureMode,
   });
 
-  const handleResearchViewStateChange = useCallback((viewId, viewState) => {
-    const active = getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY);
-    if (active?.kind !== WORKSPACE_VIEW_KIND.RESEARCH || active.viewId !== viewId) return;
-    const current = workspaceGroupsRef.current;
-    const next = updateWorkspaceResearchViewState(current, active.viewId, viewState);
-    if (next === current) return;
-    commitWorkspaceGroups(next);
-  }, [commitWorkspaceGroups]);
+  const handleResearchViewStateChange = useCallback(
+    (viewId, viewState) => commitResearchViewState(viewId, viewState),
+    [commitResearchViewState],
+  );
 
   useKnowledgeEditorSyncLifecycle({
     activeWorkDocument,

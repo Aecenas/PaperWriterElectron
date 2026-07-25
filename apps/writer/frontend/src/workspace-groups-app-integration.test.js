@@ -4,6 +4,7 @@ import test from "node:test";
 
 const appSource = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
 const aiLayoutPortSource = await readFile(new URL("./document-workspace/ai-layout-port.js", import.meta.url), "utf8");
+const groupsControllerSource = await readFile(new URL("./document-workspace/workspace-groups-controller.js", import.meta.url), "utf8");
 const topNavSource = await readFile(new URL("./app-shell/TopNav.jsx", import.meta.url), "utf8");
 const pdfSource = await readFile(new URL("./research/PdfReader.jsx", import.meta.url), "utf8");
 const knowledgeDocumentPortSource = await readFile(new URL("./document-workspace/knowledge-document-port.js", import.meta.url), "utf8");
@@ -65,9 +66,10 @@ test("AI and immersive layouts retain complete group state without closing tabs"
 });
 
 test("stale PDF view callbacks cannot overwrite another research tab", () => {
-  assert.match(appSource, /active\.viewId !== viewId\) return/);
+  assert.match(appSource, /commitResearchViewState\(viewId, viewState\)/);
   assert.match(appSource, /handleResearchViewStateChange\(activeSecondaryView\.viewId, viewState\)/);
-  assert.match(appSource, /const next = updateWorkspaceResearchViewState\(current, active\.viewId, viewState\);[\s\S]*if \(next === current\) return/);
+  assert.match(groupsControllerSource, /active\.viewId !== viewId/);
+  assert.match(groupsControllerSource, /updateWorkspaceResearchViewState\([\s\S]*active\.viewId,[\s\S]*viewState/);
 });
 
 test("relationship data is invalidated and reloaded when the active document context changes", () => {
