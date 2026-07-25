@@ -36,7 +36,8 @@ test("knowledge synchronization cannot re-enter through its own derived transact
 
 test("document switches rebuild editor state so undo cannot cross tab boundaries", () => {
   assert.match(source, /replaceEditorContentWithoutHistory\(editor,/);
-  assert.match(source, /replaceEditorContentWithoutHistory\(rightSplitEditor,/);
+  assert.match(source, /createPaneEditorHydrator\(\{/);
+  assert.match(source, /replaceEditorContentWithoutHistory\(runtimeEditor, content\)/);
   assert.doesNotMatch(source, /commands\.setContent\(/);
 });
 
@@ -115,15 +116,17 @@ test("reopening a document secondary pane restores its selection and scroll snap
   const applyStart = source.indexOf("if (!rightSplitEditor || !rightSplitTabId)");
   const applyEnd = source.indexOf("currentPathRef.current = currentPath", applyStart);
   const applySource = source.slice(applyStart, applyEnd);
-  assert.match(applySource, /restoreEditorSelectionWithoutHistory\(rightSplitEditor, splitTab\?\.selectionState\)/);
-  assert.match(applySource, /rightSplitSelectionRef\.current = readEditorSelectionState\(rightSplitEditor\)/);
-  assert.match(applySource, /restoreCanvasScrollState\(rightCanvasRef\.current, splitTab\?\.scrollState\)/);
+  assert.match(applySource, /rightPaneEditorHydrator\.hydrate\(\{/);
+  assert.match(applySource, /selectionState: splitTab\?\.selectionState/);
+  assert.match(applySource, /scrollState: splitTab\?\.scrollState/);
+  assert.match(applySource, /\}, \[rightSplitEditor, rightSplitTabId\]\);/);
 
   const snapshotStart = source.indexOf("const snapshotLiveTabs");
   const snapshotEnd = source.indexOf("const openSearch", snapshotStart);
   const snapshotSource = source.slice(snapshotStart, snapshotEnd);
-  assert.match(snapshotSource, /selectionState: readEditorSelectionState\(rightSplitEditor\)/);
-  assert.match(snapshotSource, /scrollState: readCanvasScrollState\(rightCanvasRef\.current\)/);
+  assert.match(snapshotSource, /captureDocumentWorkspaceSnapshot\(\{/);
+  assert.match(snapshotSource, /readSelectionState: \(\) => readEditorSelectionState\(rightSplitEditor\)/);
+  assert.match(snapshotSource, /readScrollState: \(\) => readCanvasScrollState\(rightCanvasRef\.current\)/);
 });
 
 test("comment overlays avoid empty-state transaction renders and coalesce layout work", () => {
@@ -198,7 +201,10 @@ test("successful saves commit clean state before best-effort recovery cleanup", 
 test("multi-tab save boundaries use revisions captured with the document snapshots", () => {
   const snapshotStart = source.indexOf("const snapshotLiveTabs");
   const snapshotEnd = source.indexOf("const activeSessionPath", snapshotStart);
-  assert.match(source.slice(snapshotStart, snapshotEnd), /snapshotTabsWithRevisions\(documentSnapshots, documentRevisionPort\)/);
+  const snapshotSource = source.slice(snapshotStart, snapshotEnd);
+  assert.match(snapshotSource, /captureDocumentWorkspaceSnapshot\(\{/);
+  assert.match(snapshotSource, /revisionPort: documentRevisionPort/);
+  assert.doesNotMatch(snapshotSource, /snapshotTabsWithRevisions/);
 
   const closeStart = source.indexOf("bridge.onCloseRequest");
   const autosaveStart = source.indexOf("const timer = window.setInterval", closeStart);

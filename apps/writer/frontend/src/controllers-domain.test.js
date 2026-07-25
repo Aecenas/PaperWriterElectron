@@ -196,7 +196,7 @@ test("template and export controllers retain their split state and lifecycle anc
   const appBody = source.slice(source.indexOf("export default function App()"));
   const orderedMarkers = [
     "useTemplateCatalogState();",
-    "const [documentState, setDocumentState]",
+    "} = useDocumentWorkspaceState({",
     "useTemplateTabDialogState();",
     "useHelpReleaseState();",
     "useExportDialogState();",

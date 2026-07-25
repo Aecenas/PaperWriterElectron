@@ -193,7 +193,6 @@ import {
   selectAutosaveSnapshotTabs,
   sessionTabSignature,
   snapshotRevisionIsCurrent,
-  snapshotTabsWithRevisions,
 } from "./editor-lifecycle.js";
 import {
   AUDIO_MAX_BYTES,
@@ -219,10 +218,15 @@ import {
   isGlobalShortcutBlocked,
 } from "./ui-interactions.js";
 import { readCanvasScrollState, restoreCanvasScrollState } from "./document-workspace/canvas-state.js";
+import {
+  captureDocumentWorkspaceSnapshot,
+  createPaneEditorHydrator,
+  serializePaneDocument,
+} from "./document-workspace/editor-runtime.js";
 import { useDocumentRuntimeKernel } from "./document-workspace/document-runtime-kernel.js";
+import { useDocumentWorkspaceState } from "./document-workspace/workspace-state.js";
 import { listFolderWithTimeout } from "./document-workspace/folder-listing.js";
 import {
-  activeSecondaryDocumentTabId,
   createBlankDocument,
   createDocumentTab,
   documentRuntimeKey,
@@ -239,13 +243,9 @@ import {
 } from "./document-workspace/model.js";
 import { replacePathPrefix } from "./document-workspace/path-model.js";
 import { normalizeSessionDiskRevision, sameDiskRevision } from "./document-workspace/revisions.js";
-import { loadSessionState, saveSessionState } from "./document-workspace/session-state.js";
 
 
 export default function App() {
-  const [initialSession] = useState(() => loadSessionState());
-  const sessionRef = useRef(initialSession);
-  const sessionRestoredRef = useRef(false);
   const {
     userTemplateGroups,
     setUserTemplateGroups,
@@ -257,35 +257,43 @@ export default function App() {
     newDocumentTemplateHistory,
     setNewDocumentTemplateHistory,
   } = useTemplateCatalogState();
-  const [documentState, setDocumentState] = useState(() => createBlankDocument(letterTemplates, newDocumentTemplateId));
-  const [currentPath, setCurrentPath] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const [openTabs, setOpenTabs] = useState(() => {
-    const document = createBlankDocument(letterTemplates, newDocumentTemplateId);
-    const tab = createDocumentTab(document);
-    return [tab];
+  const {
+    activePane,
+    activePaneRef,
+    activeTabId,
+    activeTabIdRef,
+    currentPath,
+    currentPathRef,
+    dirty,
+    dirtyRef,
+    documentState,
+    documentStateRef,
+    documentStorePort,
+    groupStorePort,
+    initialSession,
+    openTabs,
+    openTabsRef,
+    rightSplitTabId,
+    rightSplitTabIdRef,
+    sessionClosePendingRef,
+    sessionRef,
+    sessionRestoredRef,
+    sessionStatePort,
+    setActivePane,
+    setActiveTabId,
+    setCurrentPath,
+    setDirty,
+    setDocumentPaneRatio,
+    setDocumentState,
+    setOpenTabs,
+    setRightSplitTabId,
+    setWorkspaceGroups,
+    workspaceGroups,
+    workspaceGroupsRef,
+  } = useDocumentWorkspaceState({
+    letterTemplates,
+    newDocumentTemplateId,
   });
-  const [activeTabId, setActiveTabId] = useState(() => openTabs[0]?.id || "");
-  const [workspaceGroups, setWorkspaceGroups] = useState(() => createWorkspaceGroupsState(
-    workspaceDocumentView(openTabs[0]),
-    { splitRatio: Number(safeStorageGetItem("paperwriter.workspaceSplitRatio")) || 0.5 },
-  ));
-  const rightSplitTabId = activeSecondaryDocumentTabId(workspaceGroups);
-  const setRightSplitTabId = useCallback((value) => {
-    setWorkspaceGroups((previous) => {
-      const activeSecondary = getActiveWorkspaceView(previous, WORKSPACE_GROUP_ID.SECONDARY);
-      const currentTabId = activeSecondary?.kind === WORKSPACE_VIEW_KIND.DOCUMENT ? activeSecondary.tabId : "";
-      const nextTabId = typeof value === "function" ? value(currentTabId) : value;
-      if (nextTabId) {
-        return openWorkspaceDocument(previous, WORKSPACE_GROUP_ID.SECONDARY, { tabId: nextTabId });
-      }
-      if (activeSecondary?.kind === WORKSPACE_VIEW_KIND.DOCUMENT) {
-        return moveWorkspaceDocument(previous, activeSecondary.viewId, WORKSPACE_GROUP_ID.PRIMARY, previous.primary.views.length);
-      }
-      return previous;
-    });
-  }, []);
-  const [activePane, setActivePane] = useState("main");
   const [folderState, setFolderState] = useState(() => ({
     rootPath: initialSession.folderPath || "",
     path: initialSession.folderPath || "",
@@ -307,9 +315,6 @@ export default function App() {
   const [documentReplaceValue, setDocumentReplaceValue] = useState("");
   const [documentSearchState, setDocumentSearchState] = useState(() => searchDocumentText({ type: "doc", content: [] }, ""));
   const [workspaceSearchState, setWorkspaceSearchState] = useState({ loading: false, results: [], error: "", requestId: "" });
-  const setDocumentPaneRatio = useCallback((value) => {
-    setWorkspaceGroups((previous) => ({ ...previous, splitRatio: normalizeWorkspaceSplitRatio(typeof value === "function" ? value(previous.splitRatio) : value) }));
-  }, []);
   const [workSurfaceWidth, setWorkSurfaceWidth] = useState(0);
   const researchState = useResearchState(writingWorkspaceRoot);
   const {
@@ -454,13 +459,9 @@ export default function App() {
   const editorSelectionRef = useRef(null);
   const { updateFlowRef, updateResultResetTimerRef } = useUpdateFlowRefs();
   const restoreRunRef = useRef(0);
-  const openTabsRef = useRef(openTabs);
-  const activeTabIdRef = useRef(activeTabId);
   const mainCanvasRef = useRef(null);
   const rightCanvasRef = useRef(null);
   const workSurfaceRef = useRef(null);
-  const currentPathRef = useRef(currentPath);
-  const dirtyRef = useRef(dirty);
   const documentRuntimeKernel = useDocumentRuntimeKernel({
     deferCommit: () => new Promise((resolve) => window.setTimeout(resolve, 0)),
   });
@@ -470,7 +471,6 @@ export default function App() {
     saveQueuePort: documentSaveQueuePort,
     tabRuntimePort: documentTabRuntimePort,
   } = documentRuntimeKernel;
-  const documentStateRef = useRef(documentState);
   const updateAutoCheckedRef = useUpdateAutoCheckRef();
   const getSaveDocumentRef = useRef(null);
   const getRightSplitSaveDocumentRef = useRef(null);
@@ -482,11 +482,44 @@ export default function App() {
   const diskRevisionRequestControllerRef = useRef(createLatestRequestController());
   const researchRequestControllerRefs = useResearchRequestControllerRefs();
   const applyDocumentRunRef = useRef(0);
-  const rightSplitApplyingRef = useRef(false);
-  const rightSplitApplyRunRef = useRef(0);
   const rightSplitSelectionRef = useRef(null);
-  const rightSplitTabIdRef = useRef("");
-  const workspaceGroupsRef = useRef(workspaceGroups);
+  const rightSplitEditorRuntimeRef = useRef(null);
+  const rightPaneEditorHydrator = useMemo(() => createPaneEditorHydrator({
+    normalizeComments: normalizeDocumentComments,
+    pane: {
+      replaceContentWithoutHistory(content) {
+        const runtimeEditor = rightSplitEditorRuntimeRef.current;
+        if (runtimeEditor) {
+          replaceEditorContentWithoutHistory(runtimeEditor, content);
+        }
+      },
+      restoreSelectionWithoutHistory(selectionState) {
+        const runtimeEditor = rightSplitEditorRuntimeRef.current;
+        if (runtimeEditor) {
+          restoreEditorSelectionWithoutHistory(runtimeEditor, selectionState);
+        }
+      },
+      captureSelectionState() {
+        const runtimeEditor = rightSplitEditorRuntimeRef.current;
+        if (runtimeEditor) {
+          rightSplitSelectionRef.current = readEditorSelectionState(runtimeEditor);
+        }
+      },
+      syncComments(comments) {
+        const runtimeEditor = rightSplitEditorRuntimeRef.current;
+        if (runtimeEditor) {
+          syncDocumentCommentDecorations(runtimeEditor, comments);
+        }
+      },
+      restoreScrollState(scrollState) {
+        restoreCanvasScrollState(rightCanvasRef.current, scrollState);
+      },
+    },
+    scheduler: {
+      requestFrame: (callback) => window.requestAnimationFrame(callback),
+      defer: (callback) => window.setTimeout(callback, 0),
+    },
+  }), []);
   const aiSecondaryPaneLayoutRef = useRef(null);
   const immersiveSecondaryPaneLayoutRef = useRef(null);
   const previousImmersiveModeRef = useRef(false);
@@ -504,7 +537,6 @@ export default function App() {
   const autosaveRunningRef = useRef(false);
   const autosaveErrorAtRef = useRef(0);
   const tabClosePendingIdsRef = useRef(new Set());
-  const sessionClosePendingRef = useRef(false);
   const workspaceSearchRequestRef = useRef("");
   folderPathRef.current = folderState.path;
   expandedFoldersRef.current = expandedFolders;
@@ -546,8 +578,7 @@ export default function App() {
       const nextTabs = openTabsRef.current.map((tab) => (
         tab.id === tabId ? { ...tab, dirty: true, recoveryRevision: null } : tab
       ));
-      openTabsRef.current = nextTabs;
-      setOpenTabs(nextTabs);
+      documentStorePort.commitOpenTabs(nextTabs);
     }
     return becameDirty;
   }, []);
@@ -609,7 +640,7 @@ export default function App() {
     onFocus: () => setActivePane("right"),
     onUpdate: ({ transaction }) => {
       if (transaction?.getMeta?.("paperKnowledgeDerived") || transaction?.getMeta?.("paperStructuredDerived")) return;
-      if (rightSplitApplyingRef.current) return;
+      if (rightPaneEditorHydrator.isApplying()) return;
       const splitId = rightSplitTabIdRef.current;
       if (!splitId) return;
       documentTabRuntimePort.setEditorSource(splitId, "right");
@@ -631,6 +662,7 @@ export default function App() {
   const editor = useEditor(mainEditorOptions);
 
   const rightSplitEditor = useEditor(rightEditorOptions);
+  rightSplitEditorRuntimeRef.current = rightSplitEditor;
 
   const researchPaneFocused = !aiMode
     && activePane === "right"
@@ -885,14 +917,7 @@ export default function App() {
     }
   }, [aiMode, imageExportMode, printMode]);
 
-  const persistSession = useCallback((patch) => {
-    const nextSession = {
-      ...sessionRef.current,
-      ...patch,
-    };
-    sessionRef.current = nextSession;
-    saveSessionState(nextSession);
-  }, []);
+  const persistSession = sessionStatePort.commitSessionPatch;
 
   usePersistUserTemplateGroups(userTemplateGroups);
 
@@ -930,6 +955,7 @@ export default function App() {
   }, [workspaceGroups]);
 
   useEffect(() => {
+    activePaneRef.current = activePane;
     const focusedGroup = activePane === "right" && workspaceGroups.secondary.views.length
       ? WORKSPACE_GROUP_ID.SECONDARY
       : WORKSPACE_GROUP_ID.PRIMARY;
@@ -969,31 +995,12 @@ export default function App() {
     if (!splitDocument) {
       return;
     }
-    const runId = rightSplitApplyRunRef.current + 1;
-    rightSplitApplyRunRef.current = runId;
-    rightSplitApplyingRef.current = true;
-    window.requestAnimationFrame(() => {
-      if (rightSplitApplyRunRef.current !== runId) {
-        return;
-      }
-      try {
-        replaceEditorContentWithoutHistory(rightSplitEditor, splitTab?.editorJson || splitDocument.html || "<p></p>");
-      } catch {
-        replaceEditorContentWithoutHistory(rightSplitEditor, splitDocument.html || "<p></p>");
-      }
-      restoreEditorSelectionWithoutHistory(rightSplitEditor, splitTab?.selectionState);
-      rightSplitSelectionRef.current = readEditorSelectionState(rightSplitEditor);
-      syncDocumentCommentDecorations(rightSplitEditor, normalizeDocumentComments(splitDocument.comments));
-      window.requestAnimationFrame(() => {
-        if (rightSplitApplyRunRef.current === runId) {
-          restoreCanvasScrollState(rightCanvasRef.current, splitTab?.scrollState);
-        }
-      });
-      window.setTimeout(() => {
-        if (rightSplitApplyRunRef.current === runId) {
-          rightSplitApplyingRef.current = false;
-        }
-      }, 0);
+    rightPaneEditorHydrator.hydrate({
+      comments: splitDocument.comments,
+      editorJson: splitTab?.editorJson,
+      html: splitDocument.html || "<p></p>",
+      scrollState: splitTab?.scrollState,
+      selectionState: splitTab?.selectionState,
     });
   }, [rightSplitEditor, rightSplitTabId]);
 
@@ -1264,47 +1271,32 @@ export default function App() {
   const snapshotLiveTabs = useCallback(({ includeEditorJson = false } = {}) => {
     const activeId = activeTabIdRef.current;
     const splitId = rightSplitTabIdRef.current;
-    const activeUsesRightEditor = splitId === activeId
-      && documentTabRuntimePort.readEditorSource(activeId) === "right";
-    const activeDocument = activeUsesRightEditor
-      ? (getRightSplitSaveDocumentRef.current?.() || documentStateRef.current)
-      : (getSaveDocumentRef.current?.() || documentStateRef.current);
-    const liveTabs = new Map();
-    liveTabs.set(activeId, {
-      document: activeDocument,
-      path: currentPathRef.current,
-      dirty: dirtyRef.current,
-      editorJson: includeEditorJson
-        ? ((activeUsesRightEditor ? rightSplitEditor : editor)?.getJSON?.() || null)
-        : undefined,
-      scrollState: readCanvasScrollState(activeUsesRightEditor ? rightCanvasRef.current : mainCanvasRef.current),
+    return captureDocumentWorkspaceSnapshot({
+      activeDocument: documentStateRef.current,
+      activeTabId: activeId,
+      currentDirty: dirtyRef.current,
+      currentPath: currentPathRef.current,
+      estimateSerializedBytes,
+      includeEditorJson,
+      mainPane: {
+        serializeDocument: () => getSaveDocumentRef.current?.(),
+        readEditorJson: () => editor?.getJSON?.() || null,
+        readScrollState: () => readCanvasScrollState(mainCanvasRef.current),
+      },
+      revisionPort: documentRevisionPort,
+      rightPane: {
+        serializeDocument: () => getRightSplitSaveDocumentRef.current?.(),
+        readEditorJson: () => rightSplitEditor?.getJSON?.() || null,
+        readScrollState: () => readCanvasScrollState(rightCanvasRef.current),
+        readSelectionState: () => readEditorSelectionState(rightSplitEditor),
+      },
+      rightTabId: splitId,
+      runtimePort: {
+        isDirty: (tabId) => documentDirtyPort.isDirty(tabId),
+        readEditorSource: (tabId) => documentTabRuntimePort.readEditorSource(tabId),
+      },
+      tabs: openTabsRef.current,
     });
-    if (splitId && splitId !== activeId) {
-      const splitDocument = getRightSplitSaveDocumentRef.current?.();
-      if (splitDocument) {
-        liveTabs.set(splitId, {
-          document: splitDocument,
-          dirty: documentDirtyPort.isDirty(splitId),
-          editorJson: includeEditorJson ? (rightSplitEditor?.getJSON?.() || null) : undefined,
-          scrollState: readCanvasScrollState(rightCanvasRef.current),
-          selectionState: readEditorSelectionState(rightSplitEditor),
-        });
-      }
-    }
-    const documentSnapshots = openTabsRef.current.map((tab) => {
-      const live = liveTabs.get(tab.id);
-      if (!live) return tab;
-      const nextEditorJson = includeEditorJson ? (live.editorJson || tab.editorJson) : tab.editorJson;
-      return {
-        ...tab,
-        ...live,
-        path: live.path ?? tab.path,
-        title: live.document?.title || "未命名信笺",
-        editorJson: nextEditorJson,
-        editorJsonBytes: includeEditorJson ? estimateSerializedBytes(nextEditorJson) : tab.editorJsonBytes,
-      };
-    });
-    return snapshotTabsWithRevisions(documentSnapshots, documentRevisionPort);
   }, [editor, rightSplitEditor]);
 
   const openSearch = useCallback((scope = "document", options = {}) => {
@@ -1645,16 +1637,19 @@ export default function App() {
 
   const getSaveDocument = useCallback(() => {
     const sourceDocument = documentStateRef.current;
-    const html = stripDerivedKnowledgeDataFromHtml(editor?.getHTML() || sourceDocument.html || "<p></p>");
-    const title = sourceDocument.title?.trim() || inferTitle(editor?.getText() || "");
-    return normalizeDocument({
-      ...sourceDocument,
-      title,
-      html,
-      comments: getDocumentComments(editor, sourceDocument.comments),
-      updatedAt: documentRevisionPort.readLiveUpdatedAt(activeTabIdRef.current)
-        || sourceDocument.updatedAt,
-    }, letterTemplates);
+    return serializePaneDocument({
+      inferTitle,
+      letterTemplates,
+      liveUpdatedAt: documentRevisionPort.readLiveUpdatedAt(activeTabIdRef.current),
+      normalizeDocument,
+      pane: {
+        readComments: (fallback) => getDocumentComments(editor, fallback),
+        readHtml: () => editor?.getHTML(),
+        readText: () => editor?.getText(),
+      },
+      sourceDocument,
+      stripDerivedHtml: stripDerivedKnowledgeDataFromHtml,
+    });
   }, [editor, letterTemplates]);
 
   const getRightSplitSaveDocument = useCallback(() => {
@@ -1666,16 +1661,19 @@ export default function App() {
     if (!sourceDocument) {
       return null;
     }
-    const html = stripDerivedKnowledgeDataFromHtml(rightSplitEditor?.getHTML() || sourceDocument.html || "<p></p>");
-    const title = sourceDocument.title?.trim() || inferTitle(rightSplitEditor?.getText() || "");
-    return normalizeDocument({
-      ...sourceDocument,
-      title,
-      html,
-      comments: getDocumentComments(rightSplitEditor, sourceDocument.comments),
-      updatedAt: documentRevisionPort.readLiveUpdatedAt(splitId)
-        || sourceDocument.updatedAt,
-    }, letterTemplates);
+    return serializePaneDocument({
+      inferTitle,
+      letterTemplates,
+      liveUpdatedAt: documentRevisionPort.readLiveUpdatedAt(splitId),
+      normalizeDocument,
+      pane: {
+        readComments: (fallback) => getDocumentComments(rightSplitEditor, fallback),
+        readHtml: () => rightSplitEditor?.getHTML(),
+        readText: () => rightSplitEditor?.getText(),
+      },
+      sourceDocument,
+      stripDerivedHtml: stripDerivedKnowledgeDataFromHtml,
+    });
   }, [letterTemplates, rightSplitDocument, rightSplitEditor]);
 
   useEffect(() => {
@@ -1779,13 +1777,7 @@ export default function App() {
     window.addEventListener("pointercancel", stop, true);
   }, [updateDocumentSplitRatio]);
 
-  const commitWorkspaceGroups = useCallback((nextGroups) => {
-    const next = nextGroups || workspaceGroupsRef.current;
-    workspaceGroupsRef.current = next;
-    rightSplitTabIdRef.current = activeSecondaryDocumentTabId(next);
-    setWorkspaceGroups(next);
-    return next;
-  }, []);
+  const commitWorkspaceGroups = groupStorePort.commitWorkspaceGroups;
 
   useEffect(() => {
     if (!openTabs.length) return;
