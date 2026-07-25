@@ -47,6 +47,7 @@ import {
 } from "./app-shell/index.js";
 import {
   useClearUpdateResultReset,
+  createWorkspaceFileController,
   useCitationActions,
   useAiConfigActions,
   useAiConfigDerived,
@@ -233,8 +234,7 @@ import {
   summarizeSessionTabs,
   workspaceDocumentView,
 } from "./document-workspace/model.js";
-import { replacePathPrefix } from "./document-workspace/path-model.js";
-import { normalizeSessionDiskRevision, sameDiskRevision } from "./document-workspace/revisions.js";
+import { normalizeSessionDiskRevision } from "./document-workspace/revisions.js";
 
 
 export default function App() {
@@ -465,12 +465,37 @@ export default function App() {
   const updateAutoCheckedRef = useUpdateAutoCheckRef();
   const getSaveDocumentRef = useRef(null);
   const getRightSplitSaveDocumentRef = useRef(null);
-  const refreshFolderRef = useRef(null);
+  const folderStateRef = useRef(folderState);
   const folderPathRef = useRef(folderState.path);
   const expandedFoldersRef = useRef(expandedFolders);
   const folderRequestControllerRef = useRef(createLatestRequestController());
   const folderBranchRequestControllerRef = useRef(createLatestRequestController());
   const diskRevisionRequestControllerRef = useRef(createLatestRequestController());
+  const workspaceFileControllerRef = useRef(null);
+  const workspaceFileLifecyclePort = useMemo(() => Object.freeze({
+    cancelWorkspaceSearch: (...args) => (
+      workspaceFileControllerRef.current.lifecyclePort
+        .cancelWorkspaceSearch(...args)
+    ),
+    handleWorkspaceChanged: (...args) => (
+      workspaceFileControllerRef.current.lifecyclePort
+        .handleWorkspaceChanged(...args)
+    ),
+    restoreSessionFolder: (...args) => (
+      workspaceFileControllerRef.current.lifecyclePort
+        .restoreSessionFolder(...args)
+    ),
+    searchWorkspace: (...args) => (
+      workspaceFileControllerRef.current.lifecyclePort.searchWorkspace(...args)
+    ),
+    verifyOpenDocuments: (...args) => (
+      workspaceFileControllerRef.current.lifecyclePort
+        .verifyOpenDocuments(...args)
+    ),
+    watchWorkspace: (...args) => (
+      workspaceFileControllerRef.current.lifecyclePort.watchWorkspace(...args)
+    ),
+  }), []);
   const researchRequestControllerRefs = useResearchRequestControllerRefs();
   const applyDocumentRunRef = useRef(0);
   const rightSplitSelectionRef = useRef(null);
@@ -529,6 +554,7 @@ export default function App() {
   const autosaveErrorAtRef = useRef(0);
   const tabClosePendingIdsRef = useRef(new Set());
   const workspaceSearchRequestRef = useRef("");
+  folderStateRef.current = folderState;
   folderPathRef.current = folderState.path;
   expandedFoldersRef.current = expandedFolders;
   const closeInternalLinkPicker = useCallback(() => setInternalLinkPicker(null), []);
@@ -1315,107 +1341,106 @@ export default function App() {
     if (searchMode !== "workspace" || !writingWorkspaceRoot) return undefined;
     const query = workspaceSearchQuery.trim();
     const previousRequest = workspaceSearchRequestRef.current;
-    if (previousRequest) bridge.cancelFolderSearch?.(writingWorkspaceRoot, previousRequest).catch?.(() => {});
+    if (previousRequest) {
+      workspaceFileLifecyclePort
+        .cancelWorkspaceSearch(writingWorkspaceRoot, previousRequest)
+        ?.catch?.(() => {});
+    }
     if (!query) {
-      setWorkspaceSearchState({ loading: false, results: [], error: "", requestId: "" });
+      setWorkspaceSearchState({
+        loading: false,
+        results: [],
+        error: "",
+        requestId: "",
+      });
       return undefined;
     }
     const requestId = `search-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     workspaceSearchRequestRef.current = requestId;
-    setWorkspaceSearchState({ loading: true, results: [], error: "", requestId });
+    setWorkspaceSearchState({
+      loading: true,
+      results: [],
+      error: "",
+      requestId,
+    });
     const timer = window.setTimeout(async () => {
       try {
-        const overrides = snapshotLiveTabs().filter((tab) => tab.path && tab.dirty).map((tab) => ({ path: tab.path, document: tab.document }));
-        const result = await bridge.searchFolder?.({ folderPath: writingWorkspaceRoot, query, requestId, overrides, limit: 100 });
-        if (workspaceSearchRequestRef.current !== requestId || result?.canceled) return;
-        const results = (result?.results || []).map((item) => ({
-          ...item,
-          query: result?.query || query,
-          snippetRanges: item.snippetMatchStart >= 0 ? [{ from: item.snippetMatchStart, to: item.snippetMatchStart + item.snippetMatchLength }] : [],
-        }));
-        setWorkspaceSearchState({ loading: false, results, error: "", requestId });
+        const result = await workspaceFileLifecyclePort.searchWorkspace({
+          rootPath: writingWorkspaceRoot,
+          query,
+          requestId,
+          limit: 100,
+        });
+        if (
+          workspaceSearchRequestRef.current !== requestId
+          || result?.canceled
+        ) return;
+        setWorkspaceSearchState({
+          loading: false,
+          results: result?.results || [],
+          error: "",
+          requestId,
+        });
       } catch (error) {
-        if (workspaceSearchRequestRef.current === requestId) setWorkspaceSearchState({ loading: false, results: [], error: error?.message || "工作区搜索失败", requestId });
+        if (workspaceSearchRequestRef.current === requestId) {
+          setWorkspaceSearchState({
+            loading: false,
+            results: [],
+            error: error?.message || "工作区搜索失败",
+            requestId,
+          });
+        }
       }
     }, 180);
     return () => {
       window.clearTimeout(timer);
-      bridge.cancelFolderSearch?.(writingWorkspaceRoot, requestId).catch?.(() => {});
+      workspaceFileLifecyclePort
+        .cancelWorkspaceSearch(writingWorkspaceRoot, requestId)
+        ?.catch?.(() => {});
     };
-  }, [searchMode, snapshotLiveTabs, workspaceSearchQuery, writingWorkspaceRoot]);
-
-  const verifyOpenDiskRevisions = useCallback(async () => {
-    const request = diskRevisionRequestControllerRef.current.begin("open-documents");
-    const checks = snapshotLiveTabs().filter((tab) => tab.path).map((tab) => ({
-      id: tab.id,
-      path: tab.path,
-      expected: documentRevisionPort.readDiskRevision(tab.id) || tab.diskRevision || null,
-    }));
-    const outcomes = await Promise.all(checks.map(async (check) => {
-      try {
-        const result = await bridge.getDocumentRevision?.(check.path);
-        return { ...check, actual: result?.diskRevision || null, failed: false };
-      } catch {
-        return { ...check, actual: null, failed: true };
-      }
-    }));
-    if (!diskRevisionRequestControllerRef.current.isCurrent(request)) return new Set();
-    const outcomeById = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
-    const changedIds = new Set();
-    const newlyChangedIds = new Set();
-    const nextTabs = openTabsRef.current.map((tab) => {
-      const outcome = outcomeById.get(tab.id);
-      if (!outcome || !sameDocumentPath(tab.path, outcome.path)) return tab;
-      const currentExpected = documentRevisionPort.readDiskRevision(tab.id) || tab.diskRevision || null;
-      const expectedStillCurrent = outcome.expected
-        ? Boolean(currentExpected && sameDiskRevision(currentExpected, outcome.expected))
-        : !currentExpected;
-      if (!expectedStillCurrent) return tab;
-      if (!outcome.expected && outcome.actual && !outcome.failed) {
-        documentRevisionPort.commitDiskRevision(tab.id, outcome.actual);
-      }
-      const externalChanged = Boolean(
-        outcome.expected
-        && (outcome.failed || !sameDiskRevision(outcome.actual, outcome.expected)),
-      );
-      if (externalChanged) {
-        changedIds.add(tab.id);
-        if (!tab.externalChanged) newlyChangedIds.add(tab.id);
-      }
-      return tab.externalChanged === externalChanged ? tab : { ...tab, externalChanged };
-    });
-    openTabsRef.current = nextTabs;
-    setOpenTabs(nextTabs);
-    diskRevisionRequestControllerRef.current.finish(request);
-    const focusedSecondary = workspaceGroupsRef.current.focusedGroup === WORKSPACE_GROUP_ID.SECONDARY
-      ? getActiveWorkspaceView(workspaceGroupsRef.current, WORKSPACE_GROUP_ID.SECONDARY)
-      : null;
-    const activeId = focusedSecondary?.kind === WORKSPACE_VIEW_KIND.DOCUMENT
-      ? focusedSecondary.tabId
-      : activeTabIdRef.current;
-    if (newlyChangedIds.has(activeId)) {
-      showStatus("检测到磁盘上的外部版本；保存时会保护两个版本", "warning");
-    }
-    return changedIds;
-  }, [showStatus, snapshotLiveTabs]);
+  }, [
+    searchMode,
+    snapshotLiveTabs,
+    workspaceFileLifecyclePort,
+    workspaceSearchQuery,
+    writingWorkspaceRoot,
+  ]);
 
   useEffect(() => {
-    bridge.watchWorkspace?.(writingWorkspaceRoot || "").catch?.(() => {});
+    workspaceFileLifecyclePort
+      .watchWorkspace(writingWorkspaceRoot || "")
+      ?.catch?.(() => {});
     if (!writingWorkspaceRoot) return undefined;
     const onChanged = (payload = {}) => {
-      if (payload.rootPath && !sameDocumentPath(payload.rootPath, writingWorkspaceRoot)) return;
-      refreshFolderRef.current?.();
-      verifyOpenDiskRevisions();
+      workspaceFileLifecyclePort.handleWorkspaceChanged(
+        payload,
+        writingWorkspaceRoot,
+      );
     };
     const unsubscribeChanged = bridge.onWorkspaceChanged?.(onChanged);
-    const unsubscribeError = bridge.onWorkspaceWatchError?.((payload) => showStatus(payload?.message || "工作区文件监听不可用；仍会在保存前校验", "warning"));
+    const unsubscribeError = bridge.onWorkspaceWatchError?.((payload) => (
+      showStatus(
+        payload?.message || "工作区文件监听不可用；仍会在保存前校验",
+        "warning",
+      )
+    ));
     return () => {
       unsubscribeChanged?.();
       unsubscribeError?.();
     };
-  }, [showStatus, verifyOpenDiskRevisions, writingWorkspaceRoot]);
+  }, [
+    showStatus,
+    snapshotLiveTabs,
+    workspaceFileLifecyclePort,
+    writingWorkspaceRoot,
+  ]);
 
-  useEffect(() => bridge.onWindowFocus?.(() => verifyOpenDiskRevisions()), [verifyOpenDiskRevisions]);
+  useEffect(
+    () => bridge.onWindowFocus?.(
+      () => workspaceFileLifecyclePort.verifyOpenDocuments(),
+    ),
+    [showStatus, snapshotLiveTabs, workspaceFileLifecyclePort],
+  );
 
   const sessionPersistenceDescriptor = useMemo(
     () => describeDocumentSessionPersistence({
@@ -1717,185 +1742,6 @@ export default function App() {
   }, [updateDocumentSplitRatio]);
 
   const commitWorkspaceGroups = groupStorePort.commitWorkspaceGroups;
-  const sessionFolderLifecyclePort = useMemo(() => Object.freeze({
-    async restoreSessionFolder({
-      activePath,
-      commitSessionPatch,
-      isActiveRestore,
-      savedFolderPath,
-    }) {
-      let folderPath = savedFolderPath;
-      let defaultFolderPath = "";
-      if (!folderPath) {
-        try {
-          const paths = await bridge.getPaths?.();
-          defaultFolderPath = paths?.documents || "";
-          folderPath = defaultFolderPath;
-        } catch {
-          folderPath = "";
-        }
-      }
-      if (!folderPath) return;
-
-      const folderRestoreRequest = folderRequestControllerRef.current.begin("view");
-      folderPathRef.current = folderPath;
-      bridge.debugLog?.("renderer:restore:folder-selected", {
-        folderPath,
-        source: savedFolderPath ? "session" : "documents-default",
-      });
-      if (
-        isActiveRestore()
-        && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
-      ) {
-        setFolderState((previous) => ({
-          ...previous,
-          rootPath: previous.rootPath || folderPath,
-          path: folderPath,
-          loading: true,
-        }));
-      }
-      try {
-        const result = await listFolderWithTimeout(folderPath);
-        if (
-          isActiveRestore()
-          && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
-          && !result?.canceled
-        ) {
-          bridge.debugLog?.("renderer:restore:folder-applied", {
-            folderPath,
-            folders: result.folders?.length || 0,
-            files: result.files?.length || 0,
-          });
-          const restoredFolderPath = result.folderPath || folderPath;
-          folderPathRef.current = restoredFolderPath;
-          setFolderState({
-            rootPath: folderPath,
-            path: restoredFolderPath,
-            parentPath: result.parentPath || "",
-            folders: result.folders || [],
-            files: result.files || [],
-            entries: result.entries || [
-              ...(result.folders || []),
-              ...(result.files || []),
-            ],
-            loading: false,
-            error: "",
-          });
-        } else if (
-          isActiveRestore()
-          && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
-        ) {
-          throw new Error("folder list canceled");
-        }
-      } catch (error) {
-        bridge.debugLog?.("renderer:restore:folder-fallback", {
-          folderPath,
-          message: error?.message,
-        });
-        if (
-          isActiveRestore()
-          && folderRequestControllerRef.current.isCurrent(folderRestoreRequest)
-        ) {
-          try {
-            const paths = defaultFolderPath
-              ? { documents: defaultFolderPath }
-              : await bridge.getPaths?.();
-            const fallbackPath = paths?.documents || "";
-            const fallback = fallbackPath
-              ? await listFolderWithTimeout(fallbackPath)
-              : null;
-            if (!folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
-              // A newer folder navigation owns the tree now.
-            } else if (fallbackPath && !fallback?.canceled) {
-              folderPathRef.current = fallback.folderPath || fallbackPath;
-              setFolderState({
-                rootPath: fallback.folderPath || fallbackPath,
-                path: fallback.folderPath || fallbackPath,
-                parentPath: fallback.parentPath || "",
-                folders: fallback.folders || [],
-                files: fallback.files || [],
-                entries: fallback.entries || [
-                  ...(fallback.folders || []),
-                  ...(fallback.files || []),
-                ],
-                loading: false,
-                error: "",
-              });
-              commitSessionPatch({
-                folderPath: fallback.folderPath || fallbackPath,
-                activePath: "",
-              });
-            } else {
-              folderPathRef.current = folderPath;
-              setFolderState({
-                rootPath: folderPath,
-                path: folderPath,
-                parentPath: "",
-                files: [],
-                folders: [],
-                entries: [],
-                loading: false,
-                error: "文件树读取超时或失败",
-              });
-            }
-          } catch {
-            if (folderRequestControllerRef.current.isCurrent(folderRestoreRequest)) {
-              folderPathRef.current = folderPath;
-              setFolderState({
-                rootPath: folderPath,
-                path: folderPath,
-                parentPath: "",
-                files: [],
-                folders: [],
-                entries: [],
-                loading: false,
-                error: "文件树读取超时或失败",
-              });
-            }
-          }
-        }
-      } finally {
-        folderRequestControllerRef.current.finish(folderRestoreRequest);
-      }
-    },
-  }), []);
-  const documentSessionController = useMemo(
-    () => createDocumentSessionController({
-      applyDocument,
-      debugPort: {
-        log: (event, payload) => bridge.debugLog?.(event, payload),
-      },
-      documentIoPort: {
-        getDocumentRevision: (path) => bridge.getDocumentRevision?.(path),
-        openDocumentPath: (path) => bridge.openDocumentPath(path),
-      },
-      documentRuntimePort: documentTabRuntimePort,
-      documentStorePort,
-      folderLifecyclePort: sessionFolderLifecyclePort,
-      groupStorePort,
-      letterTemplates,
-      researchStatePort: {
-        commitActiveItem: setActiveLibraryItem,
-        commitItem: (viewId, item) => {
-          setResearchItemsByViewId((previous) => ({
-            ...previous,
-            [viewId]: item,
-          }));
-        },
-      },
-      sessionStatePort,
-    }),
-    [
-      applyDocument,
-      documentStorePort,
-      documentTabRuntimePort,
-      groupStorePort,
-      letterTemplates,
-      sessionFolderLifecyclePort,
-      sessionStatePort,
-    ],
-  );
-  documentSessionControllerRef.current = documentSessionController;
   const workspaceGroupsController = useMemo(
     () => createWorkspaceGroupsController({
       documentStorePort,
@@ -2011,14 +1857,6 @@ export default function App() {
     ],
   );
 
-  useEffect(() => {
-    if (!editor || sessionRestoredRef.current) {
-      return undefined;
-    }
-    const restoreOperation = documentSessionController.beginRestore();
-    return () => restoreOperation?.cancel();
-  }, [applyDocument, commitWorkspaceGroups, editor, letterTemplates, persistSession]);
-
   const handleSelectTab = useCallback(
     (tabId) => selectWorkspaceTab(tabId, {
       applyDocument,
@@ -2026,6 +1864,198 @@ export default function App() {
     }),
     [applyDocument, selectWorkspaceTab, snapshotLiveTabs],
   );
+
+  const workspaceFileController = useMemo(
+    () => createWorkspaceFileController({
+      documentPort: {
+        addOrActivate: addOrActivateDocumentTab,
+        applyDocument,
+        commitActiveTab: documentStorePort.commitActiveTabId,
+        commitCurrentPath: documentStorePort.commitCurrentPath,
+        commitDocument: documentStorePort.commitDocumentState,
+        commitTabs: documentStorePort.commitOpenTabs,
+        read: documentStorePort.read,
+        recordMutation: recordTabMutation,
+        selectTab: handleSelectTab,
+        snapshotTabs: snapshotLiveTabs,
+      },
+      factories: {
+        createBlank: () => createBlankDocument(
+          letterTemplates,
+          newDocumentTemplateId,
+        ),
+        createTab: createDocumentTab,
+        mergePersistedIdentity: mergePersistedDocumentIdentity,
+        summarizeTabs: summarizeSessionTabs,
+      },
+      folderPort: {
+        readExpanded: () => expandedFoldersRef.current,
+        readPath: () => folderPathRef.current,
+        readState: () => folderStateRef.current,
+        updateExpanded: (updater) => {
+          const previous = expandedFoldersRef.current;
+          const next = typeof updater === "function"
+            ? updater(previous)
+            : updater;
+          expandedFoldersRef.current = next;
+          setExpandedFolders(next);
+          return next;
+        },
+        updateState: (updater) => {
+          const previous = folderStateRef.current;
+          const next = typeof updater === "function"
+            ? updater(previous)
+            : updater;
+          folderStateRef.current = next;
+          setFolderState(next);
+          return next;
+        },
+        writeExpanded: (next) => {
+          expandedFoldersRef.current = next;
+        },
+        writePath: (next) => {
+          folderPathRef.current = next;
+        },
+      },
+      groupPort: {
+        clearRightSplit: () => {
+          rightSplitTabIdRef.current = "";
+          setRightSplitTabId("");
+        },
+        commitActivePane: setActivePane,
+        read: () => {
+          const state = groupStorePort.read();
+          const focusedSecondary = state.groups.focusedGroup
+            === WORKSPACE_GROUP_ID.SECONDARY
+            ? getActiveWorkspaceView(
+              state.groups,
+              WORKSPACE_GROUP_ID.SECONDARY,
+            )
+            : null;
+          return {
+            focusedDocumentTabId: focusedSecondary?.kind
+              === WORKSPACE_VIEW_KIND.DOCUMENT
+              ? focusedSecondary.tabId
+              : "",
+            rightSplitTabId: rightSplitTabIdRef.current,
+          };
+        },
+      },
+      ioPort: {
+        backupDocument: (path) => bridge.backupDocument?.(path),
+        cancelFolderSearch: (rootPath, requestId) => (
+          bridge.cancelFolderSearch?.(rootPath, requestId)
+        ),
+        createDocumentInFolder: (path, title, document) => (
+          bridge.createDocumentInFolder?.(path, title, document)
+        ),
+        createFolder: (path, name) => bridge.createFolder?.(path, name),
+        debugLog: (event, payload) => bridge.debugLog?.(event, payload),
+        deleteEntry: (path) => bridge.deleteEntry?.(path),
+        getDocumentRevision: (path) => bridge.getDocumentRevision?.(path),
+        getPaths: () => bridge.getPaths?.(),
+        importDocument: () => bridge.importDocument?.(),
+        listFolder: listFolderWithTimeout,
+        moveEntry: (path, targetFolderPath) => (
+          bridge.moveEntry?.(path, targetFolderPath)
+        ),
+        openDocument: () => bridge.openDocument(),
+        openDocumentPath: (path) => bridge.openDocumentPath(path),
+        openFolder: () => bridge.openFolder(),
+        renameEntry: (path, nextName) => bridge.renameEntry?.(path, nextName),
+        searchFolder: (options) => bridge.searchFolder?.(options),
+        watchWorkspace: (rootPath) => bridge.watchWorkspace?.(rootPath),
+      },
+      requestPorts: {
+        branch: folderBranchRequestControllerRef.current,
+        disk: diskRevisionRequestControllerRef.current,
+        view: folderRequestControllerRef.current,
+      },
+      revisionPort: documentRevisionPort,
+      sessionPort: {
+        commitPatch: persistSession,
+      },
+      tabLifecyclePort: {
+        releaseRuntime: releaseTabRuntimeState,
+      },
+      uiPort: {
+        icons: {
+          filePlus: FilePlus,
+          folderPlus: FolderPlus,
+          pencil: Pencil,
+        },
+        prompt: showPromptDialog,
+        status: showStatus,
+      },
+    }),
+    [
+      addOrActivateDocumentTab,
+      applyDocument,
+      documentStorePort,
+      groupStorePort,
+      handleSelectTab,
+      letterTemplates,
+      newDocumentTemplateId,
+      persistSession,
+      recordTabMutation,
+      releaseTabRuntimeState,
+      showPromptDialog,
+      showStatus,
+      snapshotLiveTabs,
+    ],
+  );
+  workspaceFileControllerRef.current = workspaceFileController;
+  const {
+    mutationPort: workspaceFileMutationPort,
+    navigationPort: workspaceFileNavigationPort,
+    openPort: workspaceFileOpenPort,
+  } = workspaceFileController;
+
+  const documentSessionController = useMemo(
+    () => createDocumentSessionController({
+      applyDocument,
+      debugPort: {
+        log: (event, payload) => bridge.debugLog?.(event, payload),
+      },
+      documentIoPort: {
+        getDocumentRevision: (path) => bridge.getDocumentRevision?.(path),
+        openDocumentPath: (path) => bridge.openDocumentPath(path),
+      },
+      documentRuntimePort: documentTabRuntimePort,
+      documentStorePort,
+      folderLifecyclePort: workspaceFileLifecyclePort,
+      groupStorePort,
+      letterTemplates,
+      researchStatePort: {
+        commitActiveItem: setActiveLibraryItem,
+        commitItem: (viewId, item) => {
+          setResearchItemsByViewId((previous) => ({
+            ...previous,
+            [viewId]: item,
+          }));
+        },
+      },
+      sessionStatePort,
+    }),
+    [
+      applyDocument,
+      documentStorePort,
+      documentTabRuntimePort,
+      groupStorePort,
+      letterTemplates,
+      sessionStatePort,
+      workspaceFileLifecyclePort,
+    ],
+  );
+  documentSessionControllerRef.current = documentSessionController;
+
+  useEffect(() => {
+    if (!editor || sessionRestoredRef.current) {
+      return undefined;
+    }
+    const restoreOperation = documentSessionController.beginRestore();
+    return () => restoreOperation?.cancel();
+  }, [applyDocument, commitWorkspaceGroups, editor, letterTemplates, persistSession]);
 
   const handleSelectGroupView = useCallback(
     (groupId, viewId) => selectWorkspaceGroupView(
@@ -2182,219 +2212,13 @@ export default function App() {
     [closeWorkspaceGroupView, handleCloseTab],
   );
 
-  const handleNew = useCallback((groupId) => {
-    const tabId = addOrActivateDocumentTab(
-      createBlankDocument(letterTemplates, newDocumentTemplateId),
-      "",
-      false,
-      groupId ? { groupId } : {},
-    );
-    if (!tabId) return;
-    showStatus("已新建空白信笺", "success");
-  }, [addOrActivateDocumentTab, letterTemplates, newDocumentTemplateId, showStatus]);
-
-  const handleOpen = useCallback(async () => {
-    const result = await bridge.openDocument();
-    if (result?.canceled) {
-      return;
-    }
-    const tabId = addOrActivateDocumentTab(result.document, result.path, false, { diskRevision: result.diskRevision, readOnly: result.readOnly });
-    if (!tabId) return;
-    showStatus("文档已打开", "success");
-  }, [addOrActivateDocumentTab, showStatus]);
-
-  const handleImportDocument = useCallback(async () => {
-    const result = await bridge.importDocument?.();
-    if (result?.canceled || !result?.document) return;
-    const tabId = addOrActivateDocumentTab(result.document, "", true, { replaceBlank: true });
-    if (!tabId) return;
-    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
-    showStatus(warnings.length ? `文档已导入；${warnings.length} 项内容已降级，保存后才会生成 .letterpaper` : "文档已导入；保存后才会生成 .letterpaper", warnings.length ? "warning" : "success");
-  }, [addOrActivateDocumentTab, showStatus]);
-
-  const handleOpenFolder = useCallback(async () => {
-    const request = folderRequestControllerRef.current.begin("view");
-    try {
-      const result = await bridge.openFolder();
-      if (!folderRequestControllerRef.current.isCurrent(request) || result?.canceled) return;
-      const nextPath = result.folderPath || "";
-      folderPathRef.current = nextPath;
-      folderBranchRequestControllerRef.current.invalidateAll();
-      expandedFoldersRef.current = {};
-      setFolderState({
-        rootPath: nextPath,
-        path: nextPath,
-        parentPath: result.parentPath || "",
-        folders: result.folders || [],
-        files: result.files || [],
-        entries: result.entries || [...(result.folders || []), ...(result.files || [])],
-        loading: false,
-        error: "",
-      });
-      setExpandedFolders({});
-      showStatus("文件夹已打开", "success");
-    } catch (error) {
-      if (folderRequestControllerRef.current.isCurrent(request)) {
-        showStatus(error?.message || "文件夹打开失败", "warning");
-      }
-    } finally {
-      folderRequestControllerRef.current.finish(request);
-    }
-  }, [showStatus]);
-
-  const handleOpenFolderPath = useCallback(async (path) => {
-    if (!path) return;
-    const request = folderRequestControllerRef.current.begin("view");
-    folderPathRef.current = path;
-    setFolderState((previous) => ({
-      ...previous,
-      path,
-      loading: true,
-      error: "",
-    }));
-    try {
-      const result = await listFolderWithTimeout(path);
-      if (!folderRequestControllerRef.current.isCurrent(request)) return;
-      if (result?.canceled) throw new Error("无法打开这个文件夹");
-      const nextPath = result.folderPath || path;
-      folderPathRef.current = nextPath;
-      folderBranchRequestControllerRef.current.invalidateAll();
-      expandedFoldersRef.current = {};
-      setFolderState((previous) => ({
-        rootPath: previous.rootPath || nextPath,
-        path: nextPath,
-        parentPath: result.parentPath || "",
-        folders: result.folders || [],
-        files: result.files || [],
-        entries: result.entries || [...(result.folders || []), ...(result.files || [])],
-        loading: false,
-        error: "",
-      }));
-      setExpandedFolders({});
-    } catch (error) {
-      if (!folderRequestControllerRef.current.isCurrent(request)) return;
-      setFolderState((previous) => ({
-        ...previous,
-        loading: false,
-        error: error?.message || "文件夹读取失败",
-      }));
-      showStatus(error?.message || "无法打开这个文件夹", "warning");
-    } finally {
-      folderRequestControllerRef.current.finish(request);
-    }
-  }, [showStatus]);
-
-  const refreshFolder = useCallback(async () => {
-    const targetPath = folderPathRef.current;
-    if (!targetPath) return;
-    const request = folderRequestControllerRef.current.begin("view");
-    try {
-      const result = await listFolderWithTimeout(targetPath);
-      if (
-        !folderRequestControllerRef.current.isCurrent(request)
-        || !sameDocumentPath(folderPathRef.current, targetPath)
-      ) return;
-      if (result?.canceled) throw new Error("文件树刷新超时");
-      setFolderState((previous) => ({
-        rootPath: previous.rootPath || result.folderPath || targetPath,
-        path: result.folderPath || targetPath,
-        parentPath: result.parentPath || "",
-        folders: result.folders || [],
-        files: result.files || [],
-        entries: result.entries || [...(result.folders || []), ...(result.files || [])],
-        loading: false,
-        error: "",
-      }));
-    } catch (error) {
-      if (
-        folderRequestControllerRef.current.isCurrent(request)
-        && sameDocumentPath(folderPathRef.current, targetPath)
-      ) {
-        setFolderState((previous) => ({
-          ...previous,
-          loading: false,
-          error: error?.message || "文件树刷新失败",
-        }));
-      }
-    } finally {
-      folderRequestControllerRef.current.finish(request);
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshFolderRef.current = refreshFolder;
-  }, [refreshFolder]);
-
-  const refreshTreeAfterEntryChange = useCallback(async (folderPath = "") => {
-    await refreshFolder();
-    if (!folderPath || !expandedFoldersRef.current[folderPath]?.expanded) return;
-    const request = folderBranchRequestControllerRef.current.begin(folderPath);
-    try {
-      const result = await listFolderWithTimeout(folderPath);
-      if (!folderBranchRequestControllerRef.current.isCurrent(request)) return;
-      if (result?.canceled) throw new Error("文件夹读取超时");
-      setExpandedFolders((state) => {
-        if (!state[folderPath]?.expanded) return state;
-        const next = {
-          ...state,
-          [folderPath]: {
-            ...state[folderPath],
-            loading: false,
-            error: "",
-            entries: result.entries || [...(result.folders || []), ...(result.files || [])],
-          },
-        };
-        expandedFoldersRef.current = next;
-        return next;
-      });
-    } catch (error) {
-      if (!folderBranchRequestControllerRef.current.isCurrent(request)) return;
-      setExpandedFolders((state) => {
-        if (!state[folderPath]?.expanded) return state;
-        const next = {
-          ...state,
-          [folderPath]: { ...state[folderPath], loading: false, error: error?.message || "文件夹读取失败" },
-        };
-        expandedFoldersRef.current = next;
-        return next;
-      });
-    } finally {
-      folderBranchRequestControllerRef.current.finish(request);
-    }
-  }, [refreshFolder]);
-
-  const handleOpenFolderFile = useCallback(
-    async (path) => {
-      const existingTab = openTabs.find((tab) => sameDocumentPath(tab.path, path));
-      if (existingTab) {
-        if (existingTab.id !== activeTabId) {
-          handleSelectTab(existingTab.id);
-        }
-        return existingTab.id;
-      }
-      const startedAt = window.performance?.now?.() || Date.now();
-      showStatus("正在打开文档...", "success");
-      const result = await bridge.openDocumentPath(path);
-      bridge.debugLog?.("renderer:document:open-path:return", {
-        path,
-        canceled: Boolean(result?.canceled),
-        hasDocument: Boolean(result?.document),
-        ipcMs: Math.round((window.performance?.now?.() || Date.now()) - startedAt),
-      });
-      if (result?.canceled || !result?.document) {
-        showStatus(result?.error ? `打开失败：${result.error}` : "这个文件不是笺间文档", "warning");
-        return;
-      }
-      const tabId = addOrActivateDocumentTab(result.document, result.path, false, { diskRevision: result.diskRevision, readOnly: result.readOnly });
-      if (!tabId) {
-        showStatus("标签栏已满，请先关闭一个信笺再打开文档", "warning");
-        return;
-      }
-      showStatus("文档已打开", "success");
-      return tabId;
-    },
-    [activeTabId, addOrActivateDocumentTab, handleSelectTab, openTabs, showStatus],
-  );
+  const handleNew = workspaceFileOpenPort.newDocument;
+  const handleOpen = workspaceFileOpenPort.openDocument;
+  const handleImportDocument = workspaceFileOpenPort.importDocument;
+  const handleOpenFolder = workspaceFileNavigationPort.chooseFolder;
+  const handleOpenFolderPath = workspaceFileNavigationPort.navigateFolder;
+  const refreshFolder = workspaceFileNavigationPort.refreshFolder;
+  const handleOpenFolderFile = workspaceFileOpenPort.openDocumentPath;
 
   const handleOpenWorkspaceSearchResult = useCallback(async (result) => {
     if (!result?.path) return;
@@ -2434,182 +2258,16 @@ export default function App() {
     if (next.activeMatch) targetEditor.chain().focus().setTextSelection(next.activeMatch.from).scrollIntoView().run();
   }, [editor, handleOpenFolderFile, workspaceSearchQuery]);
 
-  const handleCreateFolderInTree = useCallback(async (entry, interaction = {}) => {
-    const parentPath = entry?.path || folderState.path;
-    if (!parentPath) {
-      return;
-    }
-    const name = await showPromptDialog({
-      title: "新建子文件夹",
-      label: "文件夹名称",
-      defaultValue: "新建文件夹",
-      confirmLabel: "新建",
-      icon: FolderPlus,
-      returnFocusElement: interaction.returnFocusElement,
-    });
-    if (!name?.trim()) {
-      return;
-    }
-    const result = await bridge.createFolder?.(parentPath, name);
-    if (!result?.ok) {
-      showStatus(result?.message || "新建文件夹失败", "warning");
-      return;
-    }
-    await refreshTreeAfterEntryChange(parentPath);
-    showStatus("文件夹已新建", "success");
-  }, [folderState.path, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
-
-  const handleCreateDocumentInTree = useCallback(async (entry, interaction = {}) => {
-    const folderPath = entry?.path || folderState.path;
-    if (!folderPath) {
-      return;
-    }
-    const title = await showPromptDialog({
-      title: "新建信笺",
-      label: "信笺名称",
-      defaultValue: "未命名信笺",
-      confirmLabel: "新建",
-      icon: FilePlus,
-      returnFocusElement: interaction.returnFocusElement,
-    });
-    if (!title?.trim()) {
-      return;
-    }
-    const blank = createBlankDocument(letterTemplates, newDocumentTemplateId);
-    const result = await bridge.createDocumentInFolder?.(folderPath, title, blank);
-    if (!result?.ok) {
-      showStatus(result?.message || "新建信笺失败", "warning");
-      return;
-    }
-    await refreshTreeAfterEntryChange(folderPath);
-    const tabId = addOrActivateDocumentTab(result.document || { ...blank, title: title.trim() }, result.path, false, { diskRevision: result.diskRevision });
-    if (!tabId) {
-      showStatus("信笺已创建；标签栏已满，请关闭一个标签后从文件夹打开", "warning");
-      return;
-    }
-    showStatus("信笺已新建", "success");
-  }, [addOrActivateDocumentTab, folderState.path, letterTemplates, newDocumentTemplateId, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
-
-  const handleRenameTreeEntry = useCallback(async (entry, interaction = {}) => {
-    if (!entry?.path) {
-      return;
-    }
-    const currentName = entry.type === "file" ? (entry.displayName || entry.name.replace(/\.[^.]+$/, "")) : entry.name;
-    const nextName = await showPromptDialog({
-      title: "重命名",
-      label: entry.type === "file" ? "信笺名称" : "文件夹名称",
-      defaultValue: currentName,
-      confirmLabel: "保存",
-      icon: Pencil,
-      returnFocusElement: interaction.returnFocusElement,
-    });
-    if (!nextName?.trim() || nextName.trim() === currentName) {
-      return;
-    }
-    const result = await bridge.renameEntry?.(entry.path, nextName);
-    if (!result?.ok) {
-      showStatus(result?.message || "重命名失败", "warning");
-      return;
-    }
-
-    const renameUpdatedAt = new Date().toISOString();
-    if (entry.type === "file") {
-      openTabsRef.current
-        .filter((tab) => sameDocumentPath(tab.path, entry.path))
-        .forEach((tab) => recordTabMutation(tab.id, renameUpdatedAt));
-    }
-    const nextTabs = openTabsRef.current.map((tab) => {
-      if (!pathIsSameOrInside(tab.path, entry.path)) return tab;
-      return {
-        ...tab,
-        path: replacePathPrefix(tab.path, entry.path, result.path),
-        ...(entry.type === "file" ? {
-          title: nextName.trim(),
-          document: { ...tab.document, title: nextName.trim(), updatedAt: renameUpdatedAt },
-          dirty: true,
-        } : {}),
-      };
-    });
-    openTabsRef.current = nextTabs;
-    setOpenTabs(nextTabs);
-    if (pathIsSameOrInside(currentPathRef.current, entry.path)) {
-      const nextCurrentPath = replacePathPrefix(currentPathRef.current, entry.path, result.path);
-      currentPathRef.current = nextCurrentPath;
-      setCurrentPath(nextCurrentPath);
-      if (entry.type === "file") {
-        const nextDocument = {
-          ...documentStateRef.current,
-          title: nextName.trim(),
-          updatedAt: renameUpdatedAt,
-        };
-        documentStateRef.current = nextDocument;
-        setDocumentState(nextDocument);
-      }
-      persistSession({ activePath: nextCurrentPath });
-    }
-    if (entry.type === "folder") {
-      if (pathIsSameOrInside(folderPathRef.current, entry.path)) {
-        folderRequestControllerRef.current.invalidate("view");
-        folderPathRef.current = replacePathPrefix(folderPathRef.current, entry.path, result.path);
-      }
-      setFolderState((previous) => pathIsSameOrInside(previous.path, entry.path)
-        ? { ...previous, path: replacePathPrefix(previous.path, entry.path, result.path) }
-        : previous);
-      folderBranchRequestControllerRef.current.invalidateAll();
-      setExpandedFolders((previous) => {
-        const next = Object.fromEntries(Object.entries(previous).map(([folderPath, value]) => [
-          pathIsSameOrInside(folderPath, entry.path)
-            ? replacePathPrefix(folderPath, entry.path, result.path)
-            : folderPath,
-          value,
-        ]));
-        expandedFoldersRef.current = next;
-        return next;
-      });
-    }
-
-    await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
-    showStatus("已重命名", "success");
-  }, [folderState.path, persistSession, recordTabMutation, refreshTreeAfterEntryChange, showPromptDialog, showStatus]);
-
-  const handleBackupTreeDocument = useCallback(async (entry) => {
-    if (!entry?.path || entry.type !== "file") {
-      return;
-    }
-    const sourceTab = snapshotLiveTabs({ includeEditorJson: true }).find((tab) => sameDocumentPath(tab.path, entry.path));
-    if (sourceTab?.dirty) {
-      showStatus("请先保存这篇信笺，再复制备份，以便为原件和副本建立稳定身份", "warning");
-      return;
-    }
-    const result = await bridge.backupDocument?.(entry.path);
-    if (!result?.ok) {
-      showStatus(result?.message || "备份失败", "warning");
-      return;
-    }
-    if (sourceTab && result.sourceDocument && result.sourceDiskRevision) {
-      const nextTabs = openTabsRef.current.map((tab) => {
-        if (tab.id !== sourceTab.id) return tab;
-        const document = mergePersistedDocumentIdentity(tab.document, result.sourceDocument);
-        documentRevisionPort.commitDiskRevision(tab.id, result.sourceDiskRevision);
-        return { ...tab, document, diskRevision: result.sourceDiskRevision };
-      });
-      openTabsRef.current = nextTabs;
-      setOpenTabs(nextTabs);
-      if (sourceTab.id === activeTabIdRef.current) {
-        const document = mergePersistedDocumentIdentity(documentStateRef.current, result.sourceDocument);
-        documentStateRef.current = document;
-        setDocumentState(document);
-      }
-      persistSession({ tabs: summarizeSessionTabs(nextTabs) });
-    }
-    await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
-    showStatus("备份已复制到当前目录", "success");
-  }, [folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus, snapshotLiveTabs]);
+  const handleCreateFolderInTree = workspaceFileMutationPort.createFolder;
+  const handleCreateDocumentInTree = workspaceFileMutationPort.createDocument;
+  const handleRenameTreeEntry = workspaceFileMutationPort.renameEntry;
+  const handleBackupTreeDocument = workspaceFileMutationPort.backupDocument;
 
   const handleDeleteTreeEntry = useCallback(async (entry, interaction = {}) => {
     if (!entry?.path) {
       return;
     }
+    const fallbackFolderPath = folderStateRef.current.path;
     const initiallyAffected = openTabsRef.current.filter((tab) => pathIsSameOrInside(tab.path, entry.path));
     const affectedIds = initiallyAffected.map((tab) => tab.id);
     affectedIds.forEach((tabId) => tabClosePendingIdsRef.current.add(tabId));
@@ -2656,150 +2314,21 @@ export default function App() {
         showStatus("删除确认期间信笺又有修改，请再次确认", "warning");
         return;
       }
-      const result = await bridge.deleteEntry?.(entry.path);
-      if (!result?.ok) {
-        showStatus(result?.message || "删除失败", "warning");
-        return;
-      }
-
-      const removedTabs = snapshot.filter((tab) => pathIsSameOrInside(tab.path, entry.path));
-      if (removedTabs.length) {
-        let remainingTabs = snapshot.filter((tab) => !pathIsSameOrInside(tab.path, entry.path));
-        if (rightSplitTabIdRef.current && removedTabs.some((tab) => tab.id === rightSplitTabIdRef.current)) {
-          rightSplitTabIdRef.current = "";
-          setRightSplitTabId("");
-          setActivePane("main");
-        }
-        if (!remainingTabs.length) {
-          const blank = createBlankDocument(letterTemplates, newDocumentTemplateId);
-          remainingTabs = [createDocumentTab(blank)];
-        }
-        openTabsRef.current = remainingTabs;
-        setOpenTabs(remainingTabs);
-        removedTabs.forEach((tab) => releaseTabRuntimeState(tab.id));
-        if (removedTabs.some((tab) => tab.id === activeTabIdRef.current)) {
-          const nextTab = remainingTabs[0];
-          activeTabIdRef.current = nextTab.id;
-          setActiveTabId(nextTab.id);
-          applyDocument(nextTab.document, nextTab.path, nextTab.dirty, { editorJson: nextTab.editorJson, scrollState: nextTab.scrollState });
-          persistSession({ activePath: nextTab.path || nextTab.recoveryPath || "" });
-        }
-      }
-
-      await refreshTreeAfterEntryChange(result.folderPath || folderState.path);
-      showStatus("已删除", "success");
+      const result = await workspaceFileMutationPort.deleteOnDisk(entry);
+      if (!result) return;
+      await workspaceFileMutationPort.commitDeleteResult({
+        entry,
+        fallbackFolderPath,
+        result,
+        snapshot,
+      });
     } finally {
       affectedIds.forEach((tabId) => tabClosePendingIdsRef.current.delete(tabId));
     }
-  }, [applyDocument, folderState.path, letterTemplates, newDocumentTemplateId, persistSession, refreshTreeAfterEntryChange, releaseTabRuntimeState, showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave]);
+  }, [showConfirmDialog, showStatus, snapshotLiveTabs, waitForTabSave, workspaceFileMutationPort]);
 
-  const handleMoveTreeEntry = useCallback(async (entry, targetFolderPath) => {
-    if (!entry?.path || !targetFolderPath) {
-      return;
-    }
-    const result = await bridge.moveEntry?.(entry.path, targetFolderPath);
-    if (!result?.ok) {
-      showStatus(result?.message || "移动失败", "warning");
-      return;
-    }
-
-    const nextTabs = openTabsRef.current.map((tab) => (
-      pathIsSameOrInside(tab.path, result.oldPath)
-        ? { ...tab, path: replacePathPrefix(tab.path, result.oldPath, result.path) }
-        : tab
-    ));
-    openTabsRef.current = nextTabs;
-    setOpenTabs(nextTabs);
-    if (pathIsSameOrInside(currentPathRef.current, result.oldPath)) {
-      const nextPath = replacePathPrefix(currentPathRef.current, result.oldPath, result.path);
-      currentPathRef.current = nextPath;
-      setCurrentPath(nextPath);
-      persistSession({ activePath: nextPath });
-    }
-    if (entry.type === "folder") {
-      if (pathIsSameOrInside(folderPathRef.current, result.oldPath)) {
-        folderRequestControllerRef.current.invalidate("view");
-        folderPathRef.current = replacePathPrefix(folderPathRef.current, result.oldPath, result.path);
-      }
-      setFolderState((previous) => pathIsSameOrInside(previous.path, result.oldPath)
-        ? { ...previous, path: replacePathPrefix(previous.path, result.oldPath, result.path) }
-        : previous);
-      folderBranchRequestControllerRef.current.invalidateAll();
-      setExpandedFolders((previous) => {
-        const next = Object.fromEntries(Object.entries(previous).map(([folderPath, value]) => [
-          pathIsSameOrInside(folderPath, result.oldPath)
-            ? replacePathPrefix(folderPath, result.oldPath, result.path)
-            : folderPath,
-          value,
-        ]));
-        expandedFoldersRef.current = next;
-        return next;
-      });
-    }
-
-    await refreshTreeAfterEntryChange(result.sourceParent || folderState.path);
-    await refreshTreeAfterEntryChange(result.targetFolderPath || targetFolderPath);
-    showStatus("已移动", "success");
-  }, [folderState.path, persistSession, refreshTreeAfterEntryChange, showStatus]);
-
-  const handleToggleFolder = useCallback(async (path) => {
-    if (!path) return;
-    const existing = expandedFoldersRef.current[path];
-    if (existing?.expanded) {
-      folderBranchRequestControllerRef.current.invalidate(path);
-      setExpandedFolders((state) => ({
-        ...state,
-        [path]: { ...(state[path] || existing), expanded: false, loading: false },
-      }));
-      expandedFoldersRef.current = {
-        ...expandedFoldersRef.current,
-        [path]: { ...existing, expanded: false, loading: false },
-      };
-      return;
-    }
-
-    const request = folderBranchRequestControllerRef.current.begin(path);
-    setExpandedFolders((state) => ({
-      ...state,
-      [path]: { ...(state[path] || {}), expanded: true, loading: true, error: "" },
-    }));
-    expandedFoldersRef.current = {
-      ...expandedFoldersRef.current,
-      [path]: { ...(expandedFoldersRef.current[path] || {}), expanded: true, loading: true, error: "" },
-    };
-    try {
-      const result = await listFolderWithTimeout(path);
-      if (!folderBranchRequestControllerRef.current.isCurrent(request)) return;
-      if (result?.canceled) throw new Error("文件夹读取超时");
-      setExpandedFolders((state) => {
-        if (!state[path]?.expanded) return state;
-        const next = {
-          ...state,
-          [path]: {
-            ...state[path],
-            loading: false,
-            error: "",
-            entries: result.entries || [...(result.folders || []), ...(result.files || [])],
-          },
-        };
-        expandedFoldersRef.current = next;
-        return next;
-      });
-    } catch (error) {
-      if (!folderBranchRequestControllerRef.current.isCurrent(request)) return;
-      setExpandedFolders((state) => {
-        if (!state[path]?.expanded) return state;
-        const next = {
-          ...state,
-          [path]: { ...state[path], loading: false, error: error?.message || "文件夹读取失败" },
-        };
-        expandedFoldersRef.current = next;
-        return next;
-      });
-    } finally {
-      folderBranchRequestControllerRef.current.finish(request);
-    }
-  }, []);
+  const handleMoveTreeEntry = workspaceFileMutationPort.moveEntry;
+  const handleToggleFolder = workspaceFileNavigationPort.toggleFolder;
 
   const handleOutlineItemClick = useCallback(
     (item) => {

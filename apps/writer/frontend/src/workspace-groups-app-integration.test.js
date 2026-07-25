@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const appSource = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
+const controllersIndexSource = await readFile(new URL("./controllers/index.js", import.meta.url), "utf8");
 const aiLayoutPortSource = await readFile(new URL("./document-workspace/ai-layout-port.js", import.meta.url), "utf8");
 const groupsControllerSource = await readFile(new URL("./document-workspace/workspace-groups-controller.js", import.meta.url), "utf8");
 const sessionControllerSource = await readFile(new URL("./document-workspace/document-session-controller.js", import.meta.url), "utf8");
@@ -22,7 +23,83 @@ test("App composes session lifecycle effects through the document session contro
   assert.match(sessionControllerSource, /resolveDocumentTabId: \(resourceKey\)/);
   assert.match(sessionControllerSource, /workspaceGroups: summarizeWorkspaceGroups\(restoredGroups, restoredTabs\)/);
   assert.match(sessionControllerSource, /DOCUMENT_SESSION_PERSIST_DELAY_MS = 220/);
+  assert.match(appSource, /folderLifecyclePort: workspaceFileLifecyclePort/);
+  assert.doesNotMatch(appSource, /sessionFolderLifecyclePort/);
   assert.doesNotMatch(appSource, /restoreWorkspaceGroupsSnapshot\(sessionRef\.current\.workspaceGroups/);
+});
+
+test("App composes file-workspace actions and lifecycle through the public controller barrel", () => {
+  assert.match(
+    controllersIndexSource,
+    /export \{ createWorkspaceFileController \} from "\.\/workspace-file-controller\.js"/,
+  );
+  assert.match(appSource, /createWorkspaceFileController\(\{/);
+  assert.doesNotMatch(
+    appSource,
+    /from "\.\/controllers\/workspace-file-controller\.js"/,
+  );
+  const actionMappings = [
+    ["handleNew", "workspaceFileOpenPort.newDocument"],
+    ["handleOpen", "workspaceFileOpenPort.openDocument"],
+    ["handleImportDocument", "workspaceFileOpenPort.importDocument"],
+    ["handleOpenFolder", "workspaceFileNavigationPort.chooseFolder"],
+    ["handleOpenFolderPath", "workspaceFileNavigationPort.navigateFolder"],
+    ["refreshFolder", "workspaceFileNavigationPort.refreshFolder"],
+    ["handleOpenFolderFile", "workspaceFileOpenPort.openDocumentPath"],
+    ["handleCreateFolderInTree", "workspaceFileMutationPort.createFolder"],
+    ["handleCreateDocumentInTree", "workspaceFileMutationPort.createDocument"],
+    ["handleRenameTreeEntry", "workspaceFileMutationPort.renameEntry"],
+    ["handleBackupTreeDocument", "workspaceFileMutationPort.backupDocument"],
+    ["handleMoveTreeEntry", "workspaceFileMutationPort.moveEntry"],
+    ["handleToggleFolder", "workspaceFileNavigationPort.toggleFolder"],
+  ];
+  for (const [name, target] of actionMappings) {
+    assert.match(appSource, new RegExp(`const ${name} = ${target.replace(".", "\\.")}`));
+  }
+  assert.match(appSource, /addOrActivate: addOrActivateDocumentTab/);
+  assert.match(appSource, /recordMutation: recordTabMutation/);
+  assert.match(appSource, /snapshotTabs: snapshotLiveTabs/);
+  assert.match(appSource, /branch: folderBranchRequestControllerRef\.current/);
+  assert.match(appSource, /disk: diskRevisionRequestControllerRef\.current/);
+  assert.match(appSource, /view: folderRequestControllerRef\.current/);
+  assert.match(
+    appSource,
+    /workspaceFileLifecyclePort\.searchWorkspace\(\{/,
+  );
+  assert.match(
+    appSource,
+    /workspaceFileLifecyclePort[\s\S]*\.cancelWorkspaceSearch\(/,
+  );
+  assert.match(
+    appSource,
+    /workspaceFileLifecyclePort[\s\S]*\.watchWorkspace\(/,
+  );
+  assert.match(
+    appSource,
+    /workspaceFileLifecyclePort\.handleWorkspaceChanged\(/,
+  );
+  assert.match(
+    appSource,
+    /workspaceFileLifecyclePort\.verifyOpenDocuments\(\)/,
+  );
+
+  const deleteStart = appSource.indexOf("const handleDeleteTreeEntry");
+  const deleteEnd = appSource.indexOf("const handleMoveTreeEntry", deleteStart);
+  assert.ok(
+    deleteStart >= 0 && deleteEnd > deleteStart,
+    "delete barrier composition must have explicit source boundaries",
+  );
+  const deleteComposition = appSource.slice(deleteStart, deleteEnd);
+  assert.match(deleteComposition, /tabClosePendingIdsRef\.current\.add\(tabId\)/);
+  assert.match(
+    deleteComposition,
+    /await Promise\.all\(affectedIds\.map\(\(tabId\) => waitForTabSave\(tabId\)\)\)/,
+  );
+  assert.match(deleteComposition, /showConfirmDialog\(\{/);
+  assert.match(deleteComposition, /documentRevisionPort\.readLiveRevision\(tabId\)/);
+  assert.match(deleteComposition, /workspaceFileMutationPort\.deleteOnDisk\(entry\)/);
+  assert.match(deleteComposition, /workspaceFileMutationPort\.commitDeleteResult\(\{/);
+  assert.doesNotMatch(deleteComposition, /bridge\.deleteEntry/);
 });
 
 test("global shortcuts resolve the focused group and route PDF search", () => {

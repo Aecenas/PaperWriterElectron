@@ -173,7 +173,8 @@ test("discard-close aborts when a document changes while confirmation is open", 
 
 test("single-tab close also rechecks the document revision after confirmation", () => {
   const start = source.indexOf("const handleCloseTab");
-  const end = source.indexOf("const handleNew", start);
+  const end = source.indexOf("const handleCloseGroupView", start);
+  assert.ok(start >= 0 && end > start, "single-tab close source boundaries must exist");
   const closeSource = source.slice(start, end);
   assert.match(closeSource, /promptedRevision/);
   assert.match(closeSource, /documentRevisionPort\.readLiveRevision\(tabId\)/);

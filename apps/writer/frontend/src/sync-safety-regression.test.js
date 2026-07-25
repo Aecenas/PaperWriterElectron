@@ -61,7 +61,14 @@ test("recovery sessions persist the workspace base revision and mark stale resto
   assert.match(restore, /!sourceMatches\s*\|\|\s*!recoveryBaseRevision\s*\|\|\s*!sameDiskRevision\(currentDiskRevision, recoveryBaseRevision\)/s);
   assert.match(restore, /diskRevision:\s*recoveryBaseRevision/);
   assert.match(restore, /externalChanged/);
-  assert.match(source, /getDocumentRevision: \(path\) => bridge\.getDocumentRevision\?\.\(path\)/);
+  const sessionComposition = between(
+    "const documentSessionController = useMemo(",
+    "documentSessionControllerRef.current = documentSessionController",
+  );
+  assert.match(
+    sessionComposition,
+    /getDocumentRevision: \(path\) => bridge\.getDocumentRevision\?\.\(path\)/,
+  );
   assert.match(source, /const restoreOperation = documentSessionController\.beginRestore\(\)/);
   assert.match(source, /const activeWorkPersistenceState = deriveTabPersistenceState\(/);
   assert.match(source, /persistenceState=\{activeWorkPersistenceState\}/);

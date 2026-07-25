@@ -161,6 +161,7 @@ export {
   useAiApplyPreviewActions,
   useAiApplyResolutionActions,
 } from "./ai-apply-actions.js";
+export { createWorkspaceFileController } from "./workspace-file-controller.js";
 export {
   resetAiApplyTransientState,
   subscribeAiApplyPreview,
