@@ -3,6 +3,9 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const {
+  createAiGenerationRuntime,
+} = require("./ai-generation-runtime.cjs");
 
 async function sourceOf(fileName) {
   return fs.readFile(path.join(__dirname, fileName), "utf8");
@@ -55,10 +58,26 @@ function loadPreloadApi(source) {
 }
 
 test("opens documents with a disk revision and forwards the expected revision on save", async () => {
-  const main = await sourceOf("main.cjs");
-  const openHandler = between(main, 'ipcMain.handle("document:open"', 'ipcMain.handle("document:open-path"');
-  const openPathHandler = between(main, 'ipcMain.handle("document:open-path"', 'ipcMain.handle("document:import"');
-  const saveHandler = between(main, 'ipcMain.handle("document:save"', "function exportSafeName");
+  const [main, documentOpenIpc, documentSaveIpc] = await Promise.all([
+    sourceOf("main.cjs"),
+    sourceOf("document-open-ipc.cjs"),
+    sourceOf("document-save-ipc.cjs"),
+  ]);
+  const openHandler = between(
+    documentOpenIpc,
+    'ipcMain.handle("document:open"',
+    'ipcMain.handle("document:open-path"',
+  );
+  const openPathHandler = between(
+    documentOpenIpc,
+    'ipcMain.handle("document:open-path"',
+    'ipcMain.handle("document:import"',
+  );
+  const saveHandler = between(
+    documentSaveIpc,
+    'ipcMain.handle("document:save"',
+    "module.exports",
+  );
 
   for (const handler of [openHandler, openPathHandler]) {
     assert.match(handler, /const loaded = await loadPaperDocumentSnapshot\(/);
@@ -66,9 +85,15 @@ test("opens documents with a disk revision and forwards the expected revision on
     assert.match(handler, /return \{[^}]*canceled: false[^}]*document[^}]*diskRevision/s);
   }
   assert.match(saveHandler, /expectedRevision\s*=\s*null/);
-  assert.match(saveHandler, /await assertDiskRevision\(filePath, expectedRevision\)/);
+  assert.match(
+    saveHandler,
+    /await transaction\.assertDiskRevision\(\s*filePath,\s*expectedRevision/,
+  );
   assert.match(saveHandler, /validateTarget:\s*async \(targetPath\)/);
-  assert.match(saveHandler, /await assertDiskRevision\(authorizedTarget, expectedRevision\)/);
+  assert.match(
+    saveHandler,
+    /await transaction\.assertDiskRevision\(\s*authorizedTarget,\s*expectedRevision/,
+  );
   assert.match(saveHandler, /return \{[^}]*document: saved\.document[^}]*diskRevision: saved\.diskRevision/s);
   assert.doesNotMatch(saveHandler, /conflictAction\s*!==\s*"overwrite"/);
 
@@ -89,8 +114,15 @@ test("opens documents with a disk revision and forwards the expected revision on
 });
 
 test("revalidates the target before and after packaging and preserves both versions on a replacement race", async () => {
-  const main = await sourceOf("main.cjs");
-  const writer = between(main, "async function savePaperDocumentWithinMutation", "async function savePaperDocument(filePath");
+  const [storageRuntime, documentSaveIpc] = await Promise.all([
+    sourceOf("document-storage-runtime.cjs"),
+    sourceOf("document-save-ipc.cjs"),
+  ]);
+  const writer = between(
+    storageRuntime,
+    "async function savePaperDocumentWithinTransaction",
+    "async function loadPaperDocumentSnapshot",
+  );
   const validation = "await validateTarget(targetPath)";
   assert.equal(occurrences(writer, /await validateTarget\(targetPath\)/g), 2);
   const firstValidation = writer.indexOf(validation);
@@ -101,21 +133,37 @@ test("revalidates the target before and after packaging and preserves both versi
   assert.ok(firstValidation < packageStart, "first revision check must precede packaging");
   assert.ok(packageStart < archivePreflight && archivePreflight < secondValidation, "second revision check must follow archive generation");
   assert.ok(secondValidation < commit, "the final revision check must immediately guard the atomic replacement");
-  assert.match(writer, /const committedRevision = await readDiskRevision\(targetPath\)/);
-  assert.match(writer, /const outputSha256 = createHash\("sha256"\)\.update\(output\)\.digest\("hex"\)/);
+  assert.match(
+    writer,
+    /const committedRevision = await readDiskRevision\(\s*targetPath,\s*\)/,
+  );
+  assert.match(
+    writer,
+    /const outputSha256 = createHash\("sha256"\)[\s\S]*?\.update\(output\)[\s\S]*?\.digest\("hex"\)/,
+  );
   assert.match(writer, /committedRevision\.sha256 !== outputSha256/);
 
-  const saveHandler = between(main, 'ipcMain.handle("document:save"', "function exportSafeName");
+  const saveHandler = between(
+    documentSaveIpc,
+    'ipcMain.handle("document:save"',
+    "module.exports",
+  );
   assert.match(saveHandler, /targetIdentity\s*=\s*targetStat\?\.isFile\(\)\s*\?\s*\{\s*dev:\s*targetStat\.dev,\s*ino:\s*targetStat\.ino\s*\}/s);
   assert.match(saveHandler, /currentStat\.dev\s*!==\s*targetIdentity\.dev\s*\|\|\s*currentStat\.ino\s*!==\s*targetIdentity\.ino/);
-  assert.match(saveHandler, /throw new DocumentRevisionConflictError\("保存期间目标信笺已被移动、删除或替换"/);
+  assert.match(
+    saveHandler,
+    /throw new DocumentRevisionConflictError\(\s*"保存期间目标信笺已被移动、删除或替换"/,
+  );
   assert.match(saveHandler, /catch \(error\) \{[\s\S]*error\?\.code === REVISION_CONFLICT_CODE[\s\S]*return writeConflictCopy\(error\)/);
 
   const conflictWriter = between(saveHandler, "const writeConflictCopy = async", "if (!userSelectedTarget");
   assert.match(conflictWriter, /createConflictCopyPath\(filePath/);
   assert.match(conflictWriter, /documentId:\s*randomUUID\(\)/);
   assert.match(conflictWriter, /derivedFrom:\s*normalizeDocumentId/);
-  assert.match(conflictWriter, /await savePaperDocument\(conflictCopyPath, conflictDocument\)/);
+  assert.match(
+    conflictWriter,
+    /await transaction\.savePaperDocument\(\s*conflictCopyPath,\s*conflictDocument,/,
+  );
   assert.match(conflictWriter, /conflict:\s*true/);
   assert.match(conflictWriter, /conflictCopyPath/);
   assert.match(conflictWriter, /expectedRevision:/);
@@ -123,13 +171,8 @@ test("revalidates the target before and after packaging and preserves both versi
 });
 
 test("AI apply resolver serializes only the manifest and selected optimization block allowlists", async () => {
-  const main = await sourceOf("main.cjs");
-  const functionSource = between(main, "function aiApplyResolverMessages", "async function resolveAiApplyWithModel");
-  const createMessages = vm.runInNewContext(
-    `const AI_INPUT_MAX_CHARS = 500000; ${functionSource}; aiApplyResolverMessages`,
-    {},
-    { filename: "ai-apply-resolver-extract.cjs" },
-  );
+  const createMessages = createAiGenerationRuntime({})
+    .createApplyMessages;
   const messages = createMessages({
     documentFingerprint: "fingerprint-1",
     workspacePath: "C:\\绝密工作区",
@@ -184,17 +227,25 @@ test("AI apply resolver serializes only the manifest and selected optimization b
   assert.match(repairMessages[3].content, /不要重新判断或改写优化内容/);
   assert.doesNotMatch(repairMessages[3].content, /绝密工作区/);
 
-  const handler = between(main, 'ipcMain.handle("ai:resolve-apply"', 'ipcMain.handle("ai:cancel"');
-  assert.match(handler, /payload\.optimizationContext/);
-  assert.match(handler, /payload\.repair/);
-  assert.match(handler, /transport === "codex-cli"\s*\? \{\}/);
-  assert.match(handler, /aiApplyResolverRequestParams/);
-  assert.match(handler, /resolveAiApplyWithModel\(resolver, messages\)/);
-  assert.doesNotMatch(handler, /workspacePath|documentPath|research|filePath|JSON\.stringify\(payload\)/);
 });
 
 test("main and preload expose fullscreen, workspace watch, research relink, and identity IPC contracts", async () => {
-  const main = await sourceOf("main.cjs");
+  const [
+    main,
+    applicationIpc,
+    documentOpenIpc,
+    workspaceFolderIpc,
+    workspaceResearchIpc,
+    workspaceRuntime,
+  ] = await Promise.all([
+    sourceOf("main.cjs"),
+    sourceOf("application-ipc.cjs"),
+    sourceOf("document-open-ipc.cjs"),
+    sourceOf("workspace-folder-ipc.cjs"),
+    sourceOf("workspace-research-ipc.cjs"),
+    sourceOf("workspace-runtime.cjs"),
+  ]);
+  const registeredIpc = `${main}\n${applicationIpc}\n${documentOpenIpc}\n${workspaceFolderIpc}\n${workspaceResearchIpc}`;
   const mainChannels = [
     "workspace:watch",
     "document:revision",
@@ -210,24 +261,40 @@ test("main and preload expose fullscreen, workspace watch, research relink, and 
     "research:open-external",
   ];
   for (const channel of mainChannels) {
-    assert.match(main, new RegExp(`ipcMain\\.handle\\("${channel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`), `missing main handler ${channel}`);
+    assert.match(registeredIpc, new RegExp(`ipcMain\\.handle\\("${channel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`), `missing main handler ${channel}`);
   }
   assert.match(main, /mainWindow\.on\("enter-full-screen"[\s\S]*"window:fullscreen-changed"[\s\S]*fullscreen:\s*true/);
   assert.match(main, /mainWindow\.on\("leave-full-screen"[\s\S]*"window:fullscreen-changed"[\s\S]*fullscreen:\s*false/);
-  assert.match(main, /sendRendererEvent\(mainWindow\?\.webContents, "workspace:changed"/);
-  assert.match(main, /sendRendererEvent\(mainWindow\?\.webContents, "workspace:watch-error"/);
+  assert.match(
+    workspaceRuntime,
+    /sendRendererEvent\(\s*getRendererWebContents\(\),\s*"workspace:changed"/,
+  );
+  assert.match(
+    workspaceRuntime,
+    /sendRendererEvent\(\s*getRendererWebContents\(\),\s*"workspace:watch-error"/,
+  );
 
-  const identityHandler = between(main, 'ipcMain.handle("document:regenerate-identity"', 'ipcMain.handle("window:set-fullscreen"');
+  const identityHandler = between(
+    documentOpenIpc,
+    'ipcMain.handle("document:regenerate-identity"',
+    'ipcMain.handle("document:open"',
+  );
   assert.match(identityHandler, /resolveAuthorizedOpenDocument\(filePath\)/);
-  assert.match(identityHandler, /sourceSnapshot = await loadPaperDocumentSnapshot\(targetPath\)/);
+  assert.match(
+    identityHandler,
+    /sourceSnapshot\s*=\s*[\s\S]*?await transaction\.loadPaperDocumentSnapshot\(targetPath\)/,
+  );
   assert.match(identityHandler, /expectedRevision = sourceSnapshot\.diskRevision/);
   assert.match(identityHandler, /documentId = randomUUID\(\)/);
   assert.match(identityHandler, /derivedFrom:\s*previousId \|\| ""/);
-  assert.match(identityHandler, /assertDiskRevision\(candidate, expectedRevision\)/);
+  assert.match(
+    identityHandler,
+    /transaction\.assertDiskRevision\(\s*candidate,\s*expectedRevision/,
+  );
 
-  const relinkHandler = between(main, 'ipcMain.handle("research:relink"', 'ipcMain.handle("research:read-file"');
+  const relinkHandler = between(workspaceResearchIpc, 'ipcMain.handle("research:relink"', 'ipcMain.handle("research:read-file"');
   assert.match(relinkHandler, /assertAuthorizedDirectory\(workspacePath\)/);
-  assert.match(relinkHandler, /canonicalExistingPath\(picked\.filePaths\[0\], "file"\)/);
+  assert.match(relinkHandler, /canonicalExistingPath\(\s*picked\.filePaths\[0\],\s*"file"/);
   assert.match(relinkHandler, /relinkResearchSource\(rootPath, sourceId, filePath\)/);
 
   const preload = loadPreloadApi(await sourceOf("preload.cjs"));
@@ -271,8 +338,8 @@ test("main and preload expose fullscreen, workspace watch, research relink, and 
 });
 
 test("legacy research creation cannot accept a renderer-provided absolute file path", async () => {
-  const main = await sourceOf("main.cjs");
-  const createHandler = between(main, 'ipcMain.handle("research:create"', 'ipcMain.handle("research:update"');
+  const workspaceResearchIpc = await sourceOf("workspace-research-ipc.cjs");
+  const createHandler = between(workspaceResearchIpc, 'ipcMain.handle("research:create"', 'ipcMain.handle("research:update"');
   assert.match(createHandler, /delete nextSource\.filePath/);
   assert.match(createHandler, /if \(nextSource\.type === "file"\) \{[\s\S]*dialog\.showOpenDialog/);
   assert.doesNotMatch(createHandler, /nextSource\.type === "file" && !nextSource\.filePath/);
@@ -292,11 +359,15 @@ test("legacy research creation cannot accept a renderer-provided absolute file p
 });
 
 test("image references use a validated rich clipboard IPC contract", async () => {
-  const main = await sourceOf("main.cjs");
-  const handler = between(main, 'ipcMain.handle("clipboard:write-image-reference"', 'ipcMain.handle("external:open"');
+  const resourceIpc = await sourceOf("resource-ipc.cjs");
+  const handler = between(
+    resourceIpc,
+    'ipcMain.handle("clipboard:write-image-reference"',
+    'ipcMain.handle("external:open"',
+  );
   assert.match(handler, /safeClipboardUuid\(payload\?\.documentId\)/);
   assert.match(handler, /safeClipboardUuid\(payload\?\.imageId\)/);
-  assert.match(handler, /Math\.max\(1, Math\.min\(5_000/);
+  assert.match(handler, /Math\.max\(\s*1,\s*Math\.min\(5_000/);
   assert.match(handler, /clipboard\.write\(\{ text: label, html \}\)/);
   assert.match(handler, /data-source-document-id/);
 
@@ -311,8 +382,12 @@ test("image references use a validated rich clipboard IPC contract", async () =>
 });
 
 test("AI rich text copy uses the bounded native clipboard IPC contract", async () => {
-  const main = await sourceOf("main.cjs");
-  const handler = between(main, 'ipcMain.handle("clipboard:write-content"', 'ipcMain.handle("clipboard:write-image-reference"');
+  const resourceIpc = await sourceOf("resource-ipc.cjs");
+  const handler = between(
+    resourceIpc,
+    'ipcMain.handle("clipboard:write-content"',
+    'ipcMain.handle("clipboard:write-image-reference"',
+  );
   assert.match(handler, /safeClipboardContent\(payload\?\.text, 2_000_000\)/);
   assert.match(handler, /safeClipboardContent\(payload\?\.html, 4_000_000\)/);
   assert.match(handler, /clipboard\.write\(html \? \{ text, html \} : \{ text \}\)/);

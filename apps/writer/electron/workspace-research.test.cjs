@@ -368,15 +368,15 @@ test("the shared sources directory cannot be replaced by an escaping symlink", a
 }));
 
 test("wires citation library IPC through the sandboxed preload bridge", async () => {
-  const [mainSource, preloadSource] = await Promise.all([
-    fs.readFile(path.join(__dirname, "main.cjs"), "utf8"),
+  const [workspaceResearchIpcSource, preloadSource] = await Promise.all([
+    fs.readFile(path.join(__dirname, "workspace-research-ipc.cjs"), "utf8"),
     fs.readFile(path.join(__dirname, "preload.cjs"), "utf8"),
   ]);
   for (const channel of ["citation:list", "citation:upsert", "citation:delete"]) {
-    assert.match(mainSource, new RegExp(`ipcMain\\.handle\\("${channel.replace(":", "\\:")}"`));
+    assert.match(workspaceResearchIpcSource, new RegExp(`ipcMain\\.handle\\("${channel.replace(":", "\\:")}"`));
     assert.match(preloadSource, new RegExp(`ipcRenderer\\.invoke\\("${channel.replace(":", "\\:")}"`));
   }
-  assert.match(mainSource, /citation:list[\s\S]*assertAuthorizedDirectory\(workspacePath\)[\s\S]*listCitationSources\(rootPath\)/);
-  assert.match(mainSource, /citation:upsert[\s\S]*assertAuthorizedDirectory\(workspacePath\)[\s\S]*upsertCitationSource\(rootPath, source\)/);
-  assert.match(mainSource, /citation:delete[\s\S]*assertAuthorizedDirectory\(workspacePath\)[\s\S]*deleteCitationSource\(rootPath, sourceId\)/);
+  assert.match(workspaceResearchIpcSource, /citation:list[\s\S]*assertAuthorizedDirectory\(workspacePath\)[\s\S]*listCitationSources\(rootPath\)/);
+  assert.match(workspaceResearchIpcSource, /citation:upsert[\s\S]*assertAuthorizedDirectory\(workspacePath\)[\s\S]*upsertCitationSource\(rootPath, source\)/);
+  assert.match(workspaceResearchIpcSource, /citation:delete[\s\S]*assertAuthorizedDirectory\(workspacePath\)[\s\S]*deleteCitationSource\(rootPath, sourceId\)/);
 });

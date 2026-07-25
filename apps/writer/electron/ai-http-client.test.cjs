@@ -2,13 +2,18 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const test = require("node:test");
-const vm = require("node:vm");
 const {
   fetchAiResponse,
   readReaderChunk,
   readResponseTextLimited,
   throwIfAborted,
 } = require("./ai-http-client.cjs");
+const {
+  createAiHttpRuntime,
+} = require("./ai-http-runtime.cjs");
+const {
+  redactSecrets,
+} = require("./ai-config-security.cjs");
 
 function deferred() {
   let resolve;
@@ -26,6 +31,116 @@ function between(source, startMarker, endMarker) {
   assert.notEqual(start, -1, `missing marker: ${startMarker}`);
   assert.notEqual(end, -1, `missing marker: ${endMarker}`);
   return source.slice(start, end);
+}
+
+function createHttpRuntimeHarness({
+  contentType = "application/json",
+  responseText = "",
+  streamChunks = [],
+} = {}) {
+  const controller = new AbortController();
+  const encoder = new TextEncoder();
+  const chunks = streamChunks.map((chunk) => encoder.encode(chunk));
+  const events = [];
+  const logs = [];
+  let canceled = 0;
+  let released = 0;
+  const reader = {
+    async read() {
+      if (chunks.length) {
+        return { done: false, value: chunks.shift() };
+      }
+      return { done: true, value: undefined };
+    },
+    async cancel() {
+      canceled += 1;
+    },
+  };
+  const response = {
+    ok: true,
+    headers: { get: () => contentType },
+    body: { getReader: () => reader },
+  };
+  const runtime = createAiHttpRuntime({
+    fetchImpl: async () => response,
+    fetchWithAiRedirectPolicy: async () => response,
+    fetchAiResponse: async () => ({
+      response,
+      signal: controller.signal,
+      release() {
+        released += 1;
+      },
+    }),
+    readReaderChunk,
+    readResponseTextLimited: async () => responseText,
+    cancelReader(readerToCancel, reason) {
+      try {
+        readerToCancel.cancel(reason)?.catch?.(() => {});
+      } catch {}
+    },
+    throwIfAborted,
+    redactSecrets,
+    normalizeProviderBaseUrl: (value) => value,
+    buildAiRequest: () => ({
+      url: "https://example.com",
+      headers: {},
+      body: {},
+    }),
+    extractAiStreamEvent(protocol, payload) {
+      if (protocol === "anthropic") {
+        if (payload?.type === "error") {
+          return {
+            error: payload.error?.message
+              || "Anthropic 流式请求失败",
+          };
+        }
+        return {
+          delta: payload?.delta?.text || "",
+          done: payload?.type === "message_stop",
+        };
+      }
+      return {
+        delta: payload?.choices?.[0]?.delta?.content || "",
+        done: false,
+        error: "",
+      };
+    },
+    mergeAiUsage: (_protocol, _payload, usage) => usage,
+    emitRendererEvent: (_sender, channel, payload) => {
+      events.push([channel, payload]);
+    },
+    writeDebugLog: (...args) => {
+      logs.push(args);
+    },
+    limits: {
+      jsonResponseMaxBytes: 1024,
+      streamBufferMaxChars: 1024,
+      streamInputMaxBytes: 4096,
+      streamMaxMs: 10000,
+      streamOutputMaxChars: 4096,
+      streamIdleTimeoutMs: 1000,
+    },
+  });
+  return {
+    controller,
+    events,
+    get canceled() {
+      return canceled;
+    },
+    get released() {
+      return released;
+    },
+    logs,
+    runtime,
+  };
+}
+
+function assertSecretAbsent(value, secret) {
+  assert.equal(
+    JSON.stringify(value).includes(secret),
+    false,
+    "secret must not appear in any observable field",
+  );
 }
 
 test("keeps an external abort linked after response headers arrive", async () => {
@@ -128,8 +243,6 @@ test("aborting a non-SSE response body cancels the pending read instead of retur
 });
 
 test("stream completion emits no chunks after a pending read is canceled", async () => {
-  const main = await fs.readFile(path.join(__dirname, "main.cjs"), "utf8");
-  const functionSource = between(main, "async function streamAiCompletion", "async function streamCodexForPayload");
   const pendingRead = deferred();
   const firstChunkSent = deferred();
   const controller = new AbortController();
@@ -159,52 +272,53 @@ test("stream completion emits no chunks after a pending read is canceled", async
     headers: { get: () => "text/event-stream" },
     body: { getReader: () => reader },
   };
-  const streamAiCompletion = vm.runInNewContext(
-    `${functionSource}; streamAiCompletion`,
-    {
-      AI_JSON_RESPONSE_MAX_BYTES: 1024,
-      AI_STREAM_BUFFER_MAX_CHARS: 1024,
-      AI_STREAM_INPUT_MAX_BYTES: 4096,
-      AI_STREAM_MAX_MS: 10000,
-      AI_STREAM_OUTPUT_MAX_CHARS: 4096,
-      TextDecoder,
-      assertAiResponseOk: async () => {},
-      buildAiRequest: () => ({ url: "https://example.com", headers: {}, body: {} }),
-      cancelAiResponseReader(readerToCancel, reason) {
-        try {
-          readerToCancel.cancel(reason)?.catch?.(() => {});
-        } catch {}
+  const runtime = createAiHttpRuntime({
+    fetchImpl: async () => response,
+    fetchWithAiRedirectPolicy: async () => response,
+    fetchAiResponse: async () => ({
+      response,
+      signal: controller.signal,
+      release: () => {
+        released = true;
       },
-      extractAiStreamEvent: (_protocol, payload) => ({
-        delta: payload?.choices?.[0]?.delta?.content || "",
-        done: false,
-        error: "",
-      }),
-      mergeAiUsage: (_protocol, _payload, usage) => usage,
-      normalizeProviderBaseUrl: (value) => value,
-      readAiStreamChunk: (readerToRead, signal) => readReaderChunk(readerToRead, {
-        signal,
-        idleTimeoutMs: 1000,
-      }),
-      readResponseTextLimited,
-      sendRendererEvent: (_sender, channel, payload) => {
-        events.push([channel, payload]);
-        firstChunkSent.resolve();
-      },
-      throwIfAiAborted: throwIfAborted,
-      writeAiDebugLog: async () => {},
-      aiFetch: async () => ({
-        response,
-        signal: controller.signal,
-        release: () => {
-          released = true;
-        },
-      }),
+    }),
+    readReaderChunk,
+    readResponseTextLimited,
+    cancelReader(readerToCancel, reason) {
+      try {
+        readerToCancel.cancel(reason)?.catch?.(() => {});
+      } catch {}
     },
-    { filename: "stream-ai-completion-extract.cjs" },
-  );
+    throwIfAborted,
+    redactSecrets: (value) => value,
+    normalizeProviderBaseUrl: (value) => value,
+    buildAiRequest: () => ({
+      url: "https://example.com",
+      headers: {},
+      body: {},
+    }),
+    extractAiStreamEvent: (_protocol, payload) => ({
+      delta: payload?.choices?.[0]?.delta?.content || "",
+      done: false,
+      error: "",
+    }),
+    mergeAiUsage: (_protocol, _payload, usage) => usage,
+    emitRendererEvent: (_sender, channel, payload) => {
+      events.push([channel, payload]);
+      firstChunkSent.resolve();
+    },
+    writeDebugLog: async () => {},
+    limits: {
+      jsonResponseMaxBytes: 1024,
+      streamBufferMaxChars: 1024,
+      streamInputMaxBytes: 4096,
+      streamMaxMs: 10000,
+      streamOutputMaxChars: 4096,
+      streamIdleTimeoutMs: 1000,
+    },
+  });
 
-  const completion = streamAiCompletion({}, "ai-cancel-test", {
+  const completion = runtime.streamCompletion({}, "ai-cancel-test", {
     apiKey: "secret",
     baseUrl: "https://example.com",
     protocol: "openai",
@@ -223,13 +337,161 @@ test("stream completion emits no chunks after a pending read is canceled", async
   assert.equal(released, true);
 });
 
+test("redacts API keys from malformed SSE parse diagnostics", async () => {
+  const apiKey = "sk-live-secret";
+  const harness = createHttpRuntimeHarness({
+    contentType: "text/event-stream",
+    streamChunks: [
+      `data: ${apiKey}\n\ndata: [DONE]\n\n`,
+    ],
+  });
+
+  const result = await harness.runtime.streamCompletion(
+    {},
+    "ai-redact-parse",
+    {
+      apiKey,
+      baseUrl: "https://example.com",
+      protocol: "openai",
+    },
+    [{ role: "user", content: "hello" }],
+    harness.controller.signal,
+  );
+
+  assert.equal(result, null);
+  assert.equal(harness.logs.length, 1);
+  assert.equal(harness.logs[0][0], "ai:stream:parse-error");
+  assert.equal(harness.logs[0][1].data, "[REDACTED]");
+  assertSecretAbsent({
+    events: harness.events,
+    logs: harness.logs,
+    result,
+  }, apiKey);
+});
+
+test("redacts API keys from malformed non-SSE response errors", async () => {
+  const apiKey = "sk-live-secret";
+  const harness = createHttpRuntimeHarness({
+    responseText: apiKey,
+  });
+  let caught;
+
+  await assert.rejects(
+    harness.runtime.streamCompletion(
+      {},
+      "ai-redact-json",
+      {
+        apiKey,
+        baseUrl: "https://example.com",
+        protocol: "openai",
+      },
+      [{ role: "user", content: "hello" }],
+      harness.controller.signal,
+    ),
+    (error) => {
+      caught = error;
+      return true;
+    },
+  );
+
+  assertSecretAbsent({
+    error: caught?.message,
+    events: harness.events,
+    logs: harness.logs,
+  }, apiKey);
+  assert.equal(harness.events.length, 0);
+  assert.equal(harness.released, 1);
+});
+
+test("redacts API keys echoed by Anthropic SSE errors before propagation", async () => {
+  const apiKey = "sk-live-secret";
+  const harness = createHttpRuntimeHarness({
+    contentType: "text/event-stream",
+    streamChunks: [
+      `data: ${JSON.stringify({
+        type: "error",
+        error: { message: `provider echoed ${apiKey}` },
+      })}\n\n`,
+    ],
+  });
+  let caught;
+
+  await assert.rejects(
+    harness.runtime.streamCompletion(
+      {},
+      "ai-redact-anthropic",
+      {
+        apiKey,
+        baseUrl: "https://example.com",
+        protocol: "anthropic",
+      },
+      [{ role: "user", content: "hello" }],
+      harness.controller.signal,
+    ),
+    (error) => {
+      caught = error;
+      return true;
+    },
+  );
+
+  assert.match(caught.message, /\[REDACTED\]/);
+  assertSecretAbsent({
+    error: caught.message,
+    events: harness.events,
+    logs: harness.logs,
+  }, apiKey);
+  assert.equal(harness.events.length, 0);
+  assert.ok(harness.canceled >= 1);
+  assert.equal(harness.released, 1);
+});
+
+test("redacts API keys from resolveApply response parsing errors", async () => {
+  const apiKey = "sk-live-secret";
+  const harness = createHttpRuntimeHarness({
+    responseText: apiKey,
+  });
+  let caught;
+
+  await assert.rejects(
+    harness.runtime.resolveApply({
+      apiKey,
+      baseUrl: "https://example.com",
+      protocol: "openai",
+      testedOk: true,
+    }, [{ role: "user", content: "resolve" }]),
+    (error) => {
+      caught = error;
+      return true;
+    },
+  );
+
+  assertSecretAbsent({
+    error: caught?.message,
+    events: harness.events,
+    logs: harness.logs,
+  }, apiKey);
+  assert.equal(harness.events.length, 0);
+  assert.equal(harness.released, 1);
+});
+
 test("AI request registry keeps canceled entries until identity-safe settlement", async () => {
-  const main = await fs.readFile(path.join(__dirname, "main.cjs"), "utf8");
-  const generateHandler = between(main, 'ipcMain.handle("ai:generate"', 'ipcMain.handle("ai:resolve-apply"');
-  const cancelHandler = between(main, 'ipcMain.handle("ai:cancel"', 'ipcMain.handle("ai:export-chat"');
+  const generationRuntime = await fs.readFile(
+    path.join(__dirname, "ai-generation-runtime.cjs"),
+    "utf8",
+  );
+  const generateHandler = between(
+    generationRuntime,
+    "async function generate",
+    "async function resolveApply",
+  );
+  const cancelHandler = between(
+    generationRuntime,
+    "async function cancel",
+    "async function exportChat",
+  );
 
   assert.match(generateHandler, /activeAiRequests\.get\(requestId\) !== controller/);
-  assert.match(generateHandler, /finally\s*\{[\s\S]*activeAiRequests\.get\(requestId\) === controller[\s\S]*activeAiRequests\.delete\(requestId\)/);
+  assert.match(generateHandler, /finally\s*\{\s*releaseReservation\(\)/);
   assert.match(cancelHandler, /controller\.abort\(new Error\("已停止生成"\)\)/);
   assert.doesNotMatch(cancelHandler, /activeAiRequests\.delete/);
 });

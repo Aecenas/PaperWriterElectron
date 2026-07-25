@@ -1,10 +1,9 @@
 const assert = require("node:assert/strict");
-const fs = require("node:fs/promises");
-const path = require("node:path");
 const test = require("node:test");
-const vm = require("node:vm");
 
-const { normalizeCitationResearchIdentity } = require("./workspace-research.cjs");
+const {
+  normalizeCitationSources,
+} = require("./document-model.cjs");
 
 const IDS = [
   "11111111-1111-4111-8111-111111111111",
@@ -15,33 +14,7 @@ const IDS = [
   "66666666-6666-4666-8666-666666666666",
 ];
 
-function between(source, startMarker, endMarker) {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start + startMarker.length);
-  assert.notEqual(start, -1, `missing marker: ${startMarker}`);
-  assert.notEqual(end, -1, `missing marker: ${endMarker}`);
-  return source.slice(start, end);
-}
-
-async function loadMainCitationNormalizer() {
-  const source = await fs.readFile(path.join(__dirname, "main.cjs"), "utf8");
-  const functionSource = between(source, "function normalizeCitationSources", "function normalizeDocument(document");
-  return vm.runInNewContext(
-    `${functionSource}; normalizeCitationSources`,
-    {
-      normalizeDocumentId(value) {
-        const id = typeof value === "string" ? value.trim().toLowerCase() : "";
-        return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ? id : "";
-      },
-      normalizeCitationResearchIdentity,
-      randomUUID: () => IDS[5],
-    },
-    { filename: "main-citation-normalizer.cjs" },
-  );
-}
-
 test("Electron document normalization round-trips portable independent-library citation snapshots", async () => {
-  const normalizeCitationSources = await loadMainCitationNormalizer();
   const once = normalizeCitationSources([{
     id: IDS[0],
     type: "pdf",
@@ -65,7 +38,6 @@ test("Electron document normalization round-trips portable independent-library c
 });
 
 test("Electron document normalization drops bad pairs and retains v0.9.5 source-only identities", async () => {
-  const normalizeCitationSources = await loadMainCitationNormalizer();
   const normalized = JSON.parse(JSON.stringify(normalizeCitationSources([
     { id: IDS[0], title: "完整配对", researchLibraryId: IDS[3], researchSourceId: IDS[4] },
     { id: IDS[1], title: "缺少来源", researchLibraryId: IDS[3] },

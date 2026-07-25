@@ -75,33 +75,63 @@ test("file snapshots retry an unstable handle and bind the revision to the retur
 });
 
 test("save checks the expected revision twice, including explicit overwrite, and verifies committed bytes", async () => {
-  const main = await sourceOf("main.cjs");
-  const writer = between(main, "async function savePaperDocumentWithinMutation", "async function savePaperDocument(filePath");
+  const [storageRuntime, documentSaveIpc] = await Promise.all([
+    sourceOf("document-storage-runtime.cjs"),
+    sourceOf("document-save-ipc.cjs"),
+  ]);
+  const writer = between(
+    storageRuntime,
+    "async function savePaperDocumentWithinTransaction",
+    "async function loadPaperDocumentSnapshot",
+  );
   assert.equal((writer.match(/await validateTarget\(targetPath\)/g) || []).length, 2);
   indexInOrder(writer, [
     "await validateTarget(targetPath)",
     "const normalized = normalizeDocument(document)",
     "preflightZipBuffer(output)",
-    "if (typeof validateTarget === \"function\") await validateTarget(targetPath)",
+    "await validateTarget(targetPath)",
     "await atomicWriteFile(targetPath, output)",
-    "const committedRevision = await readDiskRevision(targetPath)",
-    "const outputSha256 = createHash(\"sha256\").update(output).digest(\"hex\")",
+    "const committedRevision = await readDiskRevision(",
+    "const outputSha256 = createHash(\"sha256\")",
   ]);
   assert.match(writer, /committedRevision\.size !== output\.length/);
   assert.match(writer, /committedRevision\.sha256 !== outputSha256/);
-  assert.match(writer, /throw new DocumentRevisionConflictError\("工作区文件在写入完成后立即被外部版本替换"/);
+  assert.match(
+    writer,
+    /throw new DocumentRevisionConflictError\(\s*"工作区文件在写入完成后立即被外部版本替换"/,
+  );
 
-  const handler = between(main, 'ipcMain.handle("document:save"', "function exportSafeName");
+  const handler = between(
+    documentSaveIpc,
+    'ipcMain.handle("document:save"',
+    "module.exports",
+  );
   assert.match(handler, /expectedRevision\s*=\s*null,\s*saveOptions\s*=\s*\{\}/);
-  assert.match(handler, /await assertDiskRevision\(filePath, expectedRevision\)/);
-  assert.match(handler, /validateTarget:\s*async \(targetPath\) => \{[\s\S]*await assertDiskRevision\(authorizedTarget, expectedRevision\)/);
+  assert.match(
+    handler,
+    /await transaction\.assertDiskRevision\(\s*filePath,\s*expectedRevision/,
+  );
+  assert.match(
+    handler,
+    /validateTarget:\s*async \(targetPath\) => \{[\s\S]*await transaction\.assertDiskRevision\(\s*authorizedTarget,\s*expectedRevision/,
+  );
   assert.doesNotMatch(handler, /conflictAction\s*!==\s*["']overwrite["']/);
   assert.doesNotMatch(handler, /conflictAction\s*===\s*["']overwrite["'][\s\S]{0,160}(?:return|skip|bypass)/i);
   assert.doesNotMatch(handler, /saveOptions[^\n]*(?:overwrite|conflictAction)/);
 });
 
 test(".jianjian is hidden from listings and rejected by every mutable file-tree route", async () => {
-  const main = await sourceOf("main.cjs");
+  const [
+    main,
+    workspaceFolderIpc,
+    documentSaveIpc,
+    workspaceRuntime,
+  ] = await Promise.all([
+    sourceOf("main.cjs"),
+    sourceOf("workspace-folder-ipc.cjs"),
+    sourceOf("document-save-ipc.cjs"),
+    sourceOf("workspace-runtime.cjs"),
+  ]);
   const helperSource = between(main, "function isReservedWorkspaceMetadataPath", "function assertMutableWorkspaceEntry");
   const isReserved = vm.runInNewContext(`const path = require("node:path"); ${helperSource}; isReservedWorkspaceMetadataPath`, {
     require,
@@ -111,32 +141,42 @@ test(".jianjian is hidden from listings and rejected by every mutable file-tree 
   assert.equal(isReserved(path.join(process.cwd(), "工作区", "普通文件夹", "稿件.letterpaper")), false);
   assert.equal(isReserved(path.join(process.cwd(), "工作区", ".jianjian-备份")), false);
 
-  const createFolder = between(main, 'ipcMain.handle("folder:create"', 'ipcMain.handle("document:create-in-folder"');
+  const createFolder = between(workspaceFolderIpc, 'ipcMain.handle("folder:create"', 'ipcMain.handle("entry:rename"');
   assert.match(createFolder, /folderName\.toLocaleLowerCase\("en-US"\) === "\.jianjian"/);
   assert.match(createFolder, /assertMutableWorkspaceEntry\(authorizedParent\)/);
   assert.match(createFolder, /assertMutableWorkspaceEntry\(targetPath\)/);
 
-  const createDocument = between(main, 'ipcMain.handle("document:create-in-folder"', 'ipcMain.handle("entry:rename"');
+  const createDocument = between(
+    documentSaveIpc,
+    'ipcMain.handle("document:create-in-folder"',
+    'ipcMain.handle("document:backup"',
+  );
   assert.match(createDocument, /assertMutableWorkspaceEntry\(authorizedFolder\)/);
 
-  const rename = between(main, 'ipcMain.handle("entry:rename"', 'ipcMain.handle("entry:delete"');
+  const rename = between(workspaceFolderIpc, 'ipcMain.handle("entry:rename"', 'ipcMain.handle("entry:delete"');
   assert.match(rename, /assertMutableWorkspaceEntry\(currentPath\)/);
   assert.match(rename, /assertMutableWorkspaceEntry\(nextPath\)/);
 
-  const remove = between(main, 'ipcMain.handle("entry:delete"', 'ipcMain.handle("entry:move"');
+  const remove = between(workspaceFolderIpc, 'ipcMain.handle("entry:delete"', 'ipcMain.handle("entry:move"');
   assert.match(remove, /assertMutableWorkspaceEntry\(currentPath\)/);
 
-  const move = between(main, 'ipcMain.handle("entry:move"', 'ipcMain.handle("document:backup"');
+  const move = between(workspaceFolderIpc, 'ipcMain.handle("entry:move"', "module.exports");
   assert.match(move, /assertMutableWorkspaceEntry\(fromPath\)/);
   assert.match(move, /assertMutableWorkspaceEntry\(toFolder\)/);
 
-  const list = between(main, "async function listFolderEntries", "async function preservePreV2MigrationBackup");
+  const list = between(
+    workspaceRuntime,
+    "async function listFolderEntries",
+    "function shutdown",
+  );
   indexInOrder(list, [
     "if (isReservedWorkspaceMetadataPath(folderPath))",
     "await fs.readdir(folderPath",
     'if (entry.name.toLocaleLowerCase("en-US") === ".jianjian") continue',
   ]);
 
-  const listHandler = between(main, 'ipcMain.handle("folder:list"', 'ipcMain.handle("folder:copy-path"');
-  assert.match(listHandler, /const listed = await listFolderEntries\(authorizedPath\)/);
+  assert.match(
+    workspaceFolderIpc,
+    /"folder:list",[\s\S]*listFolder\(folderPath\)[\s\S]*"folder:copy-path"/,
+  );
 });

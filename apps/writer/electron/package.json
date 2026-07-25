@@ -5,13 +5,15 @@
   "license": "MIT",
   "main": "main.cjs",
   "scripts": {
-    "dev": "electron .",
-    "dev:vite": "node dev-vite.cjs",
-    "check": "node --check main.cjs && node --check preload.cjs && node --check ai-provider-core.cjs && node --check ai-config-security.cjs && node --check ai-http-client.cjs && node --check asset-packager.cjs && node --check document-assets.cjs && node --check document-storage.cjs && node --check document-revision.cjs && node --check document-interchange.cjs && node --check workspace-search.cjs && node --check workspace-research.cjs && node --check research-library.cjs && node --check research-web-view.cjs && node --check filesystem-access.cjs && node --check codex-cli-provider.cjs && node --check codex-scope.cjs && node --check codex-image-attachments.cjs",
+    "preload:build": "node build-preload.cjs",
+    "preload:check": "node build-preload.cjs --check",
+    "dev": "node build-preload.cjs && electron .",
+    "dev:vite": "node build-preload.cjs && node dev-vite.cjs",
+    "check": "node build-preload.cjs --check && node check-cjs.cjs",
     "test": "node --test *.test.cjs",
-    "dist": "electron-builder --win nsis --x64",
-    "pack": "electron-builder --win dir --x64",
-    "publish": "electron-builder --win nsis --x64 --publish always"
+    "dist": "node build-preload.cjs && electron-builder --win nsis --x64",
+    "pack": "node build-preload.cjs && electron-builder --win dir --x64",
+    "publish": "node build-preload.cjs && electron-builder --win nsis --x64 --publish always"
   },
   "dependencies": {
     "docx": "^9.7.1",

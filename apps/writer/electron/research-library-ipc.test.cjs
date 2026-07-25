@@ -52,7 +52,12 @@ function loadPreloadApi(source) {
 }
 
 test("main registers every independent research-library IPC while retaining legacy research handlers", async () => {
-  const main = await sourceOf("main.cjs");
+  const [main, researchRuntime, researchLibraryIpc, workspaceResearchIpc] = await Promise.all([
+    sourceOf("main.cjs"),
+    sourceOf("research-runtime.cjs"),
+    sourceOf("research-library-ipc.cjs"),
+    sourceOf("workspace-research-ipc.cjs"),
+  ]);
   for (const channel of [
     "research:root-get",
     "research:root-pick",
@@ -81,50 +86,63 @@ test("main registers every independent research-library IPC while retaining lega
     "research:document-open",
     "research:watch",
   ]) {
-    assert.match(main, new RegExp(`ipcMain\\.handle\\("${channel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`), `missing ${channel}`);
+    assert.match(researchLibraryIpc, new RegExp(`ipcMain\\.handle\\("${channel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`), `missing ${channel}`);
   }
   for (const legacyChannel of [
     "research:list", "research:create", "research:update", "research:delete",
     "research:relink", "research:read-file", "research:open-external",
-    "workspace:identity",
+    "workspace:identity", "citation:list", "citation:upsert", "citation:delete",
   ]) {
-    assert.match(main, new RegExp(`ipcMain\\.handle\\("${legacyChannel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`), `missing legacy ${legacyChannel}`);
+    assert.match(workspaceResearchIpc, new RegExp(`ipcMain\\.handle\\("${legacyChannel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`), `missing legacy ${legacyChannel}`);
   }
-  assert.match(main, /createResearchLibraryManager\(\{ userDataPath: app\.getPath\("userData"\) \}\)/);
-  assert.match(main, /researchLibrary\?\.closeWatcher\(\)/);
-  assert.match(main, /"research:changed"/);
-  assert.match(main, /"research:watch-error"/);
-  const sourceMutations = between(main, "async function runResearchSourceMutation", 'ipcMain.handle("research:pdf-read"');
-  assert.match(sourceMutations, /error\?\.code !== REVISION_CONFLICT_CODE/);
+  assert.match(main, /require\("\.\/research-library-ipc\.cjs"\)/);
+  assert.match(main, /require\("\.\/workspace-research-ipc\.cjs"\)/);
+  assert.match(main, /registerResearchLibraryIpcHandlers\(\{/);
+  assert.match(main, /registerWorkspaceResearchIpcHandlers\(\{/);
+  assert.doesNotMatch(main, /ipcMain\.handle\("(?:research:|workspace:identity|citation:)/);
+  assert.match(main, /const researchRuntime = createResearchRuntime\(\{/);
+  assert.match(main, /await researchRuntime\.initialize\(\)/);
+  assert.match(main, /researchRuntime\.shutdown\(\)/);
+  assert.match(main, /researchFacade:\s*researchRuntime\.libraryFacade/);
+  assert.match(researchRuntime, /createResearchLibraryManager\(\{\s*userDataPath:\s*getUserDataPath\(\)/);
+  assert.match(researchRuntime, /researchLibrary\?\.closeWatcher\(\)/);
+  assert.match(researchLibraryIpc, /"research:changed"/);
+  assert.match(researchLibraryIpc, /"research:watch-error"/);
+  const sourceMutations = between(
+    researchLibraryIpc,
+    "async function runResearchSourceMutation",
+    "function registerResearchLibraryIpcHandlers",
+  );
+  assert.match(sourceMutations, /error\?\.code !== revisionConflictCode/);
   assert.match(sourceMutations, /conflict:\s*true/);
   assert.match(sourceMutations, /expectedRevision:\s*error\?\.expectedRevision/);
   assert.match(sourceMutations, /actualRevision:\s*error\?\.actualRevision/);
 });
 
-test("privileged import picks source files in main and never accepts renderer absolute source paths", async () => {
-  const main = await sourceOf("main.cjs");
-  const handler = between(main, 'ipcMain.handle("research:file-import"', 'ipcMain.handle("research:entry-rename"');
-  assert.match(handler, /library\.listFolder\(payload\.libraryId, payload\.targetRelativePath/);
-  assert.match(handler, /dialog\.showOpenDialog\(mainWindow/);
+test("privileged import picks source files in its registrar and never accepts renderer absolute source paths", async () => {
+  const researchLibraryIpc = await sourceOf("research-library-ipc.cjs");
+  const handler = between(researchLibraryIpc, 'ipcMain.handle("research:file-import"', 'ipcMain.handle("research:entry-rename"');
+  assert.match(handler, /library\.listFolder\(\s*payload\.libraryId,\s*payload\.targetRelativePath/);
+  assert.match(handler, /dialog\.showOpenDialog\(getMainWindow\(\)/);
   assert.match(handler, /properties:\s*\["openFile", "multiSelections"\]/);
-  assert.match(handler, /library\.importFiles\(payload\.libraryId, payload\.targetRelativePath \|\| "", picked\.filePaths\)/);
+  assert.match(handler, /library\.importFiles\([\s\S]*payload\.libraryId,[\s\S]*payload\.targetRelativePath \|\| "",[\s\S]*picked\.filePaths/);
   assert.doesNotMatch(handler, /payload\.(?:filePath|filePaths|sourcePath|sourcePaths)/);
 });
 
 test("the shared external-open channel distinguishes new capability payloads from legacy workspace calls", async () => {
-  const main = await sourceOf("main.cjs");
-  const handler = between(main, 'ipcMain.handle("research:open-external"', 'ipcMain.handle("citation:list"');
+  const workspaceResearchIpc = await sourceOf("workspace-research-ipc.cjs");
+  const handler = between(workspaceResearchIpc, 'ipcMain.handle("research:open-external"', 'ipcMain.handle("citation:list"');
   assert.match(handler, /typeof workspacePath === "object"/);
   assert.match(handler, /openEntryExternal\([\s\S]*workspacePath\.libraryId[\s\S]*workspacePath\.relativePath/);
   assert.match(handler, /assertAuthorizedDirectory\(workspacePath\)/);
   assert.match(handler, /resolveSourceFile\(rootPath, source\)/);
 });
 
-test("legacy import accepts only an authorized workspace capability and resolves every source file in main", async () => {
-  const main = await sourceOf("main.cjs");
-  const handler = between(main, 'ipcMain.handle("research:legacy-import"', 'ipcMain.handle("research:pdf-read"');
+test("legacy import accepts only an authorized workspace capability and resolves files in its registrar", async () => {
+  const researchLibraryIpc = await sourceOf("research-library-ipc.cjs");
+  const handler = between(researchLibraryIpc, 'ipcMain.handle("research:legacy-import"', 'ipcMain.handle("research:pdf-read"');
   assert.match(handler, /assertAuthorizedDirectory\(payload\.workspacePath\)/);
-  assert.match(handler, /activeWorkspaceWatchRoot/);
+  assert.match(handler, /getActiveWorkspaceRoot\(\)/);
   assert.match(handler, /只能从左侧文件区当前打开的写作工作区导入旧资料库/);
   assert.match(handler, /library\.listSources\(payload\.libraryId\)/);
   assert.match(handler, /listResearchSources\(workspacePath\)/);
@@ -135,17 +153,17 @@ test("legacy import accepts only an authorized workspace capability and resolves
 });
 
 test("preview and document opening resolve only independent-library capabilities", async () => {
-  const main = await sourceOf("main.cjs");
-  const preview = between(main, 'ipcMain.handle("research:preview-read"', 'ipcMain.handle("research:document-open"');
-  assert.match(preview, /readPreview\(payload\.libraryId, payload\.relativePath\)/);
+  const researchLibraryIpc = await sourceOf("research-library-ipc.cjs");
+  const preview = between(researchLibraryIpc, 'ipcMain.handle("research:preview-read"', 'ipcMain.handle("research:document-open"');
+  assert.match(preview, /readPreview\(\s*payload\.libraryId,\s*payload\.relativePath/);
   assert.match(preview, /preview\.previewKind === "docx"/);
-  assert.match(preview, /documentInterchange\.importDocument\(\{[\s\S]*format:\s*"docx"[\s\S]*sourcePath:\s*preview\.path[\s\S]*buffer:\s*preview\.bytes/);
+  assert.match(preview, /importDocument\(\{[\s\S]*format:\s*"docx"[\s\S]*sourcePath:\s*preview\.path[\s\S]*buffer:\s*preview\.bytes/);
   assert.match(preview, /decodeResearchPreviewText/);
   assert.match(preview, /sanitizeImportedHtml/);
   assert.doesNotMatch(preview, /payload\.(?:path|filePath|absolutePath)/);
   assert.ok(preview.indexOf('preview.previewKind === "docx"') < preview.indexOf("decodeResearchPreviewText(preview.bytes)"));
-  const document = between(main, 'ipcMain.handle("research:document-open"', 'ipcMain.handle("research:watch"');
-  assert.match(document, /copyEntryPath\(payload\.libraryId, payload\.relativePath\)/);
+  const document = between(researchLibraryIpc, 'ipcMain.handle("research:document-open"', 'ipcMain.handle("research:watch"');
+  assert.match(document, /copyEntryPath\(\s*payload\.libraryId,\s*payload\.relativePath/);
   assert.match(document, /isSupportedDocument\(resolved\.path\)/);
   assert.match(document, /authorizeDocumentPath\(resolved\.path\)/);
   assert.match(document, /loadPaperDocumentSnapshot\(filePath/);
@@ -153,13 +171,20 @@ test("preview and document opening resolve only independent-library capabilities
 });
 
 test("public web copying is bound to the currently open workspace identity", async () => {
-  const main = await sourceOf("main.cjs");
-  const handler = between(main, 'ipcMain.handle("research:web-selection-copy"', 'ipcMain.handle("research:web-source-upsert"');
-  assert.match(handler, /activeWorkspaceWatchRoot/);
-  assert.match(handler, /ensureWorkspace\(activeWorkspaceWatchRoot\)/);
+  const [main, researchLibraryIpc] = await Promise.all([
+    sourceOf("main.cjs"),
+    sourceOf("research-library-ipc.cjs"),
+  ]);
+  const handler = between(researchLibraryIpc, 'ipcMain.handle("research:web-selection-copy"', 'ipcMain.handle("research:web-source-upsert"');
+  assert.match(handler, /getActiveWorkspaceRoot\(\)/);
+  assert.match(handler, /ensureWorkspace\(activeWorkspaceRoot\)/);
   assert.match(handler, /normalizeWebScopeKey\(selection\.targetScopeKey\)/);
   assert.match(handler, /workspace\.manifest\.workspaceId/);
   assert.doesNotMatch(handler, /payload\.(?:workspacePath|rootPath)/);
+  assert.match(
+    main,
+    /getActiveWorkspaceRoot:\s*workspaceRuntime\.getActiveRoot/,
+  );
 });
 
 test("preload forwards exact library capabilities and revisions", async () => {
