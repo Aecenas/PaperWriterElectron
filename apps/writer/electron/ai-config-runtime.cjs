@@ -1,4 +1,14 @@
 const AI_CONFIG_FILE = "ai-config.json";
+const AI_TASK_MODEL_KEYS = Object.freeze([
+  "selectionChat",
+  "applyResolver",
+]);
+const AI_TASK_MODEL_KEY_SET = new Set(AI_TASK_MODEL_KEYS);
+const AI_TASK_MODEL_ASSIGNMENT_KEYS = new Set([
+  "providerId",
+  "modelId",
+  "requestParams",
+]);
 
 function createAiConfigRuntime({
   fs,
@@ -201,35 +211,57 @@ function createAiConfigRuntime({
   }
 
   function mergeAndValidateAiTaskModels(existing, taskModelsPatch) {
+    if (taskModelsPatch === undefined) {
+      return existing.taskModels;
+    }
     if (
       !taskModelsPatch
       || typeof taskModelsPatch !== "object"
       || Array.isArray(taskModelsPatch)
+      || Object.keys(taskModelsPatch).some(
+        (taskKey) => !AI_TASK_MODEL_KEY_SET.has(taskKey),
+      )
     ) {
-      return existing.taskModels;
+      throw new Error("任务模型配置无效");
     }
     const patchedTaskModels = {
       ...existing.taskModels,
       ...taskModelsPatch,
     };
-    if (
-      Object.prototype.hasOwnProperty.call(
-        taskModelsPatch,
-        "applyResolver",
-      )
-    ) {
-      const source = taskModelsPatch.applyResolver;
+    const touchedTaskKeys = [];
+    for (const taskKey of AI_TASK_MODEL_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(taskModelsPatch, taskKey)) {
+        continue;
+      }
+      touchedTaskKeys.push(taskKey);
+      const source = taskModelsPatch[taskKey];
       if (
         !source
         || typeof source !== "object"
         || Array.isArray(source)
+        || Object.keys(source).some(
+          (key) => !AI_TASK_MODEL_ASSIGNMENT_KEYS.has(key),
+        )
+        || (
+          source.providerId !== undefined
+          && typeof source.providerId !== "string"
+        )
+        || (
+          source.modelId !== undefined
+          && typeof source.modelId !== "string"
+        )
       ) {
         throw new Error("任务模型配置无效");
       }
-      patchedTaskModels.applyResolver = {
+      const hasProvider = Boolean(source.providerId?.trim());
+      const hasModel = Boolean(source.modelId?.trim());
+      if (hasProvider !== hasModel) {
+        throw new Error("任务模型必须同时指定供应商和模型");
+      }
+      patchedTaskModels[taskKey] = {
         ...source,
         requestParams: validateAiRequestParamsPatch(
-          source.requestParams || {},
+          source.requestParams,
         ),
       };
     }
@@ -237,35 +269,29 @@ function createAiConfigRuntime({
       ...existing,
       taskModels: patchedTaskModels,
     }).taskModels;
-    if (
-      !Object.prototype.hasOwnProperty.call(
-        taskModelsPatch,
-        "applyResolver",
-      )
-    ) {
-      return merged;
-    }
-    const assignment = merged.applyResolver;
-    if (!assignment.providerId && !assignment.modelId) {
-      return merged;
-    }
-    const resolver = exactAiProviderConfig(
-      existing,
-      assignment.providerId,
-      assignment.modelId,
-    );
-    if (!resolver) {
-      throw new Error("任务模型只能选择已连接供应商中的已连接模型");
-    }
-    if (resolver.transport === "codex-cli") {
-      if (Object.keys(assignment.requestParams || {}).length) {
-        throw new Error("Codex CLI 任务模型不支持 HTTP 请求参数");
+    for (const taskKey of touchedTaskKeys) {
+      const assignment = merged[taskKey];
+      if (!assignment.providerId && !assignment.modelId) {
+        continue;
       }
-      if (!codexRuntimeStatus.ready) {
-        throw new Error("任务模型所选 Codex CLI 当前不可用");
+      const resolver = exactAiProviderConfig(
+        existing,
+        assignment.providerId,
+        assignment.modelId,
+      );
+      if (!resolver) {
+        throw new Error("任务模型只能选择已连接供应商中的已连接模型");
       }
-    } else if (!resolver.apiKey || !resolver.testedOk) {
-      throw new Error("任务模型只能选择已连接供应商中的已连接模型");
+      if (resolver.transport === "codex-cli") {
+        if (Object.keys(assignment.requestParams || {}).length) {
+          throw new Error("Codex CLI 任务模型不支持 HTTP 请求参数");
+        }
+        if (!codexRuntimeStatus.ready) {
+          throw new Error("任务模型所选 Codex CLI 当前不可用");
+        }
+      } else if (!resolver.apiKey || !resolver.testedOk) {
+        throw new Error("任务模型只能选择已连接供应商中的已连接模型");
+      }
     }
     return merged;
   }

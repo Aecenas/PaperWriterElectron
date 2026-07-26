@@ -44,12 +44,12 @@ test("release phases cover the timeline exactly once and remain contiguous", () 
 
 test("release phase ranges and major/minor totals are derived from release data", () => {
   assert.equal(RELEASE_PHASES.length, 4);
-  assert.equal(RELEASE_PHASES.reduce((total, phase) => total + phase.majorCount, 0), 8);
+  assert.equal(RELEASE_PHASES.reduce((total, phase) => total + phase.majorCount, 0), 9);
   assert.equal(RELEASE_PHASES.reduce((total, phase) => total + phase.minorCount, 0), 11);
   assert.deepEqual(
     RELEASE_PHASES.map((phase) => [phase.id, phase.majorCount, phase.minorCount, phase.versionRange]),
     [
-      ["research-workspace", 1, 3, "V0.9.8 — V0.9.11"],
+      ["research-workspace", 2, 3, "V0.9.8 — V1.0.0"],
       ["intelligent-collaboration", 2, 1, "V0.9.0 — V0.9.2"],
       ["writing-workbench", 1, 2, "V0.8.0 — V0.8.2"],
       ["writing-foundation", 4, 5, "V0.1.0 — V0.2.0"],
@@ -57,16 +57,16 @@ test("release phase ranges and major/minor totals are derived from release data"
   );
   assert.deepEqual(
     RELEASE_PHASES.flatMap((phase) => phase.majorReleases.map((release) => release.version)),
-    ["0.9.8", "0.9.2", "0.9.0", "0.8.0", "0.2.0", "0.1.6", "0.1.1", "0.1.0"],
+    ["1.0.0", "0.9.8", "0.9.2", "0.9.0", "0.8.0", "0.2.0", "0.1.6", "0.1.1", "0.1.0"],
   );
   assert.ok(RELEASE_PHASES.every((phase) => phase.latestRelease === phase.releases[0]));
   assert.ok(RELEASE_PHASES.every((phase) => phase.oldestRelease === phase.releases.at(-1)));
   assert.deepEqual(buildReleasePhases(), RELEASE_PHASES);
 });
 
-test("the 0.9.8 consolidation remains intact after later maintenance releases", () => {
+test("the 0.9.8 consolidation remains intact after the 1.0.0 release", () => {
   const versions = RELEASE_NOTES.map((release) => release.version);
-  assert.equal(versions[0], "0.9.11");
+  assert.equal(versions[0], "1.0.0");
   assert.ok(versions.includes("0.9.8"));
   assert.ok(versions.includes("0.9.2"));
   assert.ok(["0.9.3", "0.9.4", "0.9.5", "0.9.6", "0.9.7"].every((version) => !versions.includes(version)));

@@ -458,7 +458,7 @@
   right: 0;
   top: 40px;
   bottom: 0;
-  z-index: 140;
+  z-index: 1900;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -2096,4 +2096,3 @@
 .secondary-pane-top-strip .research-pane-tab > button {
   transform: translateY(-1px);
 }
-

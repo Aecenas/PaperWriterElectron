@@ -8,6 +8,7 @@ import {
   createStatusActions,
   handleUpdateStateEvent,
   isAutomaticUpdateCheckThrottled,
+  shouldShowUpdateToast,
 } from "./controllers/index.js";
 
 function ref(current = null) {
@@ -109,7 +110,7 @@ test("status actions retain timeout replacement and explicit dismiss behavior", 
   assert.equal(states.at(-1), null);
 });
 
-test("update event transitions preserve notifications, automatic download/install, and terminal flow reset", () => {
+test("update event transitions keep milestone notifications while progress stays in the status bar", () => {
   const calls = [];
   const updateFlowRef = ref({ active: true, handled: "" });
   const dependencies = {
@@ -137,9 +138,34 @@ test("update event transitions preserve notifications, automatic download/instal
   ]);
   assert.equal(updateFlowRef.current.handled, "available");
 
+  const toastCountBeforeProgress = calls.filter(([kind]) => kind === "status").length;
+  handleUpdateStateEvent({
+    status: "downloading",
+    message: "正在下载更新 42%",
+    progressKnown: true,
+    percent: 42,
+  }, dependencies);
+  assert.equal(
+    calls.filter(([kind]) => kind === "status").length,
+    toastCountBeforeProgress,
+  );
+  assert.equal(calls.filter(([kind]) => kind === "download").length, 1);
+
   handleUpdateStateEvent({ status: "downloaded", message: "下载完成" }, dependencies);
   assert.equal(calls.filter(([kind]) => kind === "install").length, 1);
   assert.equal(updateFlowRef.current.handled, "downloaded");
+
+  const toastCountBeforeInstallPending = calls.filter(([kind]) => kind === "status").length;
+  handleUpdateStateEvent({
+    status: "downloaded",
+    message: "正在重启并安装更新...",
+    installPending: true,
+  }, dependencies);
+  assert.equal(calls.filter(([kind]) => kind === "install").length, 1);
+  assert.equal(
+    calls.filter(([kind]) => kind === "status").length,
+    toastCountBeforeInstallPending,
+  );
 
   handleUpdateStateEvent({ status: "error", message: "更新失败" }, dependencies);
   assert.deepEqual(calls.findLast(([kind]) => kind === "status"), [
@@ -148,6 +174,19 @@ test("update event transitions preserve notifications, automatic download/instal
     "warning",
   ]);
   assert.deepEqual(updateFlowRef.current, { active: false, handled: "error" });
+});
+
+test("update toast policy excludes high-frequency and installation-handshake states", () => {
+  assert.equal(shouldShowUpdateToast({ status: "checking", message: "检查中" }), false);
+  assert.equal(shouldShowUpdateToast({ status: "downloading", message: "42%" }), false);
+  assert.equal(shouldShowUpdateToast({
+    status: "downloaded",
+    message: "准备安装",
+    installPending: true,
+  }), false);
+  assert.equal(shouldShowUpdateToast({ status: "available", message: "发现更新" }), true);
+  assert.equal(shouldShowUpdateToast({ status: "downloaded", message: "下载完成" }), true);
+  assert.equal(shouldShowUpdateToast({ status: "error", message: "更新失败" }), true);
 });
 
 test("automatic update throttle keeps the existing 24-hour boundary", () => {

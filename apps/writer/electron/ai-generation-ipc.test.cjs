@@ -16,6 +16,7 @@ test("registers only the AI generation channels through one facade", () => {
     },
     generationFacade: {
       generate() {},
+      generateSelectionAi() {},
       resolveApply() {},
       cancel() {},
       exportChat() {},
@@ -26,6 +27,7 @@ test("registers only the AI generation channels through one facade", () => {
     "ai:export-chat",
     "ai:generate",
     "ai:resolve-apply",
+    "ai:selection-generate",
   ]);
 });
 
@@ -36,6 +38,10 @@ test("forwards generation payloads without changing events, ids, defaults, or re
     generate(...args) {
       calls.push(["generate", ...args]);
       return { ok: true, requestId: "ai-abc123" };
+    },
+    generateSelectionAi(...args) {
+      calls.push(["generateSelectionAi", ...args]);
+      return { ok: true, requestId: "ai-selection-abc123" };
     },
     resolveApply(...args) {
       calls.push(["resolveApply", ...args]);
@@ -65,10 +71,20 @@ test("forwards generation payloads without changing events, ids, defaults, or re
     prompt: "hello",
   };
   const resolvePayload = { manifest: { version: 1 } };
+  const selectionPayload = {
+    requestId: "ai-selection-abc123",
+    frozenText: "选中文字",
+    history: [],
+    question: "这是什么意思？",
+  };
   const exportPayload = { markdown: "# Chat" };
   assert.deepEqual(
     await handlers.get("ai:generate")(event, generatePayload),
     { ok: true, requestId: "ai-abc123" },
+  );
+  assert.deepEqual(
+    await handlers.get("ai:selection-generate")(event, selectionPayload),
+    { ok: true, requestId: "ai-selection-abc123" },
   );
   assert.deepEqual(
     await handlers.get("ai:resolve-apply")(event, resolvePayload),
@@ -88,6 +104,7 @@ test("forwards generation payloads without changing events, ids, defaults, or re
   );
   assert.deepEqual(calls, [
     ["generate", event, generatePayload],
+    ["generateSelectionAi", event, selectionPayload],
     ["resolveApply", resolvePayload],
     ["resolveApply", {}],
     ["cancel", "ai-abc123"],

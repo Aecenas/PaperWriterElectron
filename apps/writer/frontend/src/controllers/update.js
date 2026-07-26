@@ -52,6 +52,14 @@ export function useScheduleUpdateResultReset(
   }, [clearUpdateResultReset]);
 }
 
+export function shouldShowUpdateToast(state = {}) {
+  return Boolean(
+    state.message
+    && !state.installPending
+    && ["available", "downloaded", "none", "dev", "browser", "error"].includes(state.status),
+  );
+}
+
 export function handleUpdateStateEvent(state, {
   clearUpdateResultReset,
   setUpdateState,
@@ -62,7 +70,7 @@ export function handleUpdateStateEvent(state, {
 }) {
   clearUpdateResultReset();
   setUpdateState(state);
-  if (state?.message) {
+  if (shouldShowUpdateToast(state)) {
     showStatus(state.message, state.status === "error" ? "warning" : "success");
   }
   scheduleUpdateResultReset(state);
@@ -74,7 +82,11 @@ export function handleUpdateStateEvent(state, {
     updateBridge.downloadUpdate?.();
     return;
   }
-  if (state?.status === "downloaded" && updateFlowRef.current.handled !== "downloaded") {
+  if (
+    state?.status === "downloaded"
+    && !state.installPending
+    && updateFlowRef.current.handled !== "downloaded"
+  ) {
     updateFlowRef.current.handled = "downloaded";
     updateBridge.installUpdate?.();
     return;
@@ -132,7 +144,10 @@ export function useRunUpdateAction({
     if (updateStatus === "downloaded") {
       updateFlowRef.current = { active: true, handled: "" };
       updateFlowRef.current.handled = "downloaded";
-      await bridge.installUpdate?.();
+      const state = await bridge.installUpdate?.();
+      if (state) {
+        setUpdateState(state);
+      }
       return;
     }
     if (updateStatus === "available") {
@@ -148,7 +163,9 @@ export function useRunUpdateAction({
     const state = await bridge.checkForUpdates?.();
     if (state) {
       setUpdateState(state);
-      showStatus(state.message || "更新检查完成", state.status === "error" ? "warning" : "success");
+      if (shouldShowUpdateToast(state)) {
+        showStatus(state.message, state.status === "error" ? "warning" : "success");
+      }
       if (["none", "error", "dev", "available", "downloaded", "browser"].includes(state.status)) {
         updateFlowRef.current = { active: false, handled: state.status };
       }

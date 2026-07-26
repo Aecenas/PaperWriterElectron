@@ -13,6 +13,7 @@ const __preloadModules = {
         saveAiConfig: (config) => ipcRenderer.invoke("ai:save-config", config || {}),
         testAiConfig: (config) => ipcRenderer.invoke("ai:test-config", config || {}),
         generateAi: (payload) => ipcRenderer.invoke("ai:generate", payload || {}),
+        generateSelectionAi: (payload) => ipcRenderer.invoke("ai:selection-generate", payload || {}),
         resolveAiApply: (payload) => ipcRenderer.invoke("ai:resolve-apply", payload || {}),
         cancelAi: (requestId) => ipcRenderer.invoke("ai:cancel", requestId || ""),
         exportAiChat: (payload) => ipcRenderer.invoke("ai:export-chat", payload || {}),
@@ -256,6 +257,23 @@ const __preloadModules = {
           libraryId: libraryId || "",
           relativePath: relativePath || "",
         }),
+        searchResearch: (payload = {}) => ipcRenderer.invoke("research:search", {
+          libraryId: payload?.libraryId || "",
+          requestId: payload?.requestId || "",
+          query: payload?.query || "",
+          scopeKey: payload?.scopeKey || "global",
+          workspaceScopeKey: payload?.workspaceScopeKey || "",
+          limit: payload?.limit,
+          includeFiles: payload?.includeFiles !== false,
+          includeWeb: payload?.includeWeb !== false,
+          kinds: Array.isArray(payload?.kinds) ? payload.kinds : [],
+        }),
+        cancelResearchSearch: (libraryId, requestId) => (
+          ipcRenderer.invoke("research:search-cancel", {
+            libraryId: libraryId || "",
+            requestId: requestId || "",
+          })
+        ),
         openResearchDocument: (libraryId, relativePath) => ipcRenderer.invoke("research:document-open", {
           libraryId: libraryId || "",
           relativePath: relativePath || "",
@@ -295,6 +313,9 @@ const __preloadModules = {
         ),
         onResearchLibraryChanged: (callback) => subscribeToIpc(ipcRenderer, "research:changed", callback, true),
         onResearchLibraryWatchError: (callback) => subscribeToIpc(ipcRenderer, "research:watch-error", callback, true),
+        onResearchSearchProgress: (callback) => (
+          subscribeToIpc(ipcRenderer, "research:search-progress", callback, true)
+        ),
       };
     }
 

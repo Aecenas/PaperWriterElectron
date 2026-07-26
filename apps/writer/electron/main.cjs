@@ -27,6 +27,11 @@ const { createExportRuntime } = require("./export-runtime.cjs");
 const { createFilesystemRuntime } = require("./filesystem-runtime.cjs");
 const { createResearchRuntime } = require("./research-runtime.cjs");
 const { createTrustedIpcRegistrar } = require("./ipc-registrar.cjs");
+const {
+  createInitialUpdateState,
+  mergeUpdateState,
+  registerUpdateEvents,
+} = require("./update-runtime.cjs");
 const { createWorkspaceRuntime } = require("./workspace-runtime.cjs");
 const {
   ASSET_PROTOCOL,
@@ -151,11 +156,7 @@ let closeAttentionActive = false;
 let rendererCanConfirmClose = false;
 let pendingUpdateInstall = false;
 let downloadGuardInstalled = false;
-let updateState = {
-  status: "idle",
-  message: "尚未检查更新",
-  version: app.getVersion(),
-};
+let updateState = createInitialUpdateState(app.getVersion());
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 app.on("second-instance", () => {
@@ -450,11 +451,7 @@ const ipcMain = createTrustedIpcRegistrar({
 });
 
 function emitUpdateState(patch) {
-  updateState = {
-    ...updateState,
-    ...patch,
-    version: app.getVersion(),
-  };
+  updateState = mergeUpdateState(updateState, patch, app.getVersion());
   sendRendererEvent(mainWindow?.webContents, "update:state", updateState);
   return updateState;
 }
@@ -624,48 +621,16 @@ function createWindow() {
   });
 }
 
-autoUpdater.on("checking-for-update", () => {
-  emitUpdateState({ status: "checking", message: "正在检查更新..." });
-});
-
-autoUpdater.on("update-available", (info) => {
-  emitUpdateState({
-    status: "available",
-    message: `发现新版本 ${info.version}`,
-    availableVersion: info.version,
-  });
-});
-
-autoUpdater.on("update-not-available", () => {
-  emitUpdateState({ status: "none", message: "当前已经是最新版本" });
-});
-
-autoUpdater.on("download-progress", (progress) => {
-  emitUpdateState({
-    status: "downloading",
-    message: `正在下载更新 ${Math.round(progress.percent || 0)}%`,
-    percent: Math.round(progress.percent || 0),
-  });
-});
-
-autoUpdater.on("update-downloaded", (info) => {
-  emitUpdateState({
-    status: "downloaded",
-    message: `版本 ${info.version} 已下载，重启后安装`,
-    availableVersion: info.version,
-  });
-});
-
-autoUpdater.on("error", (error) => {
-  if (pendingUpdateInstall) {
-    pendingUpdateInstall = false;
-    forceCloseWindow = false;
-    closeRequestInFlight = false;
-  }
-  emitUpdateState({
-    status: "error",
-    message: `更新失败：${error.message}`,
-  });
+registerUpdateEvents({
+  autoUpdater,
+  emitUpdateState,
+  onError: () => {
+    if (pendingUpdateInstall) {
+      pendingUpdateInstall = false;
+      forceCloseWindow = false;
+      closeRequestInFlight = false;
+    }
+  },
 });
 
 function ensureExtension(filePath, extension) {

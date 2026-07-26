@@ -61,12 +61,78 @@ test("browser bridge saves applyResolver independently from the active model", a
       requestParams: { thinking: { type: "enabled" }, max_tokens: 2048 },
     });
     assert.deepEqual(JSON.parse(memory.get("paperwriter.aiConfig")).taskModels.applyResolver, saved.taskModels.applyResolver);
+    const withSelectionChat = await browserBridge.saveAiConfig({
+      taskModels: {
+        selectionChat: {
+          providerId: "deepseek",
+          modelId: "deepseek-resolver",
+          requestParams: { temperature: 0.1 },
+        },
+      },
+    });
+    assert.deepEqual(withSelectionChat.taskModels.selectionChat, {
+      providerId: "deepseek",
+      modelId: "deepseek-resolver",
+      requestParams: { temperature: 0.1 },
+    });
+    assert.deepEqual(
+      withSelectionChat.taskModels.applyResolver,
+      saved.taskModels.applyResolver,
+    );
+    const followingDefault = await browserBridge.saveAiConfig({
+      taskModels: {
+        selectionChat: {
+          providerId: "",
+          modelId: "",
+          requestParams: {},
+        },
+      },
+    });
+    assert.deepEqual(followingDefault.taskModels.selectionChat, {
+      providerId: "",
+      modelId: "",
+      requestParams: {},
+    });
+    assert.deepEqual(
+      followingDefault.taskModels.applyResolver,
+      saved.taskModels.applyResolver,
+    );
     await assert.rejects(
       () => browserBridge.saveAiConfig({
         taskModels: { applyResolver: { providerId: "deepseek", modelId: "deepseek-resolver", requestParams: { model: "escape" } } },
       }),
       /请求参数/,
     );
+    for (const taskModels of [
+      null,
+      { unknownTask: {} },
+      {
+        selectionChat: {
+          providerId: "deepseek",
+          requestParams: {},
+        },
+      },
+      {
+        selectionChat: {
+          providerId: "",
+          modelId: "",
+          requestParams: null,
+        },
+      },
+      {
+        selectionChat: {
+          providerId: "",
+          modelId: "",
+          requestParams: {},
+          extra: true,
+        },
+      },
+    ]) {
+      await assert.rejects(
+        () => browserBridge.saveAiConfig({ taskModels }),
+        /任务模型|请求参数/,
+      );
+    }
   } finally {
     delete globalThis.localStorage;
   }
@@ -110,6 +176,118 @@ test("browser bridge rejects disconnected or untested task models", async () => 
       /已连接供应商中的已连接模型/,
     );
   } finally {
+    delete globalThis.localStorage;
+  }
+});
+
+test("browser selection generation honors its task model and exact cancel registry", async () => {
+  const memory = new Map();
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem: (key, value) => memory.set(key, String(value)),
+      removeItem: (key) => memory.delete(key),
+    },
+  });
+  globalThis.window = globalThis;
+  const errors = [];
+  const unsubscribe = browserBridge.onAiError((event) => errors.push(event));
+  try {
+    memory.set("paperwriter.aiConfig", JSON.stringify({
+      activeProvider: "gemini",
+      activeModelId: "gemini-main",
+      taskModels: {
+        selectionChat: {
+          providerId: "deepseek",
+          modelId: "deepseek-selection",
+          requestParams: {},
+        },
+      },
+      providers: {
+        gemini: {
+          apiKey: "default-key",
+          activeModelId: "gemini-main",
+          models: [{
+            id: "gemini-main",
+            name: "Default",
+            model: "gemini-main",
+            testedOk: true,
+          }],
+        },
+        deepseek: {
+          apiKey: "selection-key",
+          activeModelId: "deepseek-selection",
+          models: [{
+            id: "deepseek-selection",
+            name: "Selection",
+            model: "deepseek-selection",
+            testedOk: true,
+          }],
+        },
+      },
+    }));
+    const generated = await browserBridge.generateSelectionAi({
+      requestId: "ai-selection-browser-123",
+      selectedText: "只发送冻结选区",
+      history: [],
+      question: "解释它",
+    });
+    assert.equal(generated.ok, true);
+    assert.equal(generated.model.providerId, "deepseek");
+    assert.equal(generated.model.modelId, "deepseek-selection");
+
+    const canceled = await browserBridge.cancelAi(
+      "ai-selection-browser-123",
+    );
+    assert.deepEqual(canceled, { ok: true, canceled: true });
+    assert.deepEqual(errors, [{
+      requestId: "ai-selection-browser-123",
+      message: "已停止生成",
+      aborted: true,
+    }]);
+
+    const stored = JSON.parse(memory.get("paperwriter.aiConfig"));
+    stored.taskModels.selectionChat.modelId = "deepseek-deleted";
+    memory.set("paperwriter.aiConfig", JSON.stringify(stored));
+    const stale = await browserBridge.generateSelectionAi({
+      requestId: "ai-selection-browser-124",
+      selectedText: "选区",
+      history: [],
+      question: "继续",
+    });
+    assert.equal(stale.ok, false);
+    assert.equal(stale.code, "AI_SELECTION_CHAT_MODEL_INVALID");
+
+    stored.taskModels.selectionChat.modelId = "deepseek-selection";
+    memory.set("paperwriter.aiConfig", JSON.stringify(stored));
+    const activeIds = [];
+    for (let index = 0; index < 4; index += 1) {
+      const requestId = `ai-selection-browser-limit-${index}`;
+      const started = await browserBridge.generateSelectionAi({
+        requestId,
+        selectedText: "选区",
+        history: [],
+        question: "限流测试",
+      });
+      assert.equal(started.ok, true);
+      activeIds.push(requestId);
+    }
+    const limited = await browserBridge.generateSelectionAi({
+      requestId: "ai-selection-browser-limit-4",
+      selectedText: "选区",
+      history: [],
+      question: "第五个请求",
+    });
+    assert.equal(limited.code, "AI_SELECTION_REQUEST_LIMIT");
+    await Promise.all(activeIds.map(
+      (requestId) => browserBridge.cancelAi(requestId),
+    ));
+  } finally {
+    unsubscribe();
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
     delete globalThis.localStorage;
   }
 });
@@ -292,7 +470,8 @@ test("browser bridge exposes the desktop feature surface with explicit browser f
     "listResearchWebTree", "upsertResearchWebSource", "createResearchWebFolder", "updateResearchWebFolder",
     "deleteResearchWebFolder", "moveResearchWebSource", "copyResearchWebSelection", "getWorkspaceIdentity",
     "listLibrarySources", "upsertLibrarySource", "deleteLibrarySource", "readResearchPdf", "openResearchEntryExternal",
-    "watchResearchLibrary", "onResearchLibraryChanged", "onResearchLibraryWatchError",
+    "searchResearch", "cancelResearchSearch", "watchResearchLibrary", "onResearchLibraryChanged", "onResearchLibraryWatchError",
+    "onResearchSearchProgress",
     "showResearchWebView", "updateResearchWebViewBounds", "hideResearchWebView", "controlResearchWebView",
     "destroyResearchWebView", "onResearchWebViewState",
     "writeClipboardContent",

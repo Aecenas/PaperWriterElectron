@@ -20,7 +20,7 @@ export function useResearchOpenActions({
 }) {
   const { researchRoot, researchRootRef } = researchState;
 
-  const openIndependentResearchItem = useCallback(async (item) => {
+  const openIndependentResearchItem = useCallback(async (item, options = {}) => {
     if (!researchRoot?.libraryId || !item) return;
     const libraryId = researchRoot.libraryId;
     if (researchEntryType(item) === "folder") {
@@ -51,20 +51,24 @@ export function useResearchOpenActions({
         });
         if (!tabId) showStatus("标签栏已满，请先关闭一个标签", "warning");
         else showStatus("资料信笺已在右侧打开", "success");
+        return tabId || "";
       } catch (error) {
         if (researchRootRef.current?.libraryId === libraryId) {
           showStatus(error?.message || "无法打开资料中的笺间文档", "warning");
         }
       }
-      return;
+      return "";
     }
     if (researchRootRef.current?.libraryId !== libraryId) return;
+    const runtimeItem = options.searchTarget
+      ? { ...item, searchTarget: options.searchTarget }
+      : item;
     const target = item.type === "web"
       ? { libraryId, sourceId: item.id }
       : { libraryId, relativePath: item.relativePath };
     const titleSnapshot = item.title || item.name || item.fileName || item.relativePath || "未命名资料";
-    openResearchPreviewView({
-      item,
+    return openResearchPreviewView({
+      item: runtimeItem,
       researchType: previewKind,
       target,
       titleSnapshot,

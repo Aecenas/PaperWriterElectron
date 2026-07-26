@@ -9,6 +9,7 @@ const EXPECTED_API_KEYS = [
   "backupDocument",
   "cancelAi",
   "cancelFolderSearch",
+  "cancelResearchSearch",
   "checkForUpdates",
   "clearAutosave",
   "clearResearchRoot",
@@ -41,6 +42,7 @@ const EXPECTED_API_KEYS = [
   "exportPageImages",
   "exportPdf",
   "generateAi",
+  "generateSelectionAi",
   "getAiConfig",
   "getDocumentRevision",
   "getFullscreen",
@@ -74,6 +76,7 @@ const EXPECTED_API_KEYS = [
   "onFullscreenChanged",
   "onResearchLibraryChanged",
   "onResearchLibraryWatchError",
+  "onResearchSearchProgress",
   "onResearchWebViewState",
   "onUpdateState",
   "onWindowBlur",
@@ -106,6 +109,7 @@ const EXPECTED_API_KEYS = [
   "saveDocument",
   "saveTempDocument",
   "searchFolder",
+  "searchResearch",
   "setFullscreen",
   "setWindowModalOverlay",
   "showFolder",
@@ -130,6 +134,17 @@ const revision = { size: 42, mtimeMs: 1234, sha256: "a".repeat(64) };
 const sourceValue = { id: "source-1", title: "资料", filePath: "C:\\private\\source.pdf" };
 const placement = { scopeKey: "global", folderId: "folder-1" };
 const payload = { value: 1 };
+const researchSearchValue = {
+  libraryId: "library-1",
+  requestId: "research-search-1",
+  query: "方法",
+  workspaceScopeKey: "workspace:11111111-1111-4111-8111-111111111111",
+  limit: 42,
+  includeFiles: false,
+  includeWeb: true,
+  kinds: ["pdf", "web"],
+  rootPath: "C:\\不得转发",
+};
 
 const INVOKE_CONTRACTS = [
   ["getPaths", [], ["app:get-paths"]],
@@ -143,6 +158,7 @@ const INVOKE_CONTRACTS = [
   ["saveAiConfig", [payload], ["ai:save-config", payload]],
   ["testAiConfig", [payload], ["ai:test-config", payload]],
   ["generateAi", [payload], ["ai:generate", payload]],
+  ["generateSelectionAi", [payload], ["ai:selection-generate", payload]],
   ["resolveAiApply", [payload], ["ai:resolve-apply", payload]],
   ["cancelAi", ["request-1"], ["ai:cancel", "request-1"]],
   ["exportAiChat", [payload], ["ai:export-chat", payload]],
@@ -158,6 +174,21 @@ const INVOKE_CONTRACTS = [
   ["listFolder", ["C:\\工作区"], ["folder:list", "C:\\工作区"]],
   ["searchFolder", [payload], ["folder:search", payload]],
   ["cancelFolderSearch", ["C:\\工作区", "search-1"], ["folder:search-cancel", "C:\\工作区", "search-1"]],
+  ["searchResearch", [researchSearchValue], ["research:search", {
+    libraryId: "library-1",
+    requestId: "research-search-1",
+    query: "方法",
+    scopeKey: "global",
+    workspaceScopeKey: "workspace:11111111-1111-4111-8111-111111111111",
+    limit: 42,
+    includeFiles: false,
+    includeWeb: true,
+    kinds: ["pdf", "web"],
+  }]],
+  ["cancelResearchSearch", ["library-1", "research-search-1"], ["research:search-cancel", {
+    libraryId: "library-1",
+    requestId: "research-search-1",
+  }]],
   ["getWorkspaceRelationships", [payload], ["workspace:relationships", payload]],
   ["watchWorkspace", ["C:\\工作区"], ["workspace:watch", "C:\\工作区"]],
   ["getDocumentRevision", ["C:\\稿件.letterpaper"], ["document:revision", "C:\\稿件.letterpaper"]],
@@ -311,6 +342,7 @@ const EVENT_CONTRACTS = [
   ["onWorkspaceWatchError", "workspace:watch-error", true],
   ["onResearchLibraryChanged", "research:changed", true],
   ["onResearchLibraryWatchError", "research:watch-error", true],
+  ["onResearchSearchProgress", "research:search-progress", true],
   ["onWindowFocus", "window:focus", true],
   ["onWindowBlur", "window:blur", true],
   ["onFullscreenChanged", "window:fullscreen-changed", true],

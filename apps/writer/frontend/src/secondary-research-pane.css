@@ -319,7 +319,8 @@
   white-space: nowrap;
 }
 
-.secondary-static-toolbar .secondary-preview-search button {
+.secondary-static-toolbar .secondary-preview-search button,
+.secondary-pdf-toolbar .secondary-preview-search button {
   min-inline-size: 23px;
   inline-size: 23px;
   block-size: 24px;
@@ -570,11 +571,85 @@
   outline-offset: -2px;
 }
 
-.secondary-pdf-canvas-scroll canvas {
+.secondary-pdf-page-surface {
+  position: relative;
   display: inline-block;
-  max-inline-size: none;
+  overflow: hidden;
   background: #fffdfa;
   box-shadow: 0 4px 16px rgba(64, 53, 40, 0.2);
+  text-align: initial;
+  vertical-align: top;
+}
+
+.secondary-pdf-page-surface canvas {
+  display: block;
+  max-inline-size: none;
+  background: #fffdfa;
+}
+
+.secondary-pdf-text-layer {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: clip;
+  color-scheme: only light;
+  line-height: 1;
+  opacity: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+  forced-color-adjust: none;
+}
+
+.secondary-pdf-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  cursor: text;
+  white-space: pre;
+  transform-origin: 0 0;
+}
+
+.secondary-pdf-text-layer > :not(.markedContent),
+.secondary-pdf-text-layer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.secondary-pdf-text-layer .markedContent {
+  display: contents;
+}
+
+.secondary-pdf-text-layer mark {
+  border-radius: 2px;
+  padding: 0 1px;
+  color: transparent;
+  background: rgba(241, 198, 91, 0.64);
+  box-shadow: inset 0 -1px 0 rgba(165, 104, 43, 0.28);
+}
+
+.secondary-pdf-text-layer mark.is-active {
+  background: rgba(180, 93, 54, 0.82);
+  box-shadow: 0 0 0 2px rgba(180, 93, 54, 0.22);
+}
+
+.secondary-pdf-text-layer ::selection {
+  color: transparent;
+  background: rgba(115, 158, 195, 0.42);
+}
+
+@media (forced-colors: active) {
+  .secondary-pdf-text-layer mark,
+  .secondary-pdf-text-layer mark.is-active {
+    outline: 2px solid Highlight;
+    background: transparent;
+  }
 }
 
 .secondary-pdf-feedback {

@@ -55,6 +55,7 @@ export default function SecondaryResearchPane({
           <PdfReader
             source={item}
             loadPdf={pdfLoader}
+            initialSearch={item?.searchTarget}
             onOpenExternal={onOpenExternal}
             onShowInFolder={onShowInFolder}
             onPageChange={handlePdfPageChange}
@@ -64,7 +65,7 @@ export default function SecondaryResearchPane({
           />
         ) : null}
         {!loading && !error && kind === "web" ? <EmbeddedWebResearch item={item} viewId={viewId} suspended={webViewSuspended} onActivate={onActivate} onOpenExternal={onOpenExternal} /> : null}
-        {!loading && !error && ["docx", "markdown", "text", "table", "image"].includes(kind) ? <StaticResearchPreview item={item} loadPreview={previewLoader} onOpenExternal={onOpenExternal} onShowInFolder={onShowInFolder} /> : null}
+        {!loading && !error && ["docx", "markdown", "text", "table", "image"].includes(kind) ? <StaticResearchPreview item={item} initialSearch={item?.searchTarget} loadPreview={previewLoader} onOpenExternal={onOpenExternal} onShowInFolder={onShowInFolder} /> : null}
         {!loading && !error && kind === "unsupported" ? <UnsupportedResearchCard item={item} onShowInFolder={onShowInFolder} /> : null}
       </div>
     </aside>

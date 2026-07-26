@@ -28,6 +28,7 @@ export {
 export {
   handleUpdateStateEvent,
   isAutomaticUpdateCheckThrottled,
+  shouldShowUpdateToast,
   useClearUpdateResultReset,
   useRunUpdateAction,
   useScheduleUpdateResultReset,
@@ -75,6 +76,14 @@ export {
 export { useResearchFileActions } from "./research-file-actions.js";
 export { useResearchOpenActions } from "./research-open-actions.js";
 export { useResearchSourceWebActions } from "./research-source-web-actions.js";
+export {
+  RESEARCH_SEARCH_DEBOUNCE_MS,
+  RESEARCH_SEARCH_PROGRESS_DELAY_MS,
+  createEmptyResearchSearchState,
+  createResearchSearchRequestId,
+  researchSearchProgressMatches,
+  useResearchSearch,
+} from "./research-search.js";
 export {
   createEmptyWorkspaceRelationships,
   useKnowledgeReferenceState,
@@ -139,6 +148,12 @@ export {
   createAiRequestActions,
   useAiRequestActions,
 } from "./ai-request-actions.js";
+export {
+  SELECTION_AI_STREAM_FLUSH_INTERVAL_MS,
+  createSelectionAiController,
+  resolveSelectionAiModelChoice,
+  useSelectionAiController,
+} from "./selection-ai-controller.js";
 export {
   AI_MODE_PAGE_TRANSITION_MS,
   scheduleAiPageTransitionClear,

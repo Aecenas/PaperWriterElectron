@@ -3,21 +3,44 @@ import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import {
   ArrowLeft,
   ArrowRight,
+  ChevronDown,
+  ChevronUp,
   LoaderCircle,
   ScanLine,
   Search,
+  ShieldAlert,
   X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import PreviewToolbar from "./PreviewToolbar.jsx";
 import { itemIdentity, normalizePdfBytes } from "./reader-utils.js";
+import {
+  createPdfPageSearchIndex,
+  findPdfPageSearchMatches,
+  MAX_PDF_SEARCH_MATCHES,
+  normalizePdfSearchQuery,
+  preferredPdfSearchMatchIndex,
+} from "./pdf-search-model.js";
 
 const MIN_PDF_SCALE = 0.35;
 const MAX_PDF_SCALE = 2.5;
 const PDF_ZOOM_STEP = 0.12;
 const PDF_SCROLL_COMMIT_DELAY = 120;
 const PDF_HORIZONTAL_CHROME = 42;
+
+function emptyPdfSearchState() {
+  return {
+    query: "",
+    matches: [],
+    activeIndex: -1,
+    status: "idle",
+    scannedPages: 0,
+    totalPages: 0,
+    searchablePages: 0,
+    truncated: false,
+  };
+}
 
 const DEFAULT_PDF_VIEW_STATE = Object.freeze({
   page: 1,
@@ -71,9 +94,48 @@ function isTextEntryTarget(target) {
     || Boolean(target?.closest?.("[contenteditable='true']"));
 }
 
+function applyPdfSearchHighlights(layer, matches, activeIndex) {
+  if (!layer?.textDivs?.length) return null;
+  const rangesByItem = new Map();
+  for (const match of matches) {
+    for (const segment of match.segments || []) {
+      const ranges = rangesByItem.get(segment.itemIndex) || [];
+      ranges.push({ ...segment, matchIndex: match.index });
+      rangesByItem.set(segment.itemIndex, ranges);
+    }
+  }
+
+  layer.textDivs.forEach((textDiv, itemIndex) => {
+    const value = layer.strings[itemIndex] || "";
+    const ranges = rangesByItem.get(itemIndex) || [];
+    if (!ranges.length) {
+      if (textDiv.textContent !== value || textDiv.childNodes.length !== 1) textDiv.textContent = value;
+      return;
+    }
+    const fragment = textDiv.ownerDocument.createDocumentFragment();
+    let cursor = 0;
+    ranges.sort((left, right) => left.start - right.start).forEach((range) => {
+      if (range.start > cursor) fragment.append(textDiv.ownerDocument.createTextNode(value.slice(cursor, range.start)));
+      const mark = textDiv.ownerDocument.createElement("mark");
+      mark.className = range.matchIndex === activeIndex ? "is-active" : "";
+      mark.dataset.pdfSearchIndex = String(range.matchIndex);
+      mark.textContent = value.slice(range.start, range.end);
+      fragment.append(mark);
+      cursor = Math.max(cursor, range.end);
+    });
+    if (cursor < value.length) fragment.append(textDiv.ownerDocument.createTextNode(value.slice(cursor)));
+    textDiv.replaceChildren(fragment);
+  });
+
+  return layer.textDivs
+    .flatMap((textDiv) => [...textDiv.querySelectorAll("mark.is-active")])
+    .find(Boolean) || null;
+}
+
 export function PdfReader({
   source,
   loadPdf,
+  initialSearch = null,
   onOpenExternal,
   onShowInFolder,
   onPageChange,
@@ -84,10 +146,17 @@ export function PdfReader({
   const initialViewState = normalizePdfViewState(viewState ?? defaultViewState);
   const stageRef = useRef(null);
   const viewportRef = useRef(null);
+  const pageSurfaceRef = useRef(null);
   const canvasRef = useRef(null);
+  const textLayerRef = useRef(null);
   const searchInputRef = useRef(null);
+  const appliedInitialSearchRef = useRef("");
   const pageDraftRef = useRef(String(initialViewState.page));
   const renderTaskRef = useRef(null);
+  const textLayerTaskRef = useRef(null);
+  const currentTextLayerRef = useRef(null);
+  const pdfjsRef = useRef(null);
+  const pageTextCacheRef = useRef(new Map());
   const loadTaskRef = useRef(null);
   const searchRunRef = useRef(0);
   const scrollRestoreFrameRef = useRef(0);
@@ -106,6 +175,8 @@ export function PdfReader({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [searchMessage, setSearchMessage] = useState("");
+  const [searchState, setSearchState] = useState(emptyPdfSearchState);
+  const [textLayerVersion, setTextLayerVersion] = useState(0);
   const [pageDraft, setPageDraft] = useState(String(initialViewState.page));
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
@@ -162,6 +233,12 @@ export function PdfReader({
     window.cancelAnimationFrame(scrollRestoreFrameRef.current);
     window.clearTimeout(scrollCommitTimerRef.current);
     scrollingRef.current = false;
+    renderTaskRef.current?.cancel?.();
+    textLayerTaskRef.current?.cancel?.();
+    currentTextLayerRef.current = null;
+    pageTextCacheRef.current.clear();
+    pdfjsRef.current = null;
+    appliedInitialSearchRef.current = "";
     setPdf(null);
     setPage(restoredViewState.page);
     pageDraftRef.current = String(restoredViewState.page);
@@ -175,6 +252,8 @@ export function PdfReader({
     setSearchOpen(false);
     setQuery("");
     setSearchMessage("");
+    setSearchState(emptyPdfSearchState());
+    setTextLayerVersion(0);
     setError("");
     setStatus("loading");
     (async () => {
@@ -187,6 +266,7 @@ export function PdfReader({
         const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
         if (disposed) return;
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+        pdfjsRef.current = pdfjs;
         loadingTask = pdfjs.getDocument({ data: bytes });
         loadTaskRef.current = loadingTask;
         loadedDocument = await loadingTask.promise;
@@ -213,6 +293,10 @@ export function PdfReader({
       window.cancelAnimationFrame(scrollRestoreFrameRef.current);
       window.clearTimeout(scrollCommitTimerRef.current);
       renderTaskRef.current?.cancel?.();
+      textLayerTaskRef.current?.cancel?.();
+      currentTextLayerRef.current = null;
+      pageTextCacheRef.current.clear();
+      pdfjsRef.current = null;
       if (loadTaskRef.current === loadingTask) loadTaskRef.current = null;
       loadingTask?.destroy?.();
       if (!loadingTask) loadedDocument?.destroy?.();
@@ -296,10 +380,36 @@ export function PdfReader({
     return () => window.cancelAnimationFrame(frame);
   }, [sourceKey, status]);
 
+  const getPageSearchIndex = useCallback(async (pageNumber) => {
+    if (!pdf) throw new Error("PDF 尚未就绪");
+    const resolvedPage = Math.max(1, Math.min(pdf.numPages, Math.trunc(Number(pageNumber) || 1)));
+    const cache = pageTextCacheRef.current;
+    if (!cache.has(resolvedPage)) {
+      const pending = (async () => {
+        const pdfPage = await pdf.getPage(resolvedPage);
+        const textContent = await pdfPage.getTextContent();
+        return {
+          page: resolvedPage,
+          textContent,
+          index: createPdfPageSearchIndex(textContent),
+        };
+      })();
+      cache.set(resolvedPage, pending);
+      pending.catch(() => {
+        if (cache.get(resolvedPage) === pending) cache.delete(resolvedPage);
+      });
+    }
+    return cache.get(resolvedPage);
+  }, [pdf]);
+
   useEffect(() => {
-    if (!pdf || !canvasRef.current) return undefined;
+    if (!pdf || !canvasRef.current || !textLayerRef.current || !pageSurfaceRef.current || !pdfjsRef.current) return undefined;
     let disposed = false;
     setError("");
+    textLayerTaskRef.current?.cancel?.();
+    textLayerTaskRef.current = null;
+    currentTextLayerRef.current = null;
+    textLayerRef.current.replaceChildren();
     (async () => {
       try {
         const pdfPage = await pdf.getPage(page);
@@ -310,7 +420,13 @@ export function PdfReader({
         const scale = zoomMode === "fit" ? fitScale : clampPdfScale(manualScale);
         setRenderedScale((current) => (Math.abs(current - scale) < 0.001 ? current : scale));
         const renderViewport = pdfPage.getViewport({ scale });
+        const pageSurface = pageSurfaceRef.current;
         const canvas = canvasRef.current;
+        const textLayerContainer = textLayerRef.current;
+        if (!pageSurface || !canvas || !textLayerContainer) return;
+        pageSurface.style.width = `${renderViewport.width}px`;
+        pageSurface.style.height = `${renderViewport.height}px`;
+        pageSurface.style.setProperty("--total-scale-factor", String(scale));
         const outputScale = Math.min(2, window.devicePixelRatio || 1);
         canvas.width = Math.ceil(renderViewport.width * outputScale);
         canvas.height = Math.ceil(renderViewport.height * outputScale);
@@ -324,10 +440,33 @@ export function PdfReader({
           transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0],
         });
         renderTaskRef.current = task;
-        await task.promise;
-        if (!disposed) schedulePendingScroll();
+        const [{ index }, textLayerResult] = await Promise.all([
+          getPageSearchIndex(page),
+          task.promise.then(async () => {
+            if (disposed) return null;
+            textLayerContainer.replaceChildren();
+            const textLayerTask = new pdfjsRef.current.TextLayer({
+              textContentSource: (await getPageSearchIndex(page)).textContent,
+              container: textLayerContainer,
+              viewport: renderViewport,
+            });
+            textLayerTaskRef.current = textLayerTask;
+            await textLayerTask.render();
+            return textLayerTask;
+          }),
+        ]);
+        if (!disposed && textLayerResult) {
+          currentTextLayerRef.current = {
+            page,
+            index,
+            textDivs: textLayerResult.textDivs,
+            strings: textLayerResult.textContentItemsStr,
+          };
+          setTextLayerVersion((value) => value + 1);
+          schedulePendingScroll();
+        }
       } catch (renderError) {
-        if (!disposed && renderError?.name !== "RenderingCancelledException") {
+        if (!disposed && !["RenderingCancelledException", "AbortException"].includes(renderError?.name)) {
           setError(renderError?.message || "页面渲染失败");
         }
       }
@@ -335,8 +474,9 @@ export function PdfReader({
     return () => {
       disposed = true;
       renderTaskRef.current?.cancel?.();
+      textLayerTaskRef.current?.cancel?.();
     };
-  }, [containerWidth, manualScale, page, pdf, schedulePendingScroll, zoomMode]);
+  }, [containerWidth, getPageSearchIndex, manualScale, page, pdf, schedulePendingScroll, zoomMode]);
 
   useEffect(() => {
     if (!pdf || page <= pdf.numPages) return;
@@ -400,6 +540,14 @@ export function PdfReader({
     setSearchOpen(false);
     setQuery("");
     setSearchMessage("");
+    setSearchState(emptyPdfSearchState());
+  }, []);
+
+  const changePdfSearchQuery = useCallback((value) => {
+    searchRunRef.current += 1;
+    setQuery(String(value || "").slice(0, 256));
+    setSearchMessage("");
+    setSearchState(emptyPdfSearchState());
   }, []);
 
   const zoomBy = useCallback((delta) => {
@@ -449,33 +597,150 @@ export function PdfReader({
     goToPage(nextPage);
   }, [goToPage, page, pageCount]);
 
-  const searchPdf = useCallback(async () => {
-    const needle = query.trim().toLocaleLowerCase("en-US");
+  const searchPdf = useCallback(async (requestedQuery = query, preferredPage = page) => {
+    const needle = normalizePdfSearchQuery(requestedQuery);
     if (!pdf || !needle) {
       setSearchMessage(needle ? "PDF 尚未就绪" : "请输入要查找的文字");
       return;
     }
     const run = searchRunRef.current + 1;
     searchRunRef.current = run;
-    setSearchMessage("正在搜索…");
+    setSearchState({
+      ...emptyPdfSearchState(),
+      query: needle,
+      status: "searching",
+      totalPages: pdf.numPages,
+    });
+    setSearchMessage(`正在搜索 0/${pdf.numPages} 页…`);
     try {
-      for (let offset = 1; offset <= pdf.numPages; offset += 1) {
+      const matches = [];
+      let searchablePages = 0;
+      let failedPages = 0;
+      let truncated = false;
+      const progressStep = Math.max(1, Math.ceil(pdf.numPages / 20));
+      for (let candidate = 1; candidate <= pdf.numPages; candidate += 1) {
         if (searchRunRef.current !== run) return;
-        const candidate = ((page - 1 + offset) % pdf.numPages) + 1;
-        const pdfPage = await pdf.getPage(candidate);
-        const content = await pdfPage.getTextContent();
-        const text = content.items.map((item) => item.str || "").join("");
-        if (text.toLocaleLowerCase("en-US").includes(needle)) {
-          goToPage(candidate);
-          setSearchMessage(`已定位到第 ${candidate} 页`);
-          return;
+        try {
+          const pageIndex = await getPageSearchIndex(candidate);
+          if (pageIndex.index.text.trim()) searchablePages += 1;
+          const remaining = MAX_PDF_SEARCH_MATCHES - matches.length;
+          const result = findPdfPageSearchMatches(pageIndex.index, needle, {
+            page: candidate,
+            startIndex: matches.length,
+            maxMatches: remaining,
+          });
+          matches.push(...result.matches);
+          truncated ||= result.truncated;
+        } catch {
+          failedPages += 1;
+        }
+        if (matches.length >= MAX_PDF_SEARCH_MATCHES) {
+          truncated ||= candidate < pdf.numPages;
+          break;
+        }
+        if (candidate === pdf.numPages || candidate === 1 || candidate % progressStep === 0) {
+          setSearchState({
+            query: needle,
+            matches: [],
+            activeIndex: -1,
+            status: "searching",
+            scannedPages: candidate,
+            totalPages: pdf.numPages,
+            searchablePages,
+            truncated: false,
+          });
+          setSearchMessage(`正在搜索 ${candidate}/${pdf.numPages} 页…`);
         }
       }
-      if (searchRunRef.current === run) setSearchMessage("未找到匹配文字");
+      if (searchRunRef.current !== run) return;
+      const activeIndex = preferredPdfSearchMatchIndex(matches, preferredPage);
+      setSearchState({
+        query: needle,
+        matches,
+        activeIndex,
+        status: "ready",
+        scannedPages: pdf.numPages,
+        totalPages: pdf.numPages,
+        searchablePages,
+        truncated,
+      });
+      if (activeIndex >= 0) {
+        goToPage(matches[activeIndex].page);
+        setSearchMessage(truncated ? `结果较多，仅显示前 ${MAX_PDF_SEARCH_MATCHES} 处` : failedPages ? `${failedPages} 页无法读取，其余页面已搜索` : "");
+      } else if (!searchablePages) {
+        setSearchMessage("此 PDF 没有可搜索的文字；扫描件需要先经过 OCR");
+      } else if (failedPages) {
+        setSearchMessage(`未找到匹配文字；另有 ${failedPages} 页无法读取`);
+      } else {
+        setSearchMessage("未找到匹配文字");
+      }
     } catch (searchError) {
-      if (searchRunRef.current === run) setSearchMessage(searchError?.message || "搜索失败");
+      if (searchRunRef.current === run) {
+        setSearchState((current) => ({ ...current, status: "error" }));
+        setSearchMessage(searchError?.message || "搜索失败");
+      }
     }
-  }, [goToPage, page, pdf, query]);
+  }, [getPageSearchIndex, goToPage, page, pdf, query]);
+
+  const movePdfSearch = useCallback((direction) => {
+    if (!searchState.matches.length) return;
+    const nextIndex = (searchState.activeIndex + direction + searchState.matches.length) % searchState.matches.length;
+    setSearchState((current) => ({ ...current, activeIndex: nextIndex }));
+    goToPage(searchState.matches[nextIndex].page);
+    setSearchMessage("");
+  }, [goToPage, searchState.activeIndex, searchState.matches]);
+
+  const submitPdfSearch = useCallback(() => {
+    const needle = normalizePdfSearchQuery(query);
+    if (needle && searchState.status === "ready" && searchState.query === needle && searchState.matches.length) {
+      movePdfSearch(1);
+      return;
+    }
+    void searchPdf(needle, page);
+  }, [movePdfSearch, page, query, searchPdf, searchState.matches.length, searchState.query, searchState.status]);
+
+  useEffect(() => {
+    if (status !== "ready" || !pdf) return;
+    const nextQuery = String(initialSearch?.query || "").trim().slice(0, 256);
+    if (!nextQuery) return;
+    const requestedPage = Math.max(1, Math.min(pdf.numPages, Math.trunc(Number(initialSearch?.page) || 1)));
+    const searchToken = `${String(initialSearch?.requestId || "")}:${requestedPage}:${nextQuery}`;
+    if (appliedInitialSearchRef.current === searchToken) return;
+    appliedInitialSearchRef.current = searchToken;
+    setSearchOpen(true);
+    setQuery(nextQuery);
+    goToPage(requestedPage);
+    void searchPdf(nextQuery, requestedPage);
+  }, [goToPage, initialSearch?.page, initialSearch?.query, initialSearch?.requestId, pdf, searchPdf, status]);
+
+  useEffect(() => {
+    const layer = currentTextLayerRef.current;
+    if (!layer || layer.page !== page) return undefined;
+    const pageMatches = searchOpen
+      ? searchState.matches.filter((match) => match.page === page)
+      : [];
+    const activeMark = applyPdfSearchHighlights(layer, pageMatches, searchState.activeIndex);
+    if (!activeMark || searchState.matches[searchState.activeIndex]?.page !== page) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const viewport = viewportRef.current;
+      if (!viewport || !activeMark.isConnected) return;
+      const viewportRect = viewport.getBoundingClientRect();
+      const markRect = activeMark.getBoundingClientRect();
+      const top = Math.max(0, viewport.scrollTop + markRect.top - viewportRect.top - viewport.clientHeight / 2);
+      const left = Math.max(0, viewport.scrollLeft + markRect.left - viewportRect.left - viewport.clientWidth / 2);
+      viewport.scrollTo({ top, left, behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [page, searchOpen, searchState.activeIndex, searchState.matches, textLayerVersion]);
+
+  const normalizedQuery = normalizePdfSearchQuery(query);
+  const searchResultsCurrent = searchState.status === "ready" && searchState.query === normalizedQuery;
+  const hasSearchMatches = searchResultsCurrent && searchState.matches.length > 0;
+  const searchCountLabel = searchState.status === "searching"
+    ? `${searchState.scannedPages}/${searchState.totalPages}`
+    : normalizedQuery
+      ? `${hasSearchMatches ? searchState.activeIndex + 1 : 0}/${searchResultsCurrent ? searchState.matches.length : 0}${searchState.truncated ? "+" : ""}`
+      : "";
 
   if (status === "loading") {
     return <div className="secondary-research-state" role="status"><LoaderCircle className="research-spin" size={19} /><span>正在打开 PDF…</span></div>;
@@ -520,9 +785,30 @@ export function PdfReader({
         </form>
         <button type="button" disabled={page >= pageCount} aria-label="下一页" title="下一页（→ / PageDown / 空格）" onClick={() => goToPage(page + 1)}><ArrowRight size={14} aria-hidden="true" /></button>
         {searchOpen ? (
-          <form className="secondary-preview-search" role="search" onSubmit={(event) => { event.preventDefault(); searchPdf(); }}>
-            <input ref={searchInputRef} value={query} placeholder="搜索 PDF" aria-label="搜索 PDF 文字" onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closePdfSearch(); } }} />
-            <button type="submit" aria-label="查找下一处" title="查找下一处"><Search size={13} aria-hidden="true" /></button>
+          <form className="secondary-preview-search" role="search" aria-busy={searchState.status === "searching"} onSubmit={(event) => { event.preventDefault(); submitPdfSearch(); }}>
+            <Search size={13} aria-hidden="true" />
+            <input
+              ref={searchInputRef}
+              value={query}
+              maxLength={256}
+              placeholder="搜索 PDF"
+              aria-label="搜索 PDF 文字"
+              onChange={(event) => changePdfSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  closePdfSearch();
+                } else if (event.key === "Enter" && event.shiftKey && hasSearchMatches) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  movePdfSearch(-1);
+                }
+              }}
+            />
+            <span aria-live="polite" aria-label={searchState.status === "searching" ? `已扫描 ${searchState.scannedPages} 页，共 ${searchState.totalPages} 页` : undefined}>{searchCountLabel}</span>
+            <button type="button" disabled={!hasSearchMatches || searchState.status === "searching"} onClick={() => movePdfSearch(-1)} aria-label="上一个 PDF 匹配" title="上一个匹配（Shift+Enter）"><ChevronUp size={13} aria-hidden="true" /></button>
+            <button type="submit" disabled={!normalizedQuery || searchState.status === "searching"} aria-label={hasSearchMatches ? "下一个 PDF 匹配" : "开始搜索 PDF"} title={hasSearchMatches ? "下一个匹配（Enter）" : "开始搜索"}><ChevronDown size={13} aria-hidden="true" /></button>
           </form>
         ) : (
           <>
@@ -550,7 +836,10 @@ export function PdfReader({
             if (event.button === 0 && !isTextEntryTarget(event.target)) event.currentTarget.focus({ preventScroll: true });
           }}
         >
-          <canvas ref={canvasRef} role="img" aria-label={`PDF 第 ${page} 页`} />
+          <div ref={pageSurfaceRef} className="secondary-pdf-page-surface">
+            <canvas ref={canvasRef} role="img" aria-label={`PDF 第 ${page} 页`} />
+            <div ref={textLayerRef} className="secondary-pdf-text-layer" aria-hidden="true" />
+          </div>
         </div>
       </div>
     </div>

@@ -67,7 +67,7 @@ function renderPreviewSearchText(value, query, cursor) {
   ) : <span key={`text-${index}`}>{segment.text}</span>);
 }
 
-export default function StaticResearchPreview({ item, loadPreview, onOpenExternal, onShowInFolder }) {
+export default function StaticResearchPreview({ item, initialSearch = null, loadPreview, onOpenExternal, onShowInFolder }) {
   const [status, setStatus] = useState("loading");
   const [payload, setPayload] = useState(null);
   const [error, setError] = useState("");
@@ -207,6 +207,15 @@ export default function StaticResearchPreview({ item, loadPreview, onOpenExterna
     if (!searchOpen) return;
     searchInputRef.current?.focus();
   }, [searchOpen]);
+
+  useEffect(() => {
+    if (status !== "ready") return;
+    const nextQuery = normalizePreviewSearchQuery(initialSearch?.query);
+    if (!nextQuery) return;
+    setSearchOpen(true);
+    setSearchQuery(nextQuery);
+    setActiveSearchIndex(Math.max(0, Number(initialSearch?.matchIndex) || 0));
+  }, [initialSearch?.query, initialSearch?.requestId, status]);
 
   useEffect(() => {
     setActiveSearchIndex((current) => searchSummary.count ? Math.min(current, searchSummary.count - 1) : 0);

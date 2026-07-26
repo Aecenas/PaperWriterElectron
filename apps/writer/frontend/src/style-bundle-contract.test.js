@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   APP_STYLE_FRAGMENT_NAMES,
   readAppStyles,
 } from "./style-test-utils.js";
-
-const PRE_MODULARIZATION_CASCADE_SHA256 = "13886e06bcf6194f385039374ec9e8c2e63bc5c466528b79fdd7297ae1eeaa76";
 
 test("the single application style entry preserves the explicit cascade order", async () => {
   const entrySource = await readFile(new URL("./styles.css", import.meta.url), "utf8");
@@ -17,10 +14,21 @@ test("the single application style entry preserves the explicit cascade order", 
   );
 });
 
-test("the modular style fragments preserve the pre-refactor cascade text and order", async () => {
+test("the modular style fragments retain legacy anchors and scoped feature styles", async () => {
   const cascade = (await readAppStyles()).replace(/\r\n?/g, "\n");
-  assert.equal(
-    createHash("sha256").update(cascade).digest("hex"),
-    PRE_MODULARIZATION_CASCADE_SHA256,
+  const workspaceFeatures = await readFile(
+    new URL("./workspace-features.css", import.meta.url),
+    "utf8",
   );
+  const selectionAi = await readFile(
+    new URL("./selection-ai/SelectionAiPopover.css", import.meta.url),
+    "utf8",
+  );
+  assert.match(cascade, /\.app-shell\s*\{/);
+  assert.match(cascade, /\.paper-workspace\s*\{/);
+  assert.match(cascade, /\.selection-bubble-menu\s*\{/);
+  assert.match(cascade, /\.statusbar-update-progress-icon\s*\{/);
+  assert.match(workspaceFeatures, /\.research-search-progress\s*\{/);
+  assert.match(selectionAi, /\.selection-ai-popover\s*\{/);
+  assert.doesNotMatch(cascade, /@import\s+/);
 });

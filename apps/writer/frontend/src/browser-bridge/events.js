@@ -9,6 +9,7 @@ const windowBlurListeners = new Set();
 const fullscreenListeners = new Set();
 const researchLibraryChangedListeners = new Set();
 const researchLibraryWatchErrorListeners = new Set();
+const researchSearchProgressListeners = new Set();
 let logicalFullscreen = false;
 let lifecycleListenersInstalled = false;
 
@@ -52,6 +53,9 @@ const browserEvents = {
   emitResearchLibraryChanged(payload) {
     emitBrowserEvent(researchLibraryChangedListeners, payload);
   },
+  emitResearchSearchProgress(payload) {
+    emitBrowserEvent(researchSearchProgressListeners, payload);
+  },
   emitFullscreenChanged(payload) {
     emitBrowserEvent(fullscreenListeners, payload);
   },
@@ -73,6 +77,9 @@ const browserEvents = {
   },
   onResearchLibraryWatchError(callback) {
     return subscribe(researchLibraryWatchErrorListeners, callback);
+  },
+  onResearchSearchProgress(callback) {
+    return subscribe(researchSearchProgressListeners, callback);
   },
   onWindowFocus(callback) {
     return subscribe(windowFocusListeners, callback, true);

@@ -1,3 +1,19 @@
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const { createHash, randomUUID } = require("node:crypto");
+
+const { atomicWriteFile } = require("./document-storage.cjs");
+const {
+  htmlToSearchText,
+  readSearchDocument,
+} = require("./workspace-search.cjs");
+const {
+  createResearchFileExtractor,
+} = require("./research-search-extractors.cjs");
+const {
+  createResearchSearchManager,
+} = require("./research-search-index.cjs");
+
 function createResearchRuntime({
   createResearchLibraryManager,
   createResearchWebViewManager,
@@ -17,12 +33,29 @@ function createResearchRuntime({
 }) {
   let researchLibrary = null;
   let researchWebViews = null;
+  let researchSearch = null;
 
   async function initialize() {
     researchLibrary = createResearchLibraryManager({
       userDataPath: getUserDataPath(),
     });
     await researchLibrary.initialize();
+    researchSearch = createResearchSearchManager({
+      library: researchLibrary,
+      userDataPath: getUserDataPath(),
+      extractFile: createResearchFileExtractor({
+        library: researchLibrary,
+        readSearchDocument,
+        htmlToSearchText,
+        decodePreviewText,
+      }),
+      fsApi: fs,
+      pathApi: path,
+      platform: process.platform,
+      createHashApi: createHash,
+      atomicWriteFile,
+      randomId: randomUUID,
+    });
     researchWebViews = createResearchWebViewManager({
       WebContentsView,
       session,
@@ -47,6 +80,13 @@ function createResearchRuntime({
       throw new Error("独立资料库尚未初始化");
     }
     return researchLibrary;
+  }
+
+  function requireSearch() {
+    if (!researchSearch) {
+      throw new Error("资料全文搜索尚未初始化");
+    }
+    return researchSearch;
   }
 
   function decodePreviewText(bytes) {
@@ -102,6 +142,7 @@ function createResearchRuntime({
   }
 
   function shutdown() {
+    researchSearch?.shutdown();
     researchLibrary?.closeWatcher();
     destroyWebViews();
   }
@@ -128,10 +169,22 @@ function createResearchRuntime({
   });
 
   const libraryFacade = Object.freeze({
+    cancelResearchSearch(libraryId, requestId) {
+      return requireSearch().cancel(libraryId, requestId);
+    },
+    clearResearchSearch(options = {}) {
+      return requireSearch().clear(options);
+    },
     decodePreviewText,
     getActiveWorkspaceRoot,
+    invalidateResearchSearch(change = {}) {
+      return requireSearch().invalidate(change);
+    },
     listPayload,
     requireLibrary,
+    searchResearch(payload = {}, options = {}) {
+      return requireSearch().search(payload, options);
+    },
     sendEvent,
   });
 

@@ -236,7 +236,7 @@
 @media (max-width: 1320px) {
   .ai-task-model-card {
     grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
+    gap: 0;
   }
 
   .top-nav {
@@ -375,7 +375,7 @@
 
   .ai-task-model-card {
     grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
+    gap: 0;
   }
 
   .ai-task-model-empty {
@@ -456,6 +456,35 @@
 }
 
 @media (max-width: 720px) {
+  .ai-task-model-summary {
+    grid-template-columns: minmax(0, 1fr) 24px;
+    gap: 10px;
+    padding: 17px 16px;
+  }
+
+  .ai-task-model-summary-status {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-items: start;
+  }
+
+  .ai-task-model-badges {
+    justify-content: flex-start;
+  }
+
+  .ai-task-model-effective {
+    max-width: min(100%, 360px);
+  }
+
+  .ai-task-model-chevron {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .ai-task-model-control {
+    padding: 0 16px 17px;
+  }
+
   .ai-model-capabilities-fields {
     grid-template-columns: minmax(0, 1fr);
   }

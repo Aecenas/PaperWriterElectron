@@ -33,12 +33,18 @@ test("App composes durable writes through one persistence controller boundary", 
   assert.match(appSource, /createDocumentPersistenceController\(\{/);
   assert.match(appSource, /createDocumentPersistenceRuntimeState\(\)/);
   assert.match(appSource, /runtimeState: documentPersistenceRuntimeStateRef\.current/);
-  assert.match(appSource, /const handleCloseTab = documentPersistenceController\.closeTab/);
+  assert.match(
+    appSource,
+    /const handleCloseTab = useCallback\(async \(tabId\)[\s\S]*?return documentPersistenceController\.closeTab\(tabId\)/,
+  );
   assert.match(appSource, /const handleSave = documentPersistenceController\.save/);
   assert.match(appSource, /documentPersistenceControllerRef\.current\?\.startLifecycle\(\{/);
   assert.match(appSource, /resolveController: \(\) => documentPersistenceControllerRef\.current/);
   assert.match(appSource, /\}\), \[\]\);/);
-  assert.match(appSource, /confirmTabClose: \(\) => showConfirmDialog\(\{/);
+  assert.match(
+    appSource,
+    /confirmTabClose: \(\{ tab \} = \{\}\) => \{[\s\S]*?return showConfirmDialog\(\{/,
+  );
   assert.match(appSource, /title: "这个文件尚未保存"/);
   assert.match(appSource, /confirmWindowClose: \(\{ dirtyTabs \}\) => showConfirmDialog\(\{/);
   assert.match(appSource, /title: dirtyTabs\.length > 1 \? `\$\{dirtyTabs\.length\} 篇信笺尚未保存` : "当前信笺尚未保存"/);

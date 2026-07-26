@@ -6,6 +6,10 @@ function registerAiGenerationIpcHandlers({
     generationFacade.generate(event, payload)
   ));
 
+  ipcMain.handle("ai:selection-generate", async (event, payload) => (
+    generationFacade.generateSelectionAi(event, payload)
+  ));
+
   ipcMain.handle("ai:resolve-apply", async (_event, payload = {}) => (
     generationFacade.resolveApply(payload)
   ));

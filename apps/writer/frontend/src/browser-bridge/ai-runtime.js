@@ -2,6 +2,7 @@ import {
   BROWSER_AI_PROTOCOLS,
   MAX_BROWSER_AI_MODELS,
   MAX_BROWSER_AI_PROVIDERS,
+  browserTaskAiProviderConfig,
   browserModelId,
   exactBrowserAiProviderConfig,
   hasOwn,
@@ -11,6 +12,7 @@ import {
   publicBrowserAiConfig as publicBrowserAiConfigValue,
   safeBrowserProviderId,
 } from "../browser-ai-config.js";
+import { validateSelectionAiPayload } from "../selection-ai/protocol.js";
 import { readJson, writeJson } from "./storage.js";
 
 const browserAiListeners = {
@@ -18,6 +20,20 @@ const browserAiListeners = {
   done: new Set(),
   error: new Set(),
 };
+const browserSelectionAiRequests = new Map();
+const BROWSER_AI_TASK_MODEL_KEYS = Object.freeze([
+  "selectionChat",
+  "applyResolver",
+]);
+const BROWSER_AI_TASK_MODEL_KEY_SET = new Set(
+  BROWSER_AI_TASK_MODEL_KEYS,
+);
+const BROWSER_AI_TASK_MODEL_ASSIGNMENT_KEYS = new Set([
+  "providerId",
+  "modelId",
+  "requestParams",
+]);
+const BROWSER_SELECTION_AI_CONCURRENT_REQUEST_LIMIT = 4;
 
 function validateBrowserAiRequestParamsPatch(value) {
   if (value === undefined) return {};
@@ -91,22 +107,60 @@ function createBrowserAiApi() {
     saveAiConfig: async (config = {}) => {
       const previous = normalizeBrowserAiConfig();
       let nextTaskModels = previous.taskModels;
-      if (config.taskModels && typeof config.taskModels === "object" && !Array.isArray(config.taskModels)) {
+      if (hasOwn(config, "taskModels")) {
+        if (
+          !config.taskModels
+          || typeof config.taskModels !== "object"
+          || Array.isArray(config.taskModels)
+          || Object.keys(config.taskModels).some(
+            (taskKey) => !BROWSER_AI_TASK_MODEL_KEY_SET.has(taskKey),
+          )
+        ) {
+          throw new Error("任务模型配置无效");
+        }
         const taskModelsPatch = { ...config.taskModels };
-        if (hasOwn(taskModelsPatch, "applyResolver")) {
-          const source = taskModelsPatch.applyResolver;
-          if (!source || typeof source !== "object" || Array.isArray(source)) throw new Error("任务模型配置无效");
-          taskModelsPatch.applyResolver = {
+        const touchedTaskKeys = [];
+        for (const taskKey of BROWSER_AI_TASK_MODEL_KEYS) {
+          if (!hasOwn(taskModelsPatch, taskKey)) continue;
+          touchedTaskKeys.push(taskKey);
+          const source = taskModelsPatch[taskKey];
+          if (
+            !source
+            || typeof source !== "object"
+            || Array.isArray(source)
+            || Object.keys(source).some(
+              (key) => !BROWSER_AI_TASK_MODEL_ASSIGNMENT_KEYS.has(key),
+            )
+            || (
+              source.providerId !== undefined
+              && typeof source.providerId !== "string"
+            )
+            || (
+              source.modelId !== undefined
+              && typeof source.modelId !== "string"
+            )
+          ) {
+            throw new Error("任务模型配置无效");
+          }
+          if (
+            Boolean(source.providerId?.trim())
+            !== Boolean(source.modelId?.trim())
+          ) {
+            throw new Error("任务模型必须同时指定供应商和模型");
+          }
+          taskModelsPatch[taskKey] = {
             ...source,
-            requestParams: validateBrowserAiRequestParamsPatch(source.requestParams || {}),
+            requestParams: validateBrowserAiRequestParamsPatch(
+              source.requestParams,
+            ),
           };
         }
         nextTaskModels = normalizeBrowserAiConfigValue({
           ...previous,
           taskModels: { ...previous.taskModels, ...taskModelsPatch },
         }).taskModels;
-        if (hasOwn(config.taskModels, "applyResolver")) {
-          const assignment = nextTaskModels.applyResolver;
+        for (const taskKey of touchedTaskKeys) {
+          const assignment = nextTaskModels[taskKey];
           if (assignment.providerId || assignment.modelId) {
             const exact = exactBrowserAiProviderConfig(previous, assignment);
             if (!exact || exact.provider.transport === "codex-cli" || !exact.provider.apiKey || !exact.model.testedOk) {
@@ -223,6 +277,85 @@ function createBrowserAiApi() {
       }), 120 * (chunks.length + 1));
       return { ok: true, requestId };
     },
+    generateSelectionAi: async (payload = {}) => {
+      const validated = validateSelectionAiPayload(payload);
+      if (!validated.ok) return validated;
+      const saved = normalizeBrowserAiConfig();
+      const assignment = saved.taskModels?.selectionChat || {};
+      const explicitAssignment = Boolean(
+        assignment.providerId || assignment.modelId,
+      );
+      const selected = browserTaskAiProviderConfig(saved, assignment);
+      if (
+        !selected
+        || selected.provider.transport === "codex-cli"
+        || !selected.provider.apiKey
+        || !selected.model.testedOk
+      ) {
+        return {
+          ok: false,
+          code: explicitAssignment
+            ? "AI_SELECTION_CHAT_MODEL_INVALID"
+            : "AI_DEFAULT_MODEL_UNAVAILABLE",
+          message: explicitAssignment
+            ? "选区问答模型已失效，请在“AI 配置 → 任务模型”中重新选择"
+            : "请先配置并测试默认模型",
+        };
+      }
+      const { requestId } = validated.value;
+      if (browserSelectionAiRequests.has(requestId)) {
+        return {
+          ok: false,
+          code: "AI_SELECTION_REQUEST_DUPLICATE",
+          message: "选区问答请求标识重复",
+        };
+      }
+      if (
+        browserSelectionAiRequests.size
+        >= BROWSER_SELECTION_AI_CONCURRENT_REQUEST_LIMIT
+      ) {
+        return {
+          ok: false,
+          code: "AI_SELECTION_REQUEST_LIMIT",
+          message: "同时运行的选区问答过多，请稍后重试",
+        };
+      }
+      const timers = [];
+      const chunks = [
+        "这是选区问答的浏览器预览回复。",
+        "\n\n",
+        "桌面端会只使用冻结的选中文字、当前问题和这个临时小窗的历史。",
+      ];
+      chunks.forEach((delta, index) => {
+        timers.push(window.setTimeout(() => {
+          if (!browserSelectionAiRequests.has(requestId)) return;
+          emitBrowserAi("chunk", { requestId, delta });
+        }, 120 * (index + 1)));
+      });
+      timers.push(window.setTimeout(() => {
+        if (!browserSelectionAiRequests.has(requestId)) return;
+        browserSelectionAiRequests.delete(requestId);
+        emitBrowserAi("done", {
+          requestId,
+          usage: {
+            prompt_tokens: 120,
+            completion_tokens: 32,
+            total_tokens: 152,
+          },
+        });
+      }, 120 * (chunks.length + 1)));
+      browserSelectionAiRequests.set(requestId, timers);
+      return {
+        ok: true,
+        requestId,
+        model: {
+          providerId: selected.provider.provider,
+          providerLabel: selected.provider.providerLabel,
+          modelId: selected.model.id,
+          modelName: selected.model.name,
+        },
+      };
+    },
     resolveAiApply: async (payload = {}) => ({
       ok: true,
       raw: {
@@ -235,8 +368,13 @@ function createBrowserAiApi() {
       },
     }),
     cancelAi: async (requestId) => {
+      const selectionTimers = browserSelectionAiRequests.get(requestId);
+      if (selectionTimers) {
+        selectionTimers.forEach((timer) => window.clearTimeout(timer));
+        browserSelectionAiRequests.delete(requestId);
+      }
       emitBrowserAi("error", { requestId, message: "已停止生成", aborted: true });
-      return { ok: true };
+      return { ok: true, canceled: Boolean(selectionTimers) };
     },
     exportAiChat: async (payload = {}) => {
       const blob = new Blob([payload.markdown || ""], { type: "text/markdown;charset=utf-8" });

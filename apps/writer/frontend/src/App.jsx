@@ -15,7 +15,7 @@ import {
 import { bridge } from "./bridge.js";
 import AiModeChooser from "./AiModeChooser.jsx";
 import SettingsCenter from "./SettingsCenter.jsx";
-import { DocumentFindWidget, WorkspaceSearchPalette } from "./WorkspaceSearchPanel.jsx";
+import { DocumentFindWidget, ResearchSearchPalette, WorkspaceSearchPalette } from "./WorkspaceSearchPanel.jsx";
 import "./workspace-features.css";
 import ReleaseNotesDialog from "./ReleaseNotesDialog.jsx";
 import { ExportDialog } from "./export/index.js";
@@ -101,6 +101,8 @@ import {
   useResearchOpenTargetValidationLifecycle,
   useResearchRefreshActions,
   useResearchRequestControllerRefs,
+  useResearchSearch,
+  useSelectionAiController,
   useResearchSourceWebActions,
   useResearchState,
   useResearchViewReconciliationLifecycle,
@@ -157,6 +159,10 @@ import {
 import { createDocumentCommentId, normalizeDocumentComments } from "./editor-comments.js";
 import ResearchSidebar from "./ResearchSidebar.jsx";
 import SecondaryResearchPane from "./SecondaryResearchPane.jsx";
+import {
+  SelectionAiPopover,
+  SelectionAiSprite,
+} from "./selection-ai/index.js";
 import StructureInspector from "./StructureInspector.jsx";
 import GroupTabStrip from "./GroupTabStrip.jsx";
 import CitationPickerDialog from "./CitationPickerDialog.jsx";
@@ -299,6 +305,7 @@ export default function App() {
   const [documentReplaceValue, setDocumentReplaceValue] = useState("");
   const [documentSearchState, setDocumentSearchState] = useState(() => searchDocumentText({ type: "doc", content: [] }, ""));
   const [workspaceSearchState, setWorkspaceSearchState] = useState({ loading: false, results: [], error: "", requestId: "" });
+  const [pendingResearchDocumentSearch, setPendingResearchDocumentSearch] = useState(null);
   const [workSurfaceWidth, setWorkSurfaceWidth] = useState(0);
   const researchState = useResearchState(writingWorkspaceRoot);
   const {
@@ -334,6 +341,14 @@ export default function App() {
     webWorkspaceMode,
     writingWorkspaceIdentity,
   } = researchState;
+  const researchSearchWorkspaceScopeKey = writingWorkspaceIdentity?.workspaceId
+    ? `workspace:${writingWorkspaceIdentity.workspaceId}`
+    : "";
+  const researchSearch = useResearchSearch({
+    active: searchMode === "research",
+    libraryId: researchRoot?.available ? researchRoot.libraryId : "",
+    workspaceScopeKey: researchSearchWorkspaceScopeKey,
+  });
   const knowledgeState = useKnowledgeReferenceState();
   const {
     citationLibraryLoading,
@@ -367,7 +382,13 @@ export default function App() {
     setManualAiApply,
     setManualFallbackAiBlockIndexes,
   } = useAiApplyState();
-  const [settingsDialog, setSettingsDialog] = useState({ open: false, section: "", targetTabId: "" });
+  const [settingsDialog, setSettingsDialog] = useState({
+    open: false,
+    section: "",
+    targetTabId: "",
+    aiInitialPanel: "provider",
+    aiInitialTaskId: "",
+  });
   const [tabTemplateDialog, setTabTemplateDialog] = useTemplateTabDialogState();
   const {
     helpOpen,
@@ -804,6 +825,8 @@ export default function App() {
       open: true,
       section: "",
       targetTabId: splitPaneActive && rightSplitTabId ? rightSplitTabId : activeTabIdRef.current,
+      aiInitialPanel: "provider",
+      aiInitialTaskId: "",
     });
   }, [rightSplitTabId, splitPaneActive]);
 
@@ -814,14 +837,20 @@ export default function App() {
       section: section === "template" ? "template" : "ai",
       targetTabId: current.targetTabId
         || (splitPaneActive && rightSplitTabId ? rightSplitTabId : activeTabIdRef.current),
+      aiInitialPanel: "provider",
+      aiInitialTaskId: "",
     }));
   }, [rightSplitTabId, splitPaneActive]);
-  const openAiSettings = useCallback(() => {
+  const openAiSettings = useCallback((request = {}) => {
     setAiModeChooserOpen(false);
     setSettingsDialog({
       open: false,
       section: "ai",
       targetTabId: splitPaneActive && rightSplitTabId ? rightSplitTabId : activeTabIdRef.current,
+      aiInitialPanel: request?.panel === "tasks" ? "tasks" : "provider",
+      aiInitialTaskId: request?.panel === "tasks" && typeof request?.taskId === "string"
+        ? request.taskId
+        : "",
     });
   }, [rightSplitTabId, splitPaneActive]);
   const closeSettings = useCallback(() => {
@@ -1022,6 +1051,175 @@ export default function App() {
   }, [activeTabId, currentPath, dirty, documentState.title]);
 
   const { showStatus, dismissStatus } = useStatusActions(setStatus);
+  const selectionAi = useSelectionAiController({
+    aiConfig,
+    onOpenSettings: openAiSettings,
+    onStatus: showStatus,
+  });
+
+  const openSelectionAiForPane = useCallback((pane, selection, anchor) => {
+    const targetTabId = pane === "right"
+      ? rightSplitTabIdRef.current
+      : activeTabIdRef.current;
+    const targetEditor = pane === "right" ? rightSplitEditor : editor;
+    if (!targetTabId || !targetEditor || !selection?.text) {
+      showStatus("请先选中要询问的文字", "warning");
+      return false;
+    }
+    const from = Math.min(Number(selection.from) || 0, Number(selection.to) || 0);
+    const to = Math.max(Number(selection.from) || 0, Number(selection.to) || 0);
+    const selectedText = selection.text;
+    return selectionAi.open({
+      selection,
+      anchor,
+      target: {
+        pane,
+        tabId: targetTabId,
+        from,
+        to,
+      },
+      restoreFocus: () => {
+        let currentEditor = null;
+        let targetSelectionRef = null;
+        let targetDocumentVisible = false;
+        if (activeTabIdRef.current === targetTabId) {
+          currentEditor = editor;
+          targetSelectionRef = editorSelectionRef;
+          targetDocumentVisible = true;
+        } else if (rightSplitTabIdRef.current === targetTabId) {
+          currentEditor = rightSplitEditorRuntimeRef.current;
+          targetSelectionRef = rightSplitSelectionRef;
+          targetDocumentVisible = true;
+        } else if (
+          activePaneRef.current === "right"
+          && rightSplitEditorRuntimeRef.current
+        ) {
+          currentEditor = rightSplitEditorRuntimeRef.current;
+        } else {
+          currentEditor = editor;
+        }
+        if (!currentEditor) {
+          targetDocumentVisible = false;
+          targetSelectionRef = null;
+          currentEditor = activePaneRef.current === "right"
+            ? (rightSplitEditorRuntimeRef.current || editor)
+            : editor;
+        }
+        if (!currentEditor) return;
+        const maxPosition = currentEditor.state.doc.content.size;
+        const canRestoreSelection = Boolean(
+          targetDocumentVisible
+          && targetSelectionRef
+          && from >= 1
+          && to > from
+          && to <= maxPosition
+          && currentEditor.state.doc
+            .textBetween(from, to, "\n\n", "\n")
+            .replace(/\s+\n/g, "\n")
+            .trim() === selectedText
+        );
+        if (canRestoreSelection) {
+          targetSelectionRef.current = { from, to };
+          currentEditor
+            .chain()
+            .focus()
+            .setTextSelection({ from, to })
+            .scrollIntoView()
+            .run();
+          return;
+        }
+        currentEditor.chain().focus().run();
+      },
+    });
+  }, [
+    activePaneRef,
+    editor,
+    rightSplitEditor,
+    selectionAi.open,
+    showStatus,
+  ]);
+
+  useEffect(() => {
+    selectionAi.syncOpenTabs(openTabs);
+  }, [openTabs, selectionAi.syncOpenTabs]);
+
+  useEffect(() => {
+    const expandedTabId = selectionAi.state.expandedTabId;
+    if (!expandedTabId) return;
+    const visibleInMain = activeTabId === expandedTabId;
+    const visibleInSecondary = (
+      !aiMode
+      && rightSplitTabId === expandedTabId
+      && activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.DOCUMENT
+    );
+    if (aiMode || (!visibleInMain && !visibleInSecondary)) {
+      selectionAi.minimize({ tabId: expandedTabId, restore: false });
+    }
+  }, [
+    activeSecondaryView?.kind,
+    activeTabId,
+    aiMode,
+    rightSplitTabId,
+    selectionAi.minimize,
+    selectionAi.state.expandedTabId,
+  ]);
+
+  const requestCloseSelectionAiSession = useCallback(async ({
+    session,
+    sessionId,
+    tabId,
+  }) => {
+    if (!session || !tabId || !sessionId) return false;
+    const needsConfirmation = Boolean(
+      session.messages?.length
+      || session.input?.trim()
+      || session.status === "streaming",
+    );
+    if (needsConfirmation) {
+      const decision = await showConfirmDialog({
+        tone: "warning",
+        icon: MessageSquare,
+        eyebrow: "临时选区问答",
+        title: "关闭当前会话？",
+        message: session.status === "streaming"
+          ? "AI 仍在回答，关闭后会立即停止本次生成。"
+          : "这个临时会话已有内容，关闭后无法恢复。",
+        detail: "只会关闭当前会话，其他选区问答会话会继续保留。",
+        cancelValue: "cancel",
+        actions: [
+          { value: "close", label: "关闭会话", variant: "danger", icon: X },
+          { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
+        ],
+      });
+      if (decision !== "close") return false;
+    }
+    return selectionAi.closeSession({ tabId, sessionId, restore: true });
+  }, [selectionAi.closeSession, showConfirmDialog]);
+
+  const requestCloseAllSelectionAiSessions = useCallback(async ({
+    sessions,
+    tabId,
+  }) => {
+    if (!tabId || !sessions?.length) return false;
+    const streamingCount = sessions.filter((session) => session.status === "streaming").length;
+    const decision = await showConfirmDialog({
+      tone: "warning",
+      icon: MessageSquare,
+      eyebrow: "临时选区问答",
+      title: `关闭全部 ${sessions.length} 个会话？`,
+      message: "这些临时问答不会写入信笺，关闭后无法恢复。",
+      detail: streamingCount
+        ? `其中 ${streamingCount} 个会话仍在生成，关闭后会一并停止。`
+        : "只会清理当前信笺的选区问答会话。",
+      cancelValue: "cancel",
+      actions: [
+        { value: "close", label: "关闭全部", variant: "danger", icon: X },
+        { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
+      ],
+    });
+    if (decision !== "close") return false;
+    return selectionAi.closeAll({ tabId, restore: true });
+  }, [selectionAi.closeAll, showConfirmDialog]);
 
   useEffect(() => {
     let warned = false;
@@ -1277,14 +1475,22 @@ export default function App() {
       showStatus("请先打开一个文件夹", "warning");
       return;
     }
-    setSearchMode(scope === "workspace" ? "workspace" : "document");
-    if (scope !== "workspace") setDocumentReplaceVisible(Boolean(options.replace));
-  }, [showStatus, writingWorkspaceRoot]);
+    if (scope === "research" && !researchRoot?.available) {
+      showStatus("请先选择资料文件夹", "warning");
+      return;
+    }
+    setSearchMode(["workspace", "research"].includes(scope) ? scope : "document");
+    if (scope === "document") setDocumentReplaceVisible(Boolean(options.replace));
+  }, [researchRoot?.available, showStatus, writingWorkspaceRoot]);
 
   const closeSearch = useCallback(() => {
+    if (searchMode === "research") {
+      researchSearch.cancel();
+      researchSearch.reset();
+    }
     setSearchMode("");
     renderDocumentSearchState(activeWorkEditor, null);
-  }, [activeWorkEditor]);
+  }, [activeWorkEditor, researchSearch.cancel, researchSearch.reset, searchMode]);
 
   const moveDocumentSearch = useCallback((delta) => {
     setDocumentSearchState((previous) => {
@@ -1310,6 +1516,37 @@ export default function App() {
   useEffect(() => {
     renderDocumentSearchState(activeWorkEditor, searchMode === "document" ? documentSearchState : null);
   }, [activeWorkEditor, documentSearchState, searchMode]);
+
+  useEffect(() => {
+    const target = pendingResearchDocumentSearch;
+    if (!target || !rightSplitEditor || rightSplitTabId !== target.tabId) return;
+    setPendingResearchDocumentSearch(null);
+    if (target.matchField === "title" || target.matchField === "fileName" || target.matchField === "name") {
+      const input = rightCanvasRef.current?.querySelector?.(".paper-title-input");
+      input?.focus?.();
+      input?.select?.();
+      return;
+    }
+    if (target.matchField === "author") {
+      const input = rightCanvasRef.current?.querySelector?.(".paper-author-input");
+      input?.focus?.();
+      input?.select?.();
+      return;
+    }
+    const query = String(target.query || "").trim();
+    if (!query) return;
+    let next = searchDocumentText(rightSplitEditor.state.doc, query);
+    if (next.matches.length && Number.isFinite(Number(target.matchStart))) {
+      const targetOffset = Number(target.matchStart);
+      const closestIndex = next.matches.reduce((best, match, index) => (
+        Math.abs(match.plainStart - targetOffset) < Math.abs(next.matches[best].plainStart - targetOffset) ? index : best
+      ), 0);
+      next = { ...next, activeIndex: closestIndex, activeMatch: next.matches[closestIndex] };
+    }
+    if (next.activeMatch) {
+      rightSplitEditor.chain().focus().setTextSelection(next.activeMatch.from).scrollIntoView().run();
+    }
+  }, [pendingResearchDocumentSearch, rightSplitEditor, rightSplitTabId]);
 
   const replaceDocumentSearchMatches = useCallback((replaceAll = false) => {
     if (!activeWorkEditor || activeWorkReadOnly) {
@@ -2110,19 +2347,25 @@ export default function App() {
         ),
       },
       dialogPort: {
-        confirmTabClose: () => showConfirmDialog({
-          tone: "warning",
-          icon: FileText,
-          eyebrow: "未保存的信笺",
-          title: "这个文件尚未保存",
-          message: "要关闭这个信笺吗？",
-          detail: "关闭后，这个信笺中尚未保存的修改不会写入文件。",
-          cancelValue: "cancel",
-          actions: [
-            { value: "close", label: "关闭信笺", variant: "danger", icon: X },
-            { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
-          ],
-        }),
+        confirmTabClose: ({ tab } = {}) => {
+          const sessionSummary = selectionAi.getTabSessionSummary(tab?.id);
+          const sessionDetail = sessionSummary.count
+            ? `；同时会结束 ${sessionSummary.count} 个仅保存在本次运行中的选区问答会话`
+            : "";
+          return showConfirmDialog({
+            tone: "warning",
+            icon: FileText,
+            eyebrow: "未保存的信笺",
+            title: "这个文件尚未保存",
+            message: "要关闭这个信笺吗？",
+            detail: `关闭后，这个信笺中尚未保存的修改不会写入文件${sessionDetail}。`,
+            cancelValue: "cancel",
+            actions: [
+              { value: "close", label: "关闭信笺", variant: "danger", icon: X },
+              { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
+            ],
+          });
+        },
         confirmWindowClose: ({ dirtyTabs }) => showConfirmDialog({
           tone: "save",
           icon: Save,
@@ -2200,6 +2443,7 @@ export default function App() {
       letterTemplates,
       migrateAiRequestDocumentKey,
       newDocumentTemplateId,
+      selectionAi.getTabSessionSummary,
       sessionStatePort,
       showConfirmDialog,
       showStatus,
@@ -2253,7 +2497,41 @@ export default function App() {
     [applyDocument, moveWorkspaceGroupDocument, snapshotLiveTabs],
   );
 
-  const handleCloseTab = documentPersistenceController.closeTab;
+  const handleCloseTab = useCallback(async (tabId) => {
+    const tab = openTabsRef.current.find((candidate) => candidate.id === tabId);
+    const sessionSummary = selectionAi.getTabSessionSummary(tabId);
+    if (
+      tab
+      && !tab.dirty
+      && (
+        sessionSummary.hasContent
+        || sessionSummary.hasDraft
+        || sessionSummary.isStreaming
+      )
+    ) {
+      const decision = await showConfirmDialog({
+        tone: "warning",
+        icon: MessageSquare,
+        eyebrow: "临时选区问答",
+        title: "关闭信笺并结束问答？",
+        message: `这封信笺还有 ${sessionSummary.count} 个仅保存在本次运行中的选区问答会话。`,
+        detail: sessionSummary.isStreaming
+          ? "其中仍有回答正在生成；关闭信笺后会停止生成并清除全部会话。"
+          : "关闭信笺后，这些会话将无法恢复。",
+        cancelValue: "cancel",
+        actions: [
+          { value: "close", label: "关闭信笺", variant: "danger", icon: X },
+          { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
+        ],
+      });
+      if (decision !== "close") return { status: "canceled" };
+    }
+    return documentPersistenceController.closeTab(tabId);
+  }, [
+    documentPersistenceController,
+    selectionAi.getTabSessionSummary,
+    showConfirmDialog,
+  ]);
 
   const handleCloseGroupView = useCallback(
     (groupId, viewId) => closeWorkspaceGroupView(
@@ -2897,6 +3175,54 @@ export default function App() {
     showStatus,
   });
 
+  const handleOpenResearchSearchResult = useCallback(async (result) => {
+    const libraryId = researchRootRef.current?.libraryId || "";
+    if (!libraryId || !result) return;
+    const query = String(result.query || researchSearch.query || "").trim();
+    const searchTarget = {
+      requestId: researchSearch.requestId || `research-open-${Date.now().toString(36)}`,
+      query,
+      page: Math.max(1, Math.trunc(Number(result.page) || 1)),
+      matchIndex: Math.max(0, Math.trunc(Number(result.matchIndex) || 0)),
+      matchStart: Number.isFinite(Number(result.matchStart)) ? Number(result.matchStart) : null,
+      matchField: String(result.matchField || ""),
+    };
+    const web = result.kind === "web" || result.type === "web";
+    let item;
+    if (web) {
+      const sourceId = String(result.sourceId || result.id || "");
+      const existing = librarySourcesRef.current.find((source) => source.id === sourceId);
+      item = {
+        ...(existing || {}),
+        id: sourceId,
+        type: "web",
+        title: result.title || existing?.title || result.url || "未命名网页",
+        url: result.url || existing?.url || "",
+        scopeKey: result.scopeKey || existing?.scopeKey || "global",
+      };
+    } else {
+      const relativePath = String(result.relativePath || "");
+      if (!relativePath) return;
+      const name = relativePath.replace(/\\/g, "/").split("/").pop() || relativePath;
+      item = {
+        type: "file",
+        kind: "file",
+        name,
+        fileName: name,
+        relativePath,
+        previewKind: result.previewKind || "",
+        size: result.size,
+        mtimeMs: result.mtimeMs || result.modifiedAt,
+        title: result.title || name,
+      };
+    }
+    const openedTarget = await openIndependentResearchItem(item, { searchTarget });
+    if (!web && (result.previewKind === "document" || /\.(?:letterpaper|paperdoc)$/i.test(item.relativePath)) && openedTarget) {
+      setPendingResearchDocumentSearch({ ...searchTarget, tabId: openedTarget });
+    }
+    closeSearch();
+  }, [closeSearch, librarySourcesRef, openIndependentResearchItem, researchRootRef, researchSearch.query, researchSearch.requestId]);
+
 
   const {
     handleAddLibraryWeb,
@@ -3282,6 +3608,7 @@ export default function App() {
         settingsTriggerRef={settingsTriggerRef}
         exportTriggerRef={exportTriggerRef}
         onOpenSearch={openSearch}
+        researchSearchAvailable={Boolean(researchRoot?.available && researchRoot?.libraryId)}
         workspaceSearchAvailable={Boolean(writingWorkspaceRoot)}
         aiMode={aiMode}
         aiModeKind={aiModeKind}
@@ -3550,6 +3877,8 @@ export default function App() {
                 readOnly={activeTabReadOnly || (aiMode && aiStatus === "streaming") || Boolean(aiApplyPreview)}
                 aiCaptureEnabled={aiMode && aiChatMode}
                 onCaptureAiSelection={handleCaptureAiChatSelection}
+                selectionAiEnabled={!aiMode && !aiApplyPreview}
+                onOpenSelectionAi={(selection, anchor) => openSelectionAiForPane("main", selection, anchor)}
                 comments={aiMode ? [] : documentState.comments}
                 activeCommentId={commentPanel?.pane === "main" ? commentPanel.commentId : ""}
                 commentsHidden={aiMode || printMode || imageExportMode}
@@ -3591,6 +3920,8 @@ export default function App() {
                       className={activePane === "right" ? "right-split-canvas active-pane" : "right-split-canvas"}
                       onActivate={() => setActivePane("right")}
                       readOnly={rightSplitReadOnly}
+                      selectionAiEnabled={!aiMode}
+                      onOpenSelectionAi={(selection, anchor) => openSelectionAiForPane("right", selection, anchor)}
                       comments={rightSplitDocument.comments}
                       activeCommentId={commentPanel?.pane === "right" ? commentPanel.commentId : ""}
                       commentsHidden={aiMode || printMode || imageExportMode}
@@ -3668,6 +3999,22 @@ export default function App() {
           folderName={displayNameFromPath(writingWorkspaceRoot) || "当前文件夹"}
           onQueryChange={setWorkspaceSearchQuery}
           onOpenResult={handleOpenWorkspaceSearchResult}
+          onClose={closeSearch}
+        />
+      ) : null}
+      {searchMode === "research" ? (
+        <ResearchSearchPalette
+          query={researchSearch.query}
+          loading={researchSearch.loading}
+          results={researchSearch.results}
+          error={researchSearch.error}
+          libraryName={researchRoot?.rootName || researchRoot?.name || "当前资料区"}
+          progress={researchSearch.progress}
+          showProgress={researchSearch.showProgress}
+          warnings={researchSearch.warnings}
+          onQueryChange={researchSearch.setQuery}
+          onOpenResult={handleOpenResearchSearchResult}
+          onCancel={researchSearch.cancel}
           onClose={closeSearch}
         />
       ) : null}
@@ -3765,6 +4112,8 @@ export default function App() {
       />
       <AiSettingsDialog
         open={settingsDialog.section === "ai"}
+        initialPanel={settingsDialog.aiInitialPanel || "provider"}
+        initialTaskId={settingsDialog.aiInitialTaskId || ""}
         returnFocusRef={settingsTriggerRef}
         config={aiConfig}
         onClose={closeSettings}
@@ -3776,6 +4125,27 @@ export default function App() {
         onRefreshCodex={handleRefreshCodexCli}
         onLoginCodex={handleLoginCodexCli}
       />
+      <SelectionAiPopover
+        controller={selectionAi}
+        onRequestCloseSession={requestCloseSelectionAiSession}
+        onRequestCloseAll={requestCloseAllSelectionAiSessions}
+      />
+      {!aiMode ? (
+        <>
+          <SelectionAiSprite
+            controller={selectionAi}
+            tabId={activeTabId}
+            anchorRef={mainCanvasRef}
+          />
+          {activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.DOCUMENT && rightSplitTabId ? (
+            <SelectionAiSprite
+              controller={selectionAi}
+              tabId={rightSplitTabId}
+              anchorRef={rightCanvasRef}
+            />
+          ) : null}
+        </>
+      ) : null}
       {tabTemplateDialog.open && tabTemplateDocument ? (
         <LetterTemplateDialog
           key={`tab-template-${tabTemplateDialog.targetTabId}`}

@@ -10,6 +10,7 @@ function createAiApi(ipcRenderer) {
     saveAiConfig: (config) => ipcRenderer.invoke("ai:save-config", config || {}),
     testAiConfig: (config) => ipcRenderer.invoke("ai:test-config", config || {}),
     generateAi: (payload) => ipcRenderer.invoke("ai:generate", payload || {}),
+    generateSelectionAi: (payload) => ipcRenderer.invoke("ai:selection-generate", payload || {}),
     resolveAiApply: (payload) => ipcRenderer.invoke("ai:resolve-apply", payload || {}),
     cancelAi: (requestId) => ipcRenderer.invoke("ai:cancel", requestId || ""),
     exportAiChat: (payload) => ipcRenderer.invoke("ai:export-chat", payload || {}),

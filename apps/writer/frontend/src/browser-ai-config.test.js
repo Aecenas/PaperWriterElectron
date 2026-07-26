@@ -99,6 +99,11 @@ test("browser AI config persists exact task-model assignments without fallback",
       },
     },
     taskModels: {
+      selectionChat: {
+        providerId: "deepseek",
+        modelId: "deepseek-resolver",
+        requestParams: { temperature: 0.1 },
+      },
       applyResolver: {
         providerId: "deepseek",
         modelId: "deepseek-resolver",
@@ -108,6 +113,11 @@ test("browser AI config persists exact task-model assignments without fallback",
     },
   });
   assert.deepEqual(configured.taskModels, {
+    selectionChat: {
+      providerId: "deepseek",
+      modelId: "deepseek-resolver",
+      requestParams: { temperature: 0.1 },
+    },
     applyResolver: {
       providerId: "deepseek",
       modelId: "deepseek-resolver",
@@ -132,6 +142,7 @@ test("browser AI config persists exact task-model assignments without fallback",
   });
   assert.deepEqual(unsafe.taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
   assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
+  assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.selectionChat, { providerId: "", modelId: "", requestParams: {} });
 });
 
 test("browser request parameters keep JSON values and remove reserved or dangerous entries", () => {

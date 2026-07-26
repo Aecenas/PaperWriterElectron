@@ -26,7 +26,7 @@ test.describe("P1 interaction regressions", () => {
     await reader.getByRole("button", { name: "展开资料搜索", exact: true }).click();
     await reader.getByRole("textbox", { name: "搜索资料内容", exact: true }).fill("DOCX");
     await expect(reader.locator("mark")).toHaveCount(3);
-    await expect(page.getByRole("button", { name: "查看版本 0.9.11 的更新历史", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看版本 1.0.0 的更新历史", exact: true })).toBeVisible();
 
     expect(pageErrors).toEqual([]);
   });
@@ -209,7 +209,7 @@ test.describe("P1 interaction regressions", () => {
     expect(pageErrors).toEqual([]);
   });
 
-  test("read-only documents lock editing, AI entry, save, and citation mutations", async ({ page }) => {
+  test("read-only documents keep selection AI safe while locking mutations and full AI mode", async ({ page }) => {
     const documentPath = "C:\\e2e\\future-format.letterpaper";
     const readOnlyDocument = createTestDocument({
       version: 99,
@@ -237,6 +237,28 @@ test.describe("P1 interaction regressions", () => {
     await expect(page.getByRole("tab", { name: /未来格式只读信笺/ })).toBeVisible();
     await expect(page.getByLabel("文章标题")).toHaveAttribute("readonly", "");
     await expect(page.locator(".canvas.active-pane .ProseMirror")).toHaveAttribute("contenteditable", "false");
+    await page.locator(".canvas.active-pane .ProseMirror").evaluate((root) => {
+      const textNode = root.querySelector("p")?.firstChild;
+      if (!textNode) throw new Error("read-only fixture text is missing");
+      const range = document.createRange();
+      range.selectNodeContents(textNode);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      root.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    const selectionAiButton = page.getByRole("button", { name: "询问 AI", exact: true });
+    await expect(selectionAiButton).toBeVisible();
+    await expect(page.getByRole("button", { name: "加粗", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "评注", exact: true })).toHaveCount(0);
+    await selectionAiButton.click();
+    const selectionAiDialog = page.getByRole("dialog", { name: "选区 AI 问答" });
+    await expect(selectionAiDialog).toBeVisible();
+    await expect(selectionAiDialog.locator(".selection-ai-snapshot-trigger")).toContainText("READ-ONLY-SENTINEL");
+    await expect(selectionAiDialog.getByRole("tab")).toHaveCount(1);
+    await selectionAiDialog.getByRole("button", { name: "关闭当前选区问答会话" }).click();
+    await expect(selectionAiDialog).toBeHidden();
+    await expect(page.locator(".selection-ai-sprite")).toHaveCount(0);
     await expect(page.locator(".ai-feature-trigger")).toBeDisabled();
     await expect(page.locator(".ai-feature-trigger")).toHaveAttribute("title", "当前信笺为只读，不能进入 AI 模式");
     await expect(page.getByRole("button", { name: "元素", exact: true })).toBeDisabled();

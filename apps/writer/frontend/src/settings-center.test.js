@@ -54,7 +54,7 @@ test("settings launcher uses responsive cards without compact-dialog backdrop bl
 });
 
 test("the launcher exits before opening a standalone second-level panel", () => {
-  assert.match(appSource, /useState\(\{ open: false, section: "", targetTabId: "" \}\)/);
+  assert.match(appSource, /const \[settingsDialog, setSettingsDialog\] = useState\(\{[\s\S]*?open: false,[\s\S]*?section: "",[\s\S]*?targetTabId: "",[\s\S]*?aiInitialPanel: "provider"/);
   assert.match(appSource, /const openSettings = useCallback\(\(\) => \{[\s\S]*?open: true,[\s\S]*?section: ""/);
   assert.match(appSource, /const openSettingsSection = useCallback\(\(section\) => \{[\s\S]*?open: false,[\s\S]*?section: section === "template" \? "template" : "ai"/);
   assert.match(appSource, /onSelectSection=\{openSettingsSection\}/);
@@ -82,6 +82,7 @@ test("standalone second-level panels trap focus and return to the settings trigg
 test("AI settings separates base models from a data-driven task-model page", () => {
   assert.match(aiSettingsModelSource, /export const AI_TASK_MODEL_DEFINITIONS = \[/);
   assert.match(aiSettingsModelSource, /id: "applyResolver"[\s\S]*?label: "直接应用定位"/);
+  assert.match(aiSettingsModelSource, /id: "selectionChat"[\s\S]*?label: "选区问答"/);
   assert.match(aiSettingsModelSource, /只判断优化块在正文中的替换或插入位置，不参与内容优化与改写/);
   assert.match(aiSettingsSource, /<strong>基础模型<\/strong>/);
   assert.match(aiSettingsSource, /className=\{activePanel === "tasks" \? "ai-task-model-nav selected"/);
@@ -114,6 +115,36 @@ test("task-model navigation is divided, responsive and keyboard-visible", () => 
   assert.match(appCss, /\.ai-task-model-card\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.match(appCss, /\.ai-task-model-selectors\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.doesNotMatch(appCss, /minmax\(520px/);
+});
+
+test("task-model cards are independent accessible disclosures with one-session state", () => {
+  assert.match(aiSettingsSource, /initialTaskId = ""/);
+  assert.match(
+    aiSettingsSource,
+    /AI_TASK_MODEL_DEFINITIONS\.some\(\(task\) => task\.id === initialTaskId\)/,
+  );
+  assert.match(
+    aiSettingsSource,
+    /setExpandedTaskIds\(requestedTaskId \? \[requestedTaskId\] : \[\]\)/,
+  );
+  assert.match(aiSettingsSource, /expandedTaskIds=\{expandedTaskIds\}/);
+  assert.match(aiSettingsSource, /focusTaskId=\{taskFocusRequestId\}/);
+  assert.match(aiSettingsSource, /current\.filter\(\(id\) => id !== taskId\)/);
+  assert.match(aiSettingsSource, /\[\.\.\.current, taskId\]/);
+  assert.match(aiSettingsSource, /className="ai-task-model-summary"/);
+  assert.match(aiSettingsSource, /aria-expanded=\{isExpanded\}/);
+  assert.match(aiSettingsSource, /aria-controls=\{bodyId\}/);
+  assert.match(aiSettingsSource, /aria-hidden=\{!isExpanded\}/);
+  assert.match(aiSettingsSource, /inert=\{isExpanded \? undefined : true\}/);
+  assert.match(aiSettingsSource, /taskHeaderRefs\.current\[focusTaskId\]\?\.focus/);
+  assert.match(aiSettingsSource, /默认模型 · /);
+  assert.doesNotMatch(aiSettingsSource, /ai-task-model-badge default/);
+  assert.match(aiSettingsSource, />参数未保存<\/span>/);
+  assert.match(aiSettingsSource, />需重选<\/span>/);
+  assert.match(aiSettingsSource, /normalizeUiAiRequestParams,/);
+  assert.match(appCss, /\.ai-task-model-body-shell\s*\{[\s\S]*?grid-template-rows:\s*0fr/);
+  assert.match(appCss, /\.ai-task-model-card\.expanded \.ai-task-model-body-shell\s*\{[\s\S]*?grid-template-rows:\s*1fr/);
+  assert.match(appCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.ai-task-model-chevron/);
 });
 
 test("AI model request parameter controls and subdialogs use product-styled components", () => {

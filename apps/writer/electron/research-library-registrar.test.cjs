@@ -22,6 +22,8 @@ const RESEARCH_LIBRARY_CHANNELS = [
   "research:root-clear",
   "research:root-get",
   "research:root-pick",
+  "research:search",
+  "research:search-cancel",
   "research:source-delete",
   "research:source-list",
   "research:source-upsert",
@@ -49,6 +51,10 @@ function createHarness() {
     logs: [],
     markdown: [],
     resolvedLegacyFiles: [],
+    searchCancels: [],
+    searchClears: [],
+    searchInvalidations: [],
+    searches: [],
     sanitized: [],
     workspaces: [],
   };
@@ -137,6 +143,31 @@ function createHarness() {
       requireLibrary: () => library,
       getActiveWorkspaceRoot: () => state.activeWorkspaceRoot,
       decodePreviewText: (bytes) => Buffer.from(bytes).toString("utf8"),
+      searchResearch: async (payload, options = {}) => {
+        calls.searches.push(payload);
+        options.onProgress?.({
+          libraryId: payload.libraryId,
+          requestId: payload.requestId,
+          phase: "searching",
+          percent: 50,
+        });
+        return {
+          requestId: payload.requestId,
+          query: payload.query,
+          canceled: false,
+          results: [],
+        };
+      },
+      cancelResearchSearch: (libraryId, requestId) => {
+        calls.searchCancels.push([libraryId, requestId]);
+        return true;
+      },
+      clearResearchSearch: async (options) => {
+        calls.searchClears.push(options);
+      },
+      invalidateResearchSearch: (change) => {
+        calls.searchInvalidations.push(change);
+      },
       sendEvent: (channel, payload) => {
         calls.events.push([channel, payload]);
       },
@@ -234,7 +265,14 @@ test("forwards simple capability payloads without changing defaults or native ca
   for (const [channel, args, expectedCall] of cases) {
     const before = harness.calls.library.length;
     await harness.handlers.get(channel)({}, ...args);
-    assert.deepEqual(harness.calls.library[before], expectedCall);
+    if (channel === "research:root-clear") {
+      assert.deepEqual(harness.calls.library.slice(before), [
+        ["getRoot"],
+        ["clearRoot"],
+      ]);
+    } else {
+      assert.deepEqual(harness.calls.library[before], expectedCall);
+    }
   }
 
   await harness.handlers.get("research:entry-trash")({}, {
@@ -271,6 +309,64 @@ test("forwards simple capability payloads without changing defaults or native ca
     },
   );
   assert.deepEqual(harness.calls.clipboard, ["C:\\Library\\Draft.letterpaper"]);
+});
+
+test("research search validates web scopes, reports keyed progress, and cancels exact requests", async () => {
+  const harness = createHarness();
+  const privateScope = `workspace:${harness.state.workspaceId.toLowerCase()}`;
+  const result = await harness.handlers.get("research:search")({}, {
+    libraryId: "library-1",
+    requestId: "search-1",
+    query: "研究方法",
+    scopeKey: "global",
+    workspaceScopeKey: privateScope,
+    limit: 500,
+    kinds: ["pdf"],
+    rootPath: "C:\\Renderer\\secret",
+  });
+  assert.equal(result.requestId, "search-1");
+  assert.deepEqual(harness.calls.searches, [{
+    libraryId: "library-1",
+    requestId: "search-1",
+    query: "研究方法",
+    scopeKey: "global",
+    workspaceScopeKey: privateScope,
+    limit: 200,
+    includeFiles: true,
+    includeWeb: true,
+    kinds: ["pdf"],
+  }]);
+  assert.deepEqual(harness.calls.events.at(-1), [
+    "research:search-progress",
+    {
+      libraryId: "library-1",
+      requestId: "search-1",
+      phase: "searching",
+      percent: 50,
+    },
+  ]);
+  assert.deepEqual(
+    await harness.handlers.get("research:search-cancel")({}, {
+      libraryId: "library-1",
+      requestId: "search-1",
+    }),
+    { ok: true },
+  );
+  assert.deepEqual(harness.calls.searchCancels, [[
+    "library-1",
+    "search-1",
+  ]]);
+
+  await assert.rejects(
+    () => harness.handlers.get("research:search")({}, {
+      libraryId: "library-1",
+      requestId: "search-2",
+      query: "越界",
+      workspaceScopeKey: "workspace:someone-else",
+    }),
+    /只能搜索当前打开工作区的私区网页/,
+  );
+  assert.equal(harness.calls.searches.length, 1);
 });
 
 test("root and file pickers preserve capability-first validation and ignore renderer paths", async () => {

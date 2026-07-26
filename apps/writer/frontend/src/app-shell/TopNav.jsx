@@ -5,6 +5,7 @@ import {
   AlignLeft,
   AlignRight,
   BookOpen,
+  BookOpenText,
   Download,
   FileInput,
   FilePlus,
@@ -74,6 +75,7 @@ export function TopNav({
   settingsTriggerRef,
   exportTriggerRef,
   onOpenSearch,
+  researchSearchAvailable,
   workspaceSearchAvailable,
   aiMode,
   aiModeKind,
@@ -218,6 +220,17 @@ export function TopNav({
                 <FolderSearch size={17} aria-hidden="true" />
                 <span><strong>文件夹搜索</strong><small>{workspaceSearchAvailable ? "搜索当前文件夹与子文件夹" : "请先打开一个文件夹"}</small></span>
                 <kbd>Ctrl+P</kbd>
+              </button>
+              <button
+                type="button"
+                className="nav-search-option"
+                role="menuitem"
+                disabled={!researchSearchAvailable}
+                title={researchSearchAvailable ? "搜索当前资料区全部可解析资料和网页来源" : "请先选择资料文件夹"}
+                onClick={() => runMenuAction(() => onOpenSearch?.("research"))}
+              >
+                <BookOpenText size={17} aria-hidden="true" />
+                <span><strong>资料搜索</strong><small>{researchSearchAvailable ? "搜索本地资料、公区与当前私区网页" : "请先选择资料文件夹"}</small></span>
               </button>
             </div>
           ) : null}

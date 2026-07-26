@@ -254,12 +254,18 @@ export function normalizeBrowserAiConfig(config = {}) {
   const activeModelId = activeProviderConfig.models.some((model) => model.id === requestedActiveModelId)
     ? requestedActiveModelId
     : activeProviderConfig.activeModelId;
-  const applyResolver = normalizeBrowserTaskModelAssignment(sourceObject(source.taskModels).applyResolver);
+  const taskModelsSource = sourceObject(source.taskModels);
+  const selectionChat = normalizeBrowserTaskModelAssignment(
+    taskModelsSource.selectionChat,
+  );
+  const applyResolver = normalizeBrowserTaskModelAssignment(
+    taskModelsSource.applyResolver,
+  );
   return {
     activeProvider,
     activeModelId,
     providers,
-    taskModels: { applyResolver },
+    taskModels: { selectionChat, applyResolver },
   };
 }
 
@@ -271,6 +277,18 @@ export function exactBrowserAiProviderConfig(config, assignment = {}) {
   const model = provider.models.find((item) => item.id === taskModel.modelId);
   if (!model) return null;
   return { provider, model };
+}
+
+export function browserTaskAiProviderConfig(config, assignment = {}) {
+  const normalized = normalizeBrowserAiConfig(config);
+  const taskModel = normalizeBrowserTaskModelAssignment(assignment);
+  if (taskModel.providerId || taskModel.modelId) {
+    return exactBrowserAiProviderConfig(normalized, taskModel);
+  }
+  return exactBrowserAiProviderConfig(normalized, {
+    providerId: normalized.activeProvider,
+    modelId: normalized.activeModelId,
+  });
 }
 
 export function publicBrowserAiConfig(config = {}) {

@@ -335,7 +335,7 @@ test("task models validate explicit assignments and fall back only when unconfig
   assert.match(saver, /codexRuntimeStatus\.ready/);
   assert.match(
     saver,
-    /validateAiRequestParamsPatch\(\s*source\.requestParams \|\| \{\},/,
+    /validateAiRequestParamsPatch\(\s*source\.requestParams,/,
   );
   assert.match(saver, /Codex CLI 任务模型不支持 HTTP 请求参数/);
   const resolver = between(

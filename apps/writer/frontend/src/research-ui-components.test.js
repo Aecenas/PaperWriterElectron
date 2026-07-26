@@ -205,6 +205,14 @@ test("secondary research pane is a fill container with a shared accessible PDF t
   assert.doesNotMatch(jsx, /secondary-pdf-hud/);
   assert.match(jsx, /role="search"/);
   assert.match(jsx, /aria-expanded=\{searchOpen\}/);
+  assert.match(jsx, /new pdfjsRef\.current\.TextLayer/);
+  assert.match(jsx, /findPdfPageSearchMatches/);
+  assert.match(jsx, /dataset\.pdfSearchIndex/);
+  assert.match(jsx, /上一个 PDF 匹配/);
+  assert.match(jsx, /下一个 PDF 匹配/);
+  assert.match(jsx, /searchCountLabel/);
+  assert.match(css, /\.secondary-pdf-text-layer mark/);
+  assert.match(css, /\.secondary-pdf-text-layer mark\.is-active/);
   assert.match(jsx, /new ResizeObserver/);
   assert.match(jsx, /zoomMode === "fit"/);
   assert.match(jsx, /AbortController/);

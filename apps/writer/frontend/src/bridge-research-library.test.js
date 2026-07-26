@@ -214,3 +214,55 @@ test("browser preview persists a global nested web tree while refusing workspace
     delete globalThis.localStorage;
   }
 });
+
+test("browser research search covers only public/current-private web titles and urls with keyed progress", async () => {
+  installMemoryStorage();
+  const progress = [];
+  const unsubscribe = browserBridge.onResearchSearchProgress((payload) => {
+    progress.push(payload);
+  });
+  try {
+    const saved = await browserBridge.upsertResearchWebSource(
+      LIBRARY_ID,
+      {
+        type: "web",
+        title: "研究方法全文搜索",
+        url: "https://example.com/method",
+        excerpt: "浏览器全文搜索摘录",
+      },
+      { scopeKey: "global", folderId: "" },
+      { source: null, tree: null },
+    );
+    const result = await browserBridge.searchResearch({
+      libraryId: LIBRARY_ID,
+      requestId: "browser-search-1",
+      query: "全文搜索",
+      workspaceScopeKey: "workspace:22222222-2222-4222-8222-222222222222",
+    });
+    assert.equal(result.canceled, false);
+    assert.equal(result.results.length, 1);
+    assert.equal(result.results[0].sourceId, saved.source.id);
+    assert.equal(result.results[0].scopeKey, "global");
+    assert.equal(progress[0].requestId, "browser-search-1");
+    assert.equal(progress.every((entry) => entry.indexGeneration === 0), true);
+    assert.equal(progress.at(-1).phase, "done");
+
+    const hiddenMetadata = await browserBridge.searchResearch({
+      libraryId: LIBRARY_ID,
+      requestId: "browser-search-hidden",
+      query: "浏览器全文搜索摘录",
+    });
+    assert.equal(hiddenMetadata.results.length, 0);
+
+    assert.deepEqual(
+      await browserBridge.cancelResearchSearch(
+        LIBRARY_ID,
+        "browser-search-2",
+      ),
+      { ok: true, browserOnly: true },
+    );
+  } finally {
+    unsubscribe();
+    delete globalThis.localStorage;
+  }
+});

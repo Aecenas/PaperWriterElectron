@@ -125,7 +125,7 @@ test("help center has five valid categories and 24 complete topics with valid sc
   }
 
   assert.deepEqual(new Set(referencedScreenshots), screenshotKeys, "every mapped screenshot must be used by a help topic");
-  for (const topicId of ["comments", "ai-modes", "codex-cli", "ai-optimize", "templates-gallery", "template-editor", "status-cache-update"]) {
+  for (const topicId of ["selection-links", "comments", "ai-modes", "codex-cli", "ai-optimize", "templates-gallery", "template-editor", "status-cache-update"]) {
     assert.ok(topics.find((topic) => topic.id === topicId)?.illustrations.length > 0, `${topicId} needs multiple screenshots`);
   }
 });
@@ -136,7 +136,7 @@ test("help screenshots exist one-to-one without orphans or duplicate image conte
   const mappedFiles = screenshots.map((item) => item.file).sort();
   const actualFiles = (await readdir(screenshotsUrl)).filter((name) => name.endsWith(".webp")).sort();
 
-  assert.equal(screenshots.length, 33);
+  assert.equal(screenshots.length, 34);
   assert.deepEqual(actualFiles, mappedFiles, "screenshot folder must contain exactly the mapped help images");
 
   const hashes = await Promise.all(mappedFiles.map(async (file) => {
@@ -147,7 +147,7 @@ test("help screenshots exist one-to-one without orphans or duplicate image conte
   assert.equal(new Set(hashes).size, hashes.length, "help screenshots must not reuse identical image content");
 });
 
-test("help preserves the 0.9.8 user-visible boundaries and rejects stale 0.9.2 guidance", async () => {
+test("help preserves user-visible boundaries, covers 1.0.0 additions and rejects stale guidance", async () => {
   const { topics } = await helpSource();
   const required = [
     "导入结果始终成为未保存的新信笺",
@@ -155,6 +155,12 @@ test("help preserves the 0.9.8 user-visible boundaries and rejects stale 0.9.2 g
     "来自未来版本的信笺以只读方式打开",
     "保留磁盘版本",
     "资料与网页不会自动进入任何 AI 请求",
+    "从顶部搜索菜单选择__资料搜索__",
+    "图片及不支持格式只搜索名称和路径",
+    "陶橙色标出当前命中",
+    "点击悬浮条中的__问 AI__",
+    "AI 小精灵",
+    "不会读取其他正文或资料",
     "红蓝修改对比",
     "一次 `Ctrl+Z` 完整撤销",
   ];

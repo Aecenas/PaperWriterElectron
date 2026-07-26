@@ -22,6 +22,8 @@ export function PaperCanvas({
   readOnly = false,
   aiCaptureEnabled = false,
   onCaptureAiSelection,
+  selectionAiEnabled = false,
+  onOpenSelectionAi,
   comments = [],
   activeCommentId = "",
   commentsHidden = false,
@@ -71,10 +73,13 @@ export function PaperCanvas({
     >
       <SelectionBubbleToolbar
         editor={editor}
-        disabled={printMode || imageExportMode || readOnly}
+        disabled={printMode || imageExportMode}
+        readOnly={readOnly}
         savedSelectionRef={savedSelectionRef}
         aiCaptureEnabled={aiCaptureEnabled}
         onCaptureAiSelection={onCaptureAiSelection}
+        selectionAiEnabled={selectionAiEnabled}
+        onOpenSelectionAi={onOpenSelectionAi}
         onCreateComment={onCreateComment}
       />
       <TableContextToolbar editor={editor} disabled={printMode || imageExportMode || readOnly} />
@@ -109,4 +114,3 @@ export function PaperCanvas({
     </main>
   );
 }
-

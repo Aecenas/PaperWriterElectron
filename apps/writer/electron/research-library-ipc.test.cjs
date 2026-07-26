@@ -81,6 +81,8 @@ test("main registers every independent research-library IPC while retaining lega
     "research:web-selection-copy",
     "research:web-source-upsert",
     "research:legacy-import",
+    "research:search",
+    "research:search-cancel",
     "research:pdf-read",
     "research:preview-read",
     "research:document-open",
@@ -106,8 +108,11 @@ test("main registers every independent research-library IPC while retaining lega
   assert.match(main, /researchFacade:\s*researchRuntime\.libraryFacade/);
   assert.match(researchRuntime, /createResearchLibraryManager\(\{\s*userDataPath:\s*getUserDataPath\(\)/);
   assert.match(researchRuntime, /researchLibrary\?\.closeWatcher\(\)/);
+  assert.match(researchRuntime, /createResearchSearchManager\(\{/);
+  assert.match(researchRuntime, /researchSearch\?\.shutdown\(\)/);
   assert.match(researchLibraryIpc, /"research:changed"/);
   assert.match(researchLibraryIpc, /"research:watch-error"/);
+  assert.match(researchLibraryIpc, /"research:search-progress"/);
   const sourceMutations = between(
     researchLibraryIpc,
     "async function runResearchSourceMutation",
@@ -216,6 +221,31 @@ test("preload forwards exact library capabilities and revisions", async () => {
     ["importLegacyResearch", ["C:\\写作区", "library"], ["research:legacy-import", { workspacePath: "C:\\写作区", libraryId: "library" }]],
     ["readResearchPdf", ["library", "a.pdf"], ["research:pdf-read", { libraryId: "library", relativePath: "a.pdf" }]],
     ["readResearchPreview", ["library", "a.md"], ["research:preview-read", { libraryId: "library", relativePath: "a.md" }]],
+    ["searchResearch", [{
+      libraryId: "library",
+      requestId: "search-1",
+      query: "方法",
+      workspaceScopeKey: "workspace:11111111-1111-4111-8111-111111111111",
+      limit: 20,
+      includeFiles: true,
+      includeWeb: false,
+      kinds: ["pdf"],
+      rootPath: "C:\\不得转发",
+    }], ["research:search", {
+      libraryId: "library",
+      requestId: "search-1",
+      query: "方法",
+      scopeKey: "global",
+      workspaceScopeKey: "workspace:11111111-1111-4111-8111-111111111111",
+      limit: 20,
+      includeFiles: true,
+      includeWeb: false,
+      kinds: ["pdf"],
+    }]],
+    ["cancelResearchSearch", ["library", "search-1"], ["research:search-cancel", {
+      libraryId: "library",
+      requestId: "search-1",
+    }]],
     ["openResearchDocument", ["library", "a.letterpaper"], ["research:document-open", { libraryId: "library", relativePath: "a.letterpaper" }]],
     ["openResearchEntryExternal", ["library", "a.pdf"], ["research:open-external", { libraryId: "library", relativePath: "a.pdf" }]],
     ["watchResearchLibrary", ["library"], ["research:watch", { libraryId: "library" }]],
@@ -234,6 +264,7 @@ test("preload research watcher subscriptions are removable", async () => {
   for (const [method, channel, sample] of [
     ["onResearchLibraryChanged", "research:changed", { libraryId: "l", relativePath: "a.pdf" }],
     ["onResearchLibraryWatchError", "research:watch-error", { libraryId: "l", message: "failed" }],
+    ["onResearchSearchProgress", "research:search-progress", { libraryId: "l", requestId: "s", phase: "searching" }],
   ]) {
     let received;
     const unsubscribe = preload.api[method]((payload) => { received = payload; });

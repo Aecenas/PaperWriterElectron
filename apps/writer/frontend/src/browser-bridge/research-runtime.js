@@ -32,7 +32,65 @@ import {
   saveBrowserSources,
 } from "./research-store.js";
 
+function browserSearchPlainText(value) {
+  return String(value || "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function browserSearchSnippet(value, query, maximum = 180) {
+  const source = String(value || "");
+  const index = source.toLocaleLowerCase("en-US")
+    .indexOf(String(query || "").toLocaleLowerCase("en-US"));
+  if (index < 0) return null;
+  const room = Math.max(String(query || "").length, maximum);
+  let start = Math.max(0, index - Math.floor((room - query.length) / 2));
+  let end = Math.min(source.length, start + room);
+  if (end - start < room) start = Math.max(0, end - room);
+  const prefix = start > 0 ? "…" : "";
+  return {
+    text: `${prefix}${source.slice(start, end)}${end < source.length ? "…" : ""}`,
+    start: index,
+    length: String(query || "").length,
+    snippetStart: prefix.length + index - start,
+  };
+}
+
+function searchBrowserResearchRecord(record, query) {
+  const fields = [
+    ["fileName", record.fileName, 500],
+    ["relativePath", record.relativePath, 450],
+    ["title", record.title, 400],
+    ["authors", record.authors, 350],
+    ["url", record.url, 300],
+    ["bibliographic", record.bibliographic, 280],
+    ["excerpt", record.excerpt, 240],
+    ["notes", record.notes, 220],
+    ["body", record.body, 100],
+  ];
+  for (const [field, value, weight] of fields) {
+    const snippet = browserSearchSnippet(value, query);
+    if (!snippet) continue;
+    return {
+      ...record.result,
+      matchField: field,
+      matchStart: snippet.start,
+      matchLength: snippet.length,
+      snippet: snippet.text,
+      snippetMatchStart: snippet.snippetStart,
+      snippetMatchLength: snippet.length,
+      indexedTextTruncated: false,
+      score: weight - Math.min(snippet.start, 99),
+    };
+  }
+  return null;
+}
+
 function createBrowserResearchApi() {
+  const canceledResearchSearches = new Set();
   const api = {
     showResearchWebView: async () => ({ ok: false, unsupported: true, browserOnly: true }),
     updateResearchWebViewBounds: async () => ({ ok: false, unsupported: true, browserOnly: true }),
@@ -156,6 +214,194 @@ function createBrowserResearchApi() {
       browserOnly: true,
     }),
     listResearchWebTree: async (libraryId) => listBrowserResearchWebTree(libraryId),
+    searchResearch: async (payload = {}) => {
+      const libraryId = normalizeBrowserResearchLibraryId(payload.libraryId);
+      const requestId = String(payload.requestId || `browser-research-${Date.now()}`).slice(0, 128);
+      const query = String(payload.query || "").trim().slice(0, 256);
+      const scopeKey = String(payload.scopeKey || "global");
+      const workspaceScopeKey = String(payload.workspaceScopeKey || "");
+      const allowedWebScopes = new Set([
+        scopeKey,
+        ...(workspaceScopeKey ? [workspaceScopeKey] : []),
+      ]);
+      const limit = Math.min(200, Math.max(1, Number(payload.limit) || 100));
+      const kindFilter = new Set(
+        (Array.isArray(payload.kinds) ? payload.kinds : [])
+          .slice(0, 20)
+          .map((kind) => String(kind || "").toLocaleLowerCase("en-US"))
+          .filter(Boolean),
+      );
+      canceledResearchSearches.delete(requestId);
+      if (!query) {
+        return {
+          requestId,
+          query: "",
+          canceled: false,
+          results: [],
+          totalMatches: 0,
+          limited: false,
+          indexState: "idle",
+          browserOnly: true,
+        };
+      }
+      browserEvents.emitResearchSearchProgress({
+        libraryId,
+        requestId,
+        indexGeneration: 0,
+        phase: "discovering",
+        completed: 0,
+        total: 0,
+        indexed: 0,
+        reused: 0,
+        skipped: 0,
+        failed: 0,
+        browserOnly: true,
+      });
+      await Promise.resolve();
+      if (canceledResearchSearches.has(requestId)) {
+        canceledResearchSearches.delete(requestId);
+        return {
+          requestId,
+          query,
+          canceled: true,
+          results: [],
+          totalMatches: 0,
+          limited: false,
+          browserOnly: true,
+        };
+      }
+      const records = [];
+      if (
+        payload.includeWeb !== false
+        && (!kindFilter.size || kindFilter.has("web"))
+      ) {
+        const [listed, tree] = [
+          listBrowserResearchLibrarySources(libraryId),
+          listBrowserResearchWebTree(libraryId),
+        ];
+        const placements = tree?.placements || {};
+        for (const source of listed.sources || []) {
+          if (source.type !== "web") continue;
+          const placement = placements[source.id];
+          const placementScopeKey = String(placement?.scopeKey || "");
+          if (!placement || !allowedWebScopes.has(placementScopeKey)) continue;
+          records.push({
+            title: source.title || source.url || "未命名网址",
+            url: source.url || "",
+            authors: "",
+            bibliographic: "",
+            excerpt: "",
+            notes: "",
+            body: "",
+            result: {
+              kind: "web",
+              libraryId,
+              sourceId: source.id,
+              scopeKey: placementScopeKey,
+              folderId: placement.folderId || "",
+              previewKind: "web",
+              title: source.title || source.url || "未命名网址",
+              url: source.url || "",
+              updatedAt: source.updatedAt || "",
+            },
+          });
+        }
+      }
+      if (
+        payload.includeFiles !== false
+        && browserResearchPreviewEnabled()
+        && libraryId === BROWSER_RESEARCH_PREVIEW_LIBRARY_ID
+      ) {
+        const fixture = browserResearchPreviewFixture();
+        if (
+          !kindFilter.size
+          || kindFilter.has("file")
+          || kindFilter.has(fixture.kind)
+        ) records.push({
+          fileName: fixture.path,
+          relativePath: fixture.path,
+          title: fixture.path,
+          authors: "",
+          url: "",
+          bibliographic: "",
+          excerpt: "",
+          notes: "",
+          body: fixture.html
+            ? browserSearchPlainText(fixture.html)
+            : String(fixture.text || ""),
+          result: {
+            kind: "file",
+            libraryId,
+            relativePath: fixture.path,
+            previewKind: fixture.kind,
+            fileName: fixture.path,
+            title: fixture.path,
+            size: fixture.size,
+            updatedAt: "2026-07-15T08:00:00.000Z",
+          },
+        });
+      }
+      browserEvents.emitResearchSearchProgress({
+        libraryId,
+        requestId,
+        indexGeneration: 0,
+        phase: "searching",
+        completed: 0,
+        total: records.length,
+        indexed: records.filter((record) => record.result?.kind === "file").length,
+        reused: 0,
+        skipped: 0,
+        failed: 0,
+        percent: 90,
+        browserOnly: true,
+      });
+      const results = records
+        .map((record) => searchBrowserResearchRecord(record, query))
+        .filter(Boolean)
+        .sort((left, right) => right.score - left.score);
+      if (canceledResearchSearches.has(requestId)) {
+        canceledResearchSearches.delete(requestId);
+        return {
+          requestId,
+          query,
+          canceled: true,
+          results: [],
+          totalMatches: 0,
+          limited: false,
+          browserOnly: true,
+        };
+      }
+      browserEvents.emitResearchSearchProgress({
+        libraryId,
+        requestId,
+        indexGeneration: 0,
+        phase: "done",
+        completed: records.length,
+        total: records.length,
+        indexed: records.filter((record) => record.result?.kind === "file").length,
+        reused: 0,
+        skipped: 0,
+        failed: 0,
+        percent: 100,
+        browserOnly: true,
+      });
+      return {
+        requestId,
+        query,
+        canceled: false,
+        results: results.slice(0, limit),
+        totalMatches: results.length,
+        limited: results.length > limit,
+        indexState: "ready",
+        browserOnly: true,
+      };
+    },
+    cancelResearchSearch: async (_libraryId, requestId) => {
+      const id = String(requestId || "").slice(0, 128);
+      if (!id) return { ok: false, browserOnly: true };
+      canceledResearchSearches.add(id);
+      return { ok: true, browserOnly: true };
+    },
     createResearchWebFolder: async (libraryId, folder = {}, expectedRevision = null) => (
       mutateBrowserResearchWebTree(libraryId, expectedRevision, (tree) => {
         const timestamp = new Date().toISOString();
@@ -369,6 +615,7 @@ function createBrowserResearchApi() {
     }),
     onResearchLibraryChanged: (callback) => browserEvents.onResearchLibraryChanged(callback),
     onResearchLibraryWatchError: (callback) => browserEvents.onResearchLibraryWatchError(callback),
+    onResearchSearchProgress: (callback) => browserEvents.onResearchSearchProgress(callback),
     listResearch: async (workspacePath = "") => ({
       sources: listBrowserResearch(workspacePath),
       browserOnly: true,

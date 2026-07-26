@@ -297,12 +297,17 @@ function normalizeAiConfig(config = {}) {
   const activeModelId = activeProviderConfig.models.some((model) => model.id === requestedActiveModelId)
     ? requestedActiveModelId
     : activeProviderConfig.activeModelId;
-  const applyResolver = normalizeAiTaskModelAssignment(source.taskModels?.applyResolver);
+  const selectionChat = normalizeAiTaskModelAssignment(
+    source.taskModels?.selectionChat,
+  );
+  const applyResolver = normalizeAiTaskModelAssignment(
+    source.taskModels?.applyResolver,
+  );
   return {
     activeProvider,
     activeModelId,
     providers,
-    taskModels: { applyResolver },
+    taskModels: { selectionChat, applyResolver },
   };
 }
 

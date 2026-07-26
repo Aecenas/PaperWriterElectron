@@ -55,6 +55,11 @@ test("custom provider models, task overrides and runtime selection round-trip un
       },
     },
     taskModels: {
+      selectionChat: {
+        providerId: "team-gateway",
+        modelId: "writer-model",
+        requestParams: { temperature: 0.15 },
+      },
       applyResolver: {
         providerId: "team-gateway",
         modelId: "writer-model",
@@ -76,6 +81,11 @@ test("custom provider models, task overrides and runtime selection round-trip un
     providerId: "team-gateway",
     modelId: "writer-model",
     requestParams: { temperature: 0.1 },
+  });
+  assert.deepEqual(normalized.taskModels.selectionChat, {
+    providerId: "team-gateway",
+    modelId: "writer-model",
+    requestParams: { temperature: 0.15 },
   });
 
   assert.deepEqual(getTestedAiProviders(normalized).map((model) => model.id), ["team-gateway::writer-model"]);
@@ -105,6 +115,28 @@ test("task assignments reject unsafe provider ids and incomplete pairs", () => {
     modelId: "",
     requestParams: {},
   });
+});
+
+test("legacy configs gain an empty selectionChat assignment without changing applyResolver", () => {
+  const normalized = normalizePublicAiConfig({
+    taskModels: {
+      applyResolver: {
+        providerId: "deepseek",
+        modelId: "deepseek-default",
+      },
+      unknownTask: {
+        providerId: "gemini",
+        modelId: "gemini-default",
+      },
+    },
+  });
+  assert.deepEqual(normalized.taskModels.selectionChat, {
+    providerId: "",
+    modelId: "",
+    requestParams: {},
+  });
+  assert.equal(Object.hasOwn(normalized.taskModels, "unknownTask"), false);
+  assert.equal(normalized.taskModels.applyResolver.providerId, "deepseek");
 });
 
 test("connection metadata and reasoning choices remain presentation-ready", () => {

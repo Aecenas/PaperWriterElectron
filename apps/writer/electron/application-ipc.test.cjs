@@ -2,6 +2,10 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const { registerApplicationIpcHandlers } = require("./application-ipc.cjs");
+const {
+  createInitialUpdateState,
+  mergeUpdateState,
+} = require("./update-runtime.cjs");
 
 const APPLICATION_CHANNELS = [
   "app:close-canceled",
@@ -29,6 +33,7 @@ function createHarness() {
     quitAndInstall: [],
     stopCloseAttention: 0,
     titleBarOverlays: [],
+    updateStates: [],
   };
   const app = { isPackaged: true };
   const titleBarOverlay = { color: "#fff", symbolColor: "#111", height: 40 };
@@ -56,7 +61,7 @@ function createHarness() {
     closeRequestInFlight: false,
     forceCloseWindow: false,
     pendingUpdateInstall: false,
-    update: { status: "idle", message: "尚未检查更新", version: "1.0.0" },
+    update: createInitialUpdateState("1.0.0"),
   };
   const autoUpdater = {
     async checkForUpdates() {
@@ -95,7 +100,8 @@ function createHarness() {
     getMainWindow: () => activeWindow,
     getUpdateState: () => state.update,
     emitUpdateState: (patch) => {
-      state.update = { ...state.update, ...patch };
+      state.update = mergeUpdateState(state.update, patch, "1.0.0");
+      calls.updateStates.push(state.update);
       return state.update;
     },
     getCloseRequestInFlight: () => state.closeRequestInFlight,
@@ -167,7 +173,7 @@ test("reports title-bar overlay failures without rejecting the renderer call", a
   ]]);
 });
 
-test("keeps development, success, and failure update results unchanged", async () => {
+test("keeps update IPC results compatible while exposing progress metadata", async () => {
   const harness = createHarness();
   harness.app.isPackaged = false;
 
@@ -175,11 +181,23 @@ test("keeps development, success, and failure update results unchanged", async (
     status: "dev",
     message: "开发版不能检查更新，打包安装后可用",
     version: "1.0.0",
+    progressKnown: false,
+    percent: null,
+    transferred: null,
+    total: null,
+    bytesPerSecond: null,
+    installPending: false,
   });
   assert.deepEqual(await harness.handlers.get("update:download")(), {
     status: "dev",
     message: "开发版不能下载更新，打包安装后可用",
     version: "1.0.0",
+    progressKnown: false,
+    percent: null,
+    transferred: null,
+    total: null,
+    bytesPerSecond: null,
+    installPending: false,
   });
   assert.equal(harness.calls.checkForUpdates, 0);
   assert.equal(harness.calls.downloadUpdate, 0);
@@ -196,10 +214,28 @@ test("keeps development, success, and failure update results unchanged", async (
     harness.calls.downloadUpdate += 1;
     throw new Error("network unavailable");
   };
-  assert.deepEqual(await harness.handlers.get("update:download")(), {
+  const failedDownload = await harness.handlers.get("update:download")();
+  assert.deepEqual(harness.calls.updateStates.at(-2), {
+    status: "downloading",
+    message: "正在准备下载更新...",
+    version: "1.0.0",
+    progressKnown: false,
+    percent: null,
+    transferred: null,
+    total: null,
+    bytesPerSecond: null,
+    installPending: false,
+  });
+  assert.deepEqual(failedDownload, {
     status: "error",
     message: "下载失败：network unavailable",
     version: "1.0.0",
+    progressKnown: false,
+    percent: null,
+    transferred: null,
+    total: null,
+    bytesPerSecond: null,
+    installPending: false,
   });
   assert.equal(harness.calls.downloadUpdate, 1);
   assert.equal(await harness.handlers.get("update:get-state")(), harness.state.update);
@@ -214,7 +250,14 @@ test("defers update installation through the existing close-save handshake", asy
 
   harness.state.update = { status: "downloaded", message: "ready", version: "2.0.0" };
   assert.deepEqual(await harness.handlers.get("update:install")(), {
-    ...harness.state.update,
+    status: "downloaded",
+    message: "更新已下载，正在准备重启安装...",
+    version: "1.0.0",
+    progressKnown: false,
+    percent: null,
+    transferred: null,
+    total: null,
+    bytesPerSecond: null,
     installPending: true,
   });
   assert.equal(harness.state.pendingUpdateInstall, true);
@@ -229,12 +272,15 @@ test("defers update installation through the existing close-save handshake", asy
   assert.equal(harness.state.forceCloseWindow, true);
   assert.equal(harness.state.closeRequestInFlight, false);
   assert.deepEqual(harness.calls.quitAndInstall, [[false, true]]);
+  assert.equal(harness.state.update.message, "正在重启并安装更新...");
+  assert.equal(harness.state.update.installPending, true);
 });
 
 test("restores close state when update installation throws", async () => {
   const harness = createHarness();
   harness.state.pendingUpdateInstall = true;
   harness.state.closeRequestInFlight = true;
+  harness.state.update = { status: "downloaded", message: "ready", version: "1.0.0" };
   harness.autoUpdater.quitAndInstall = () => {
     throw new Error("installer failed");
   };
@@ -246,6 +292,9 @@ test("restores close state when update installation throws", async () => {
   assert.equal(harness.state.pendingUpdateInstall, false);
   assert.equal(harness.state.forceCloseWindow, false);
   assert.equal(harness.state.closeRequestInFlight, false);
+  assert.equal(harness.state.update.status, "error");
+  assert.equal(harness.state.update.message, "安装更新失败：installer failed");
+  assert.equal(harness.state.update.installPending, false);
   assert.deepEqual(harness.calls.logs, [[
     "update:install:error",
     { message: "installer failed" },
@@ -270,10 +319,14 @@ test("maps close confirmation choices and cancellation without changing payload 
 
   harness.state.closeRequestInFlight = true;
   harness.state.pendingUpdateInstall = true;
+  harness.state.update = { status: "downloaded", message: "ready", version: "1.0.0" };
   assert.deepEqual(await harness.handlers.get("app:close-canceled")(), { ok: true });
   assert.equal(harness.state.closeRequestInFlight, false);
   assert.equal(harness.state.pendingUpdateInstall, false);
   assert.equal(harness.calls.stopCloseAttention, 1);
+  assert.equal(harness.state.update.status, "downloaded");
+  assert.equal(harness.state.update.message, "更新已下载，可重新安装");
+  assert.equal(harness.state.update.installPending, false);
 });
 
 test("closes the application window after a normal close-ready response", async () => {

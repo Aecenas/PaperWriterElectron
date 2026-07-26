@@ -388,13 +388,20 @@ async function refreshCodexStatus({ previousModels = [], appVersion = "0.0.0", e
   }
 }
 
-function codexPrompt(messages, scope = { mode: "workspace", relativePath: "" }, attachments = []) {
+function codexPrompt(
+  messages,
+  scope = { mode: "workspace", relativePath: "" },
+  attachments = [],
+  contextInstruction = "",
+) {
   void scope;
   const transcript = messages.map((message) => `[${message.role}]\n${message.content}`).join("\n\n");
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
-  const scopeInstruction = hasAttachments
-    ? "本次只允许使用下方对话中提供的当前信笺内容与显式附加的当前信笺图片。本次没有本地文件或目录访问能力，不要尝试调用任何工具。"
-    : "本次只允许使用下方对话中提供的当前信笺内容。本次没有本地文件或目录访问能力，不要尝试调用任何工具。";
+  const scopeInstruction = String(contextInstruction || "").trim() || (
+    hasAttachments
+      ? "本次只允许使用下方对话中提供的当前信笺内容与显式附加的当前信笺图片。本次没有本地文件或目录访问能力，不要尝试调用任何工具。"
+      : "本次只允许使用下方对话中提供的当前信笺内容。本次没有本地文件或目录访问能力，不要尝试调用任何工具。"
+  );
   const attachmentInstruction = hasAttachments
     ? [
         "当前信笺正文、用户标记文字和图片附件是本次问答的全部依据。",
@@ -456,7 +463,7 @@ function codexUsage(payload) {
   return { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens };
 }
 
-async function streamCodexCompletion({ executable, config, messages, cwd, scope, attachments = [], imagePaths = [], signal, onDelta }) {
+async function streamCodexCompletion({ executable, config, messages, cwd, scope, attachments = [], imagePaths = [], contextInstruction = "", signal, onDelta }) {
   if (!executable) throw new Error("未检测到 Codex CLI");
   if (!config.model) throw new Error("请选择 Codex 模型");
   if (signal?.aborted) throw new Error("已停止生成");
@@ -570,7 +577,12 @@ async function streamCodexCompletion({ executable, config, messages, cwd, scope,
     });
     removeAbortHandler = registerAbortHandler(signal, abort);
     if (!signal?.aborted) {
-      endChildInputSafely(child, codexPrompt(messages, scope, attachments), finish, () => settled);
+      endChildInputSafely(
+        child,
+        codexPrompt(messages, scope, attachments, contextInstruction),
+        finish,
+        () => settled,
+      );
     }
   });
 }

@@ -320,9 +320,17 @@ test("runtime owns research lifecycle and main composes one instance with the co
 
   assert.match(runtimeSource, /let researchLibrary = null/);
   assert.match(runtimeSource, /let researchWebViews = null/);
+  assert.match(
+    runtimeSource,
+    /require\(["']\.\/research-search-extractors\.cjs["']\)/,
+  );
+  assert.match(
+    runtimeSource,
+    /require\(["']\.\/research-search-index\.cjs["']\)/,
+  );
   assert.doesNotMatch(
     runtimeSource,
-    /require\(["'][^"']*(?:workspace|document|research)/,
+    /require\(["']\.\/(?:main|application-ipc|research-library-ipc|workspace-research-ipc)\.cjs["']\)/,
   );
   assert.equal(
     (mainSource.match(/createResearchRuntime\(\{/g) || []).length,

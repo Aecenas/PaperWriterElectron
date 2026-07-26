@@ -324,6 +324,7 @@ function createAiGenerationRuntime({
     const messages = normalizeAiMessages(payload || {});
     if (
       !AI_REQUEST_ID_PATTERN.test(requestId)
+      || requestId.toLowerCase().startsWith("ai-selection-")
       || !messages.some((message) => message.content.trim())
     ) {
       return { ok: false, message: "AI 请求缺少内容" };

@@ -1,3 +1,5 @@
+const { createDownloadStartingPatch } = require("./update-runtime.cjs");
+
 function registerApplicationIpcHandlers({
   ipcMain,
   app,
@@ -61,6 +63,7 @@ function registerApplicationIpcHandlers({
       });
     }
     try {
+      emitUpdateState(createDownloadStartingPatch());
       await autoUpdater.downloadUpdate();
       return getUpdateState();
     } catch (error) {
@@ -77,11 +80,16 @@ function registerApplicationIpcHandlers({
       return updateState;
     }
     setPendingUpdateInstall(true);
+    const pendingState = emitUpdateState({
+      status: "downloaded",
+      message: "更新已下载，正在准备重启安装...",
+      installPending: true,
+    });
     const mainWindow = getMainWindow();
     if (!getCloseRequestInFlight() && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.close();
     }
-    return { ...updateState, installPending: true };
+    return pendingState;
   });
 
   ipcMain.handle("window:set-fullscreen", async (_event, fullscreen) => {
@@ -121,11 +129,21 @@ function registerApplicationIpcHandlers({
     setCloseRequestInFlight(false);
     if (getPendingUpdateInstall()) {
       try {
+        emitUpdateState({
+          status: "downloaded",
+          message: "正在重启并安装更新...",
+          installPending: true,
+        });
         autoUpdater.quitAndInstall(false, true);
         return { ok: true, installingUpdate: true };
       } catch (error) {
         setPendingUpdateInstall(false);
         setForceCloseWindow(false);
+        emitUpdateState({
+          status: "error",
+          message: `安装更新失败：${error.message}`,
+          installPending: false,
+        });
         await writeDebugLog("update:install:error", { message: error?.message });
         throw error;
       }
@@ -135,8 +153,16 @@ function registerApplicationIpcHandlers({
   });
 
   ipcMain.handle("app:close-canceled", async () => {
+    const wasPendingUpdateInstall = getPendingUpdateInstall();
     setCloseRequestInFlight(false);
     setPendingUpdateInstall(false);
+    if (wasPendingUpdateInstall) {
+      emitUpdateState({
+        status: "downloaded",
+        message: "更新已下载，可重新安装",
+        installPending: false,
+      });
+    }
     stopCloseAttention();
     return { ok: true };
   });

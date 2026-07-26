@@ -7,6 +7,7 @@ import {
   aiModelCapabilities,
   aiRequestParamsWithProviderDefaults,
   aiTaskRequestParamsForEditor,
+  normalizeUiAiRequestParams,
   parseAiRequestParamRows,
   requestParamsToRows,
 } from "../ai-request-params.js";
@@ -30,7 +31,7 @@ import {
 } from "./model.js";
 import { AI_PROVIDER_ICON_ASSETS } from "./provider-icons.js";
 
-export function AiSettingsDialog({ open, embedded = false, returnFocusRef, config, onClose, onSave, onCreateProvider, onDeleteProvider, onTest, onClear, onRefreshCodex, onLoginCodex }) {
+export function AiSettingsDialog({ open, embedded = false, initialPanel = "provider", initialTaskId = "", returnFocusRef, config, onClose, onSave, onCreateProvider, onDeleteProvider, onTest, onClear, onRefreshCodex, onLoginCodex }) {
   const [activePanel, setActivePanel] = useState("provider");
   const [selectedProvider, setSelectedProvider] = useState("gemini");
   const [selectedModelId, setSelectedModelId] = useState("gemini-default");
@@ -44,6 +45,8 @@ export function AiSettingsDialog({ open, embedded = false, returnFocusRef, confi
   const [modelEditor, setModelEditor] = useState(null);
   const [taskParamDrafts, setTaskParamDrafts] = useState({});
   const [taskProviderConfirm, setTaskProviderConfirm] = useState(null);
+  const [expandedTaskIds, setExpandedTaskIds] = useState([]);
+  const [taskFocusRequestId, setTaskFocusRequestId] = useState("");
   const initializedOpenRef = useRef(false);
   const codexAutoCheckRef = useRef(false);
   const dialogRef = useRef(null);
@@ -71,21 +74,33 @@ export function AiSettingsDialog({ open, embedded = false, returnFocusRef, confi
     providers: drafts,
   }), [drafts, normalizedConfig]);
   const resolverProviderGroups = useMemo(() => groupTestedAiProviders(resolverModels, AI_PROVIDER_OPTIONS), [resolverModels]);
-  const resolverAssignment = normalizedConfig.taskModels?.applyResolver || { providerId: "", modelId: "", requestParams: {} };
-  const resolverModelKey = createAiModelKey(resolverAssignment.providerId, resolverAssignment.modelId);
-  const resolverModelConfigured = Boolean(resolverAssignment.providerId && resolverAssignment.modelId);
   const defaultResolverModelKey = createAiModelKey(normalizedConfig.activeProvider, normalizedConfig.activeModelId);
-  const resolverModelAvailable = resolverModelConfigured
-    ? resolverModels.some((model) => model.id === resolverModelKey)
-    : resolverModels.some((model) => model.id === defaultResolverModelKey);
-  const resolverModelInvalid = resolverModelConfigured && !resolverModelAvailable;
-  const taskModelNavTone = resolverModelAvailable ? "connected" : (resolverModelInvalid ? "failed" : "idle");
-  const taskModelNavLabel = resolverModelInvalid
+  const taskModelStatuses = AI_TASK_MODEL_DEFINITIONS.map((task) => {
+    const assignment = normalizedConfig.taskModels?.[task.id] || {};
+    const configured = Boolean(assignment.providerId && assignment.modelId);
+    const modelKey = configured
+      ? createAiModelKey(assignment.providerId, assignment.modelId)
+      : defaultResolverModelKey;
+    return {
+      configured,
+      available: resolverModels.some((model) => model.id === modelKey),
+    };
+  });
+  const taskModelInvalid = taskModelStatuses.some((task) => task.configured && !task.available);
+  const taskModelsAvailable = taskModelStatuses.length > 0 && taskModelStatuses.every((task) => task.available);
+  const configuredTaskModelCount = taskModelStatuses.filter((task) => task.configured).length;
+  const taskModelNavTone = taskModelInvalid ? "failed" : (taskModelsAvailable ? "connected" : "idle");
+  const taskModelNavLabel = taskModelInvalid
     ? "需重选"
-    : (resolverModelConfigured ? "已配置" : (resolverModelAvailable ? "跟随默认" : "待配置"));
+    : (configuredTaskModelCount
+      ? `${configuredTaskModelCount} 项已指定`
+      : (taskModelsAvailable ? "跟随默认" : "待配置"));
   const selectedProviderTaskLabels = useMemo(() => AI_TASK_MODEL_DEFINITIONS
     .filter((task) => normalizedConfig.taskModels?.[task.id]?.providerId === selectedProvider)
     .map((task) => task.label), [normalizedConfig.taskModels, selectedProvider]);
+  const requestedTaskId = AI_TASK_MODEL_DEFINITIONS.some((task) => task.id === initialTaskId)
+    ? initialTaskId
+    : "";
 
   useEffect(() => {
     if (!open) {
@@ -97,7 +112,7 @@ export function AiSettingsDialog({ open, embedded = false, returnFocusRef, confi
     }
     initializedOpenRef.current = true;
     const normalized = normalizePublicAiConfig(config);
-    setActivePanel("provider");
+    setActivePanel(requestedTaskId || initialPanel === "tasks" ? "tasks" : "provider");
     setSelectedProvider(normalized.activeProvider);
     setSelectedModelId(normalized.activeModelId);
     setDrafts(normalized.providers);
@@ -131,14 +146,18 @@ export function AiSettingsDialog({ open, embedded = false, returnFocusRef, confi
       return [task.id, requestParamsToRows(editableRequestParams || {})];
     })));
     setTaskProviderConfirm(null);
+    setExpandedTaskIds(requestedTaskId ? [requestedTaskId] : []);
+    setTaskFocusRequestId(requestedTaskId);
     codexAutoCheckRef.current = false;
-  }, [config, open]);
+  }, [config, initialPanel, open, requestedTaskId]);
 
   useEffect(() => {
     if (!open || embedded) return undefined;
     const previouslyFocused = window.document.activeElement;
     const frame = window.requestAnimationFrame(() => {
-      closeButtonRef.current?.focus({ preventScroll: true });
+      if (!requestedTaskId) {
+        closeButtonRef.current?.focus({ preventScroll: true });
+      }
     });
     return () => {
       window.cancelAnimationFrame(frame);
@@ -147,7 +166,11 @@ export function AiSettingsDialog({ open, embedded = false, returnFocusRef, confi
         focusTarget.focus({ preventScroll: true });
       }
     };
-  }, [embedded, open, returnFocusRef]);
+  }, [embedded, open, requestedTaskId, returnFocusRef]);
+
+  const handleTaskFocusHandled = useCallback((taskId) => {
+    setTaskFocusRequestId((current) => (current === taskId ? "" : current));
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -250,11 +273,11 @@ export function AiSettingsDialog({ open, embedded = false, returnFocusRef, confi
   }, [apiKeys, selectedDraft.baseUrl, selectedDraft.models, selectedModel?.id, selectedModel?.model, selectedModel?.name, selectedModel?.testedAt, selectedModel?.testedOk, selectedProvider]);
 
   const saveTaskModelAssignment = useCallback(async (taskId, modelKey, requestParamsOverride) => {
-    const model = resolverModels.find((item) => item.id === modelKey);
-    if (!model) return;
+    const model = modelKey ? resolverModels.find((item) => item.id === modelKey) : null;
+    if (modelKey && !model) return;
     const task = AI_TASK_MODEL_DEFINITIONS.find((item) => item.id === taskId);
     const currentAssignment = normalizedConfig.taskModels?.[taskId] || {};
-    const requestParams = model.transport === "codex-cli"
+    const requestParams = !model || model.transport === "codex-cli"
       ? {}
       : normalizeUiAiRequestParams(requestParamsOverride ?? currentAssignment.requestParams);
     setBusy(true);
@@ -262,25 +285,39 @@ export function AiSettingsDialog({ open, embedded = false, returnFocusRef, confi
     try {
       const result = await onSave({
         taskModels: {
-          [taskId]: { providerId: model.provider, modelId: model.modelId, requestParams },
+          [taskId]: model
+            ? { providerId: model.provider, modelId: model.modelId, requestParams }
+            : { providerId: "", modelId: "", requestParams: {} },
         },
       });
       const normalized = normalizePublicAiConfig(result);
       setDrafts(normalized.providers);
-      const effectiveTaskParams = aiTaskRequestParamsForEditor(
-        model.provider,
-        model.requestParams,
-        normalized.taskModels?.[taskId]?.requestParams || {},
-        model.model,
-      );
+      const effectiveAssignment = normalized.taskModels?.[taskId] || {};
+      const effectiveModelKey = effectiveAssignment.providerId && effectiveAssignment.modelId
+        ? createAiModelKey(effectiveAssignment.providerId, effectiveAssignment.modelId)
+        : createAiModelKey(normalized.activeProvider, normalized.activeModelId);
+      const effectiveModel = resolverModels.find((item) => item.id === effectiveModelKey) || null;
+      const effectiveTaskParams = effectiveModel
+        ? aiTaskRequestParamsForEditor(
+          effectiveModel.provider,
+          effectiveModel.requestParams,
+          effectiveAssignment.requestParams || {},
+          effectiveModel.model,
+        )
+        : {};
       const editableTaskParams = taskId === "applyResolver"
-        ? aiApplyResolverEditableRequestParams(model.provider, effectiveTaskParams)
+        ? aiApplyResolverEditableRequestParams(effectiveModel?.provider, effectiveTaskParams)
         : effectiveTaskParams;
       setTaskParamDrafts((current) => ({
         ...current,
         [taskId]: requestParamsToRows(editableTaskParams),
       }));
-      setStatus({ tone: "success", message: `${task?.label || "任务"}模型已更新` });
+      setStatus({
+        tone: "success",
+        message: model
+          ? `${task?.label || "任务"}模型已更新`
+          : `${task?.label || "任务"}已恢复跟随默认模型`,
+      });
     } catch (error) {
       setStatus({ tone: "warning", message: error?.message || "任务模型保存失败" });
     } finally {
@@ -630,13 +667,17 @@ export function AiSettingsDialog({ open, embedded = false, returnFocusRef, confi
           <AiTaskModelsPanel
             busy={busy}
             defaultResolverModelKey={defaultResolverModelKey}
+            expandedTaskIds={expandedTaskIds}
+            focusTaskId={taskFocusRequestId}
             normalizedConfig={normalizedConfig}
+            onTaskFocusHandled={handleTaskFocusHandled}
             openBaseModelSettings={openBaseModelSettings}
             requestTaskProviderChange={requestTaskProviderChange}
             resolverModels={resolverModels}
             resolverProviderGroups={resolverProviderGroups}
             saveTaskModelAssignment={saveTaskModelAssignment}
             saveTaskRequestParams={saveTaskRequestParams}
+            setExpandedTaskIds={setExpandedTaskIds}
             setTaskParamDrafts={setTaskParamDrafts}
             status={status}
             taskParamDrafts={taskParamDrafts}

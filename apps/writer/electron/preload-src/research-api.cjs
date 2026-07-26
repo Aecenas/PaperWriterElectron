@@ -132,6 +132,23 @@ function createResearchApi(ipcRenderer) {
       libraryId: libraryId || "",
       relativePath: relativePath || "",
     }),
+    searchResearch: (payload = {}) => ipcRenderer.invoke("research:search", {
+      libraryId: payload?.libraryId || "",
+      requestId: payload?.requestId || "",
+      query: payload?.query || "",
+      scopeKey: payload?.scopeKey || "global",
+      workspaceScopeKey: payload?.workspaceScopeKey || "",
+      limit: payload?.limit,
+      includeFiles: payload?.includeFiles !== false,
+      includeWeb: payload?.includeWeb !== false,
+      kinds: Array.isArray(payload?.kinds) ? payload.kinds : [],
+    }),
+    cancelResearchSearch: (libraryId, requestId) => (
+      ipcRenderer.invoke("research:search-cancel", {
+        libraryId: libraryId || "",
+        requestId: requestId || "",
+      })
+    ),
     openResearchDocument: (libraryId, relativePath) => ipcRenderer.invoke("research:document-open", {
       libraryId: libraryId || "",
       relativePath: relativePath || "",
@@ -171,6 +188,9 @@ function createResearchApi(ipcRenderer) {
     ),
     onResearchLibraryChanged: (callback) => subscribeToIpc(ipcRenderer, "research:changed", callback, true),
     onResearchLibraryWatchError: (callback) => subscribeToIpc(ipcRenderer, "research:watch-error", callback, true),
+    onResearchSearchProgress: (callback) => (
+      subscribeToIpc(ipcRenderer, "research:search-progress", callback, true)
+    ),
   };
 }
 

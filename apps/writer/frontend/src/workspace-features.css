@@ -222,12 +222,93 @@
   background:rgba(242,233,221,.45);
   color:#81766b;
 }
+.research-search-progress-row{
+  display:grid;
+  grid-template-columns:minmax(120px,1fr) minmax(150px,auto) auto;
+  align-items:center;
+  gap:10px;
+  margin:0 12px 10px;
+  padding:8px 10px;
+  border:1px solid rgba(112,88,60,.13);
+  border-radius:9px;
+  background:rgba(242,233,221,.42);
+}
+.research-search-progress{
+  position:relative;
+  height:6px;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(112,88,60,.13);
+}
+.research-search-progress>span{
+  position:absolute;
+  inset:0 auto 0 0;
+  border-radius:inherit;
+  background:linear-gradient(90deg,#a75f3b,#ce8a5c);
+  transition:width 180ms ease;
+}
+.research-search-progress.indeterminate>span{
+  width:38%;
+  animation:researchSearchProgress 1.25s ease-in-out infinite;
+}
+.research-search-progress-copy{
+  display:flex;
+  min-width:0;
+  flex-direction:column;
+  gap:2px;
+  color:#645a50;
+  font-size:10px;
+  white-space:nowrap;
+}
+.research-search-progress-copy strong{font-weight:700}
+.research-search-progress-copy small{color:#8a7e72;font-size:9px}
+.research-search-progress-row>button{
+  min-height:26px;
+  border:1px solid rgba(142,82,49,.2);
+  border-radius:7px;
+  padding:0 9px;
+  color:#8f4f31;
+  background:rgba(255,252,246,.78);
+  font-size:10px;
+  font-weight:700;
+}
+.research-search-scope{
+  flex:none;
+  border:1px solid rgba(112,88,60,.14);
+  border-radius:999px;
+  padding:2px 6px;
+  color:#776b60;
+  background:rgba(245,238,228,.7);
+  font-size:9px;
+  font-weight:700;
+}
+.research-search-scope.is-web{
+  color:#4f7068;
+  border-color:rgba(75,112,102,.18);
+  background:rgba(215,230,225,.5);
+}
+.research-search-page,.research-search-warning{
+  color:#887d72;
+  font-size:9px;
+}
+.research-search-warning{color:#a15a43}
+@keyframes researchSearchProgress{
+  0%{transform:translateX(-115%)}
+  55%{transform:translateX(115%)}
+  100%{transform:translateX(270%)}
+}
+@media (prefers-reduced-motion:reduce){
+  .research-search-progress>span{transition:none}
+  .research-search-progress.indeterminate>span{width:100%;animation:none;opacity:.55}
+}
 
 @media (max-width:1320px){.workspace-search-overlay{padding-left:300px}}
 @media (max-width:1040px){.workspace-search-overlay{padding-left:20px}}
 @media (max-width:820px){
   .workspace-search-overlay{padding:60px 12px 12px}
   .workspace-search-palette{width:100%;max-height:calc(100vh - 126px)}
+  .research-search-progress-row{grid-template-columns:minmax(0,1fr) auto}
+  .research-search-progress-copy{grid-column:1/-1;grid-row:2}
 }
 
 .statusbar-save.external{color:#a15a43}.statusbar-save.external::before{background:#c97854}

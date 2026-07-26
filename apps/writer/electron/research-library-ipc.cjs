@@ -40,9 +40,13 @@ function registerResearchLibraryIpcHandlers({
   writeDebugLog,
 }) {
   const {
+    cancelResearchSearch,
+    clearResearchSearch,
     decodePreviewText: decodeResearchPreviewText,
     getActiveWorkspaceRoot,
+    invalidateResearchSearch,
     requireLibrary: requireResearchLibrary,
+    searchResearch,
     sendEvent: sendResearchEvent,
   } = researchFacade;
   const {
@@ -51,7 +55,19 @@ function registerResearchLibraryIpcHandlers({
     loadPaperDocumentSnapshot,
   } = storageFacade;
   const { isSupportedDocument } = documentModel;
-  const mutateSource = (task) => runResearchSourceMutation(task, revisionConflictCode);
+  const invalidateSearch = (libraryId, relativePath = "") => {
+    invalidateResearchSearch?.({ libraryId, relativePath });
+  };
+  const mutateSource = async (task, libraryId) => {
+    const result = await runResearchSourceMutation(task, revisionConflictCode);
+    if (result?.ok !== false) invalidateSearch(libraryId);
+    return result;
+  };
+  const mutateEntry = async (libraryId, relativePath, task) => {
+    const result = await task();
+    invalidateSearch(libraryId, relativePath);
+    return result;
+  };
 
   ipcMain.handle("research:root-get", async () => (
     requireResearchLibrary().getRoot()
@@ -68,12 +84,24 @@ function registerResearchLibraryIpcHandlers({
       return { canceled: true, ...previous };
     }
     const selected = await requireResearchLibrary().selectRoot(result.filePaths[0]);
+    await clearResearchSearch?.({
+      deleteCache: true,
+      libraryId: previous.libraryId || "",
+      rootPath: previous.rootPath || "",
+    });
     return { canceled: false, ...selected };
   });
 
-  ipcMain.handle("research:root-clear", async () => (
-    requireResearchLibrary().clearRoot()
-  ));
+  ipcMain.handle("research:root-clear", async () => {
+    const previous = requireResearchLibrary().getRoot();
+    const result = await requireResearchLibrary().clearRoot();
+    await clearResearchSearch?.({
+      deleteCache: true,
+      libraryId: previous.libraryId || "",
+      rootPath: previous.rootPath || "",
+    });
+    return result;
+  });
 
   ipcMain.handle("research:folder-list", async (_event, payload = {}) => (
     requireResearchLibrary().listFolder(
@@ -83,11 +111,13 @@ function registerResearchLibraryIpcHandlers({
   ));
 
   ipcMain.handle("research:folder-create", async (_event, payload = {}) => (
-    requireResearchLibrary().createFolder(
+    mutateEntry(payload.libraryId, payload.parentRelativePath || "", () => (
+      requireResearchLibrary().createFolder(
       payload.libraryId,
       payload.parentRelativePath || "",
       payload.name || "",
-    )
+      )
+    ))
   ));
 
   ipcMain.handle("research:file-import", async (_event, payload = {}) => {
@@ -111,35 +141,45 @@ function registerResearchLibraryIpcHandlers({
         imported: [],
       };
     }
-    return library.importFiles(
+    return mutateEntry(
       payload.libraryId,
       payload.targetRelativePath || "",
-      picked.filePaths,
+      () => library.importFiles(
+        payload.libraryId,
+        payload.targetRelativePath || "",
+        picked.filePaths,
+      ),
     );
   });
 
   ipcMain.handle("research:entry-rename", async (_event, payload = {}) => (
-    requireResearchLibrary().renameEntry(
-      payload.libraryId,
-      payload.relativePath,
-      payload.nextName,
-    )
+    mutateEntry(payload.libraryId, payload.relativePath, () => (
+      requireResearchLibrary().renameEntry(
+        payload.libraryId,
+        payload.relativePath,
+        payload.nextName,
+      )
+    ))
   ));
 
   ipcMain.handle("research:entry-move", async (_event, payload = {}) => (
-    requireResearchLibrary().moveEntry(
-      payload.libraryId,
-      payload.relativePath,
-      payload.targetFolderRelativePath || "",
-    )
+    mutateEntry(payload.libraryId, payload.relativePath, () => (
+      requireResearchLibrary().moveEntry(
+        payload.libraryId,
+        payload.relativePath,
+        payload.targetFolderRelativePath || "",
+      )
+    ))
   ));
 
   ipcMain.handle("research:entry-trash", async (_event, payload = {}) => (
-    requireResearchLibrary().trashEntry(
-      payload.libraryId,
-      payload.relativePath,
-      shell.trashItem?.bind(shell),
-    )
+    mutateEntry(payload.libraryId, payload.relativePath, () => (
+      requireResearchLibrary().trashEntry(
+        payload.libraryId,
+        payload.relativePath,
+        shell.trashItem?.bind(shell),
+      )
+    ))
   ));
 
   ipcMain.handle("research:entry-show", async (_event, payload = {}) => (
@@ -172,7 +212,7 @@ function registerResearchLibraryIpcHandlers({
       payload.libraryId,
       payload.source || {},
       payload.expectedRevision || null,
-    ))
+    ), payload.libraryId)
   ));
 
   ipcMain.handle("research:source-delete", async (_event, payload = {}) => (
@@ -180,7 +220,7 @@ function registerResearchLibraryIpcHandlers({
       payload.libraryId,
       payload.sourceId,
       payload.expectedRevision || null,
-    ))
+    ), payload.libraryId)
   ));
 
   ipcMain.handle("research:web-tree-list", async (_event, payload = {}) => (
@@ -192,7 +232,7 @@ function registerResearchLibraryIpcHandlers({
       payload.libraryId,
       payload.folder || {},
       payload.expectedRevision || null,
-    ))
+    ), payload.libraryId)
   ));
 
   ipcMain.handle("research:web-folder-update", async (_event, payload = {}) => (
@@ -200,7 +240,7 @@ function registerResearchLibraryIpcHandlers({
       payload.libraryId,
       payload.folder || {},
       payload.expectedRevision || null,
-    ))
+    ), payload.libraryId)
   ));
 
   ipcMain.handle("research:web-folder-delete", async (_event, payload = {}) => (
@@ -208,7 +248,7 @@ function registerResearchLibraryIpcHandlers({
       payload.libraryId,
       payload.folderId,
       payload.expectedRevision || null,
-    ))
+    ), payload.libraryId)
   ));
 
   ipcMain.handle("research:web-source-move", async (_event, payload = {}) => (
@@ -217,7 +257,7 @@ function registerResearchLibraryIpcHandlers({
       payload.sourceId,
       payload.placement || {},
       payload.expectedRevision || null,
-    ))
+    ), payload.libraryId)
   ));
 
   ipcMain.handle("research:web-selection-copy", async (_event, payload = {}) => (
@@ -243,7 +283,7 @@ function registerResearchLibraryIpcHandlers({
         ...selection,
         targetScopeKey,
       });
-    })
+    }, payload.libraryId)
   ));
 
   ipcMain.handle("research:web-source-upsert", async (_event, payload = {}) => (
@@ -275,7 +315,7 @@ function registerResearchLibraryIpcHandlers({
             : `网页已保存，但分组位置未能写入：${error?.message || "未知错误"}`,
         };
       }
-    })
+    }, payload.libraryId)
   ));
 
   ipcMain.handle("research:legacy-import", async (_event, payload = {}) => {
@@ -294,7 +334,7 @@ function registerResearchLibraryIpcHandlers({
     // Validate the target capability before reading anything from the legacy workspace.
     await library.listSources(payload.libraryId);
     const legacy = await listResearchSources(workspacePath);
-    return importLegacyResearch({
+    const result = await importLegacyResearch({
       manager: library,
       libraryId: payload.libraryId,
       workspaceId: legacy.workspaceId,
@@ -302,7 +342,59 @@ function registerResearchLibraryIpcHandlers({
       warnings: legacy.warnings,
       resolveFile: (source) => resolveSourceFile(workspacePath, source),
     });
+    invalidateSearch(payload.libraryId);
+    return result;
   });
+
+  const resolveSearchScope = async (scopeKey) => {
+    const normalized = normalizeWebScopeKey(scopeKey || "global");
+    if (normalized === "global") return normalized;
+    const activeWorkspaceRoot = getActiveWorkspaceRoot();
+    if (!activeWorkspaceRoot) {
+      throw new Error("当前没有打开的写作工作区，不能搜索私区网页");
+    }
+    const workspace = await ensureWorkspace(activeWorkspaceRoot);
+    const allowed = `workspace:${String(
+      workspace.manifest.workspaceId || "",
+    ).toLocaleLowerCase("en-US")}`;
+    if (normalized !== allowed) {
+      throw new Error("只能搜索当前打开工作区的私区网页");
+    }
+    return normalized;
+  };
+
+  ipcMain.handle("research:search", async (_event, payload = {}) => {
+    const libraryId = String(payload.libraryId || "").slice(0, 128);
+    const requestId = String(payload.requestId || "").slice(0, 128);
+    const scopeKey = await resolveSearchScope(payload.scopeKey);
+    const workspaceScopeKey = payload.workspaceScopeKey
+      ? await resolveSearchScope(payload.workspaceScopeKey)
+      : "";
+    return searchResearch({
+      libraryId,
+      requestId,
+      query: String(payload.query || "").slice(0, 256),
+      scopeKey,
+      workspaceScopeKey,
+      limit: Math.min(200, Math.max(1, Number(payload.limit) || 100)),
+      includeFiles: payload.includeFiles !== false,
+      includeWeb: payload.includeWeb !== false,
+      kinds: Array.isArray(payload.kinds)
+        ? payload.kinds.slice(0, 20)
+        : [],
+    }, {
+      onProgress: (progress) => {
+        sendResearchEvent("research:search-progress", progress);
+      },
+    });
+  });
+
+  ipcMain.handle("research:search-cancel", async (_event, payload = {}) => ({
+    ok: Boolean(cancelResearchSearch(
+      String(payload.libraryId || "").slice(0, 128),
+      String(payload.requestId || "").slice(0, 128),
+    )),
+  }));
 
   ipcMain.handle("research:pdf-read", async (_event, payload = {}) => (
     requireResearchLibrary().readPdf(payload.libraryId, payload.relativePath)
@@ -380,7 +472,10 @@ function registerResearchLibraryIpcHandlers({
 
   ipcMain.handle("research:watch", async (_event, payload = {}) => (
     requireResearchLibrary().watchLibrary(payload.libraryId, {
-      onChange: (change) => sendResearchEvent("research:changed", change),
+      onChange: (change) => {
+        invalidateSearch(change?.libraryId || payload.libraryId, change?.relativePath || "");
+        sendResearchEvent("research:changed", change);
+      },
       onError: (error) => sendResearchEvent("research:watch-error", error),
     })
   ));

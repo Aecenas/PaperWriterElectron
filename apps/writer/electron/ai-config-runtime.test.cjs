@@ -24,7 +24,10 @@ function defaultConfig() {
   return {
     activeProvider: "openai",
     activeModelId: "openai:model-a",
-    taskModels: { applyResolver: {} },
+    taskModels: {
+      selectionChat: {},
+      applyResolver: {},
+    },
     providers: {
       openai: {
         provider: "openai",
@@ -99,7 +102,11 @@ function createHarness(options = {}) {
 
   function normalizeAiConfig(value) {
     const normalized = clone(value || defaultConfig());
-    normalized.taskModels ||= { applyResolver: {} };
+    normalized.taskModels = {
+      selectionChat: {},
+      applyResolver: {},
+      ...(normalized.taskModels || {}),
+    };
     normalized.providers ||= {};
     return normalized;
   }
@@ -174,8 +181,17 @@ function createHarness(options = {}) {
     normalizeAiRequestParams(value) {
       return clone(value || {});
     },
-    exactAiProviderConfig() {
-      return null;
+    exactAiProviderConfig(config, providerId, modelId) {
+      const provider = config.providers?.[providerId];
+      const model = provider?.models?.find(
+        (candidate) => candidate.id === modelId,
+      );
+      if (!provider || !model) return null;
+      return {
+        apiKey: provider.apiKey,
+        testedOk: model.testedOk,
+        transport: provider.transport,
+      };
     },
     normalizeAiModelConfig(provider, model, index = 0) {
       return {
@@ -425,6 +441,93 @@ test("provider create, delete, and save mutations keep public result and audit s
       hasApiKey: false,
     }],
   ]);
+});
+
+test("selectionChat assignments save independently, clear to default, and reject stale models", async () => {
+  const harness = createHarness();
+  harness.state.config.providers.openai.models[0].testedOk = true;
+  harness.state.config.taskModels.applyResolver = {
+    providerId: "openai",
+    modelId: "openai:model-a",
+    requestParams: {},
+  };
+
+  await harness.runtime.facade.saveConfig({
+    taskModels: {
+      selectionChat: {
+        providerId: "openai",
+        modelId: "openai:model-a",
+        requestParams: { temperature: 0.1 },
+      },
+    },
+  });
+  assert.deepEqual(harness.state.config.taskModels.selectionChat, {
+    providerId: "openai",
+    modelId: "openai:model-a",
+    requestParams: { temperature: 0.1 },
+  });
+  assert.equal(
+    harness.state.config.taskModels.applyResolver.modelId,
+    "openai:model-a",
+  );
+
+  await harness.runtime.facade.saveConfig({
+    taskModels: {
+      selectionChat: {
+        providerId: "",
+        modelId: "",
+        requestParams: {},
+      },
+    },
+  });
+  assert.deepEqual(harness.state.config.taskModels.selectionChat, {
+    providerId: "",
+    modelId: "",
+    requestParams: {},
+  });
+
+  await assert.rejects(
+    harness.runtime.facade.saveConfig({
+      taskModels: {
+        selectionChat: {
+          providerId: "openai",
+          modelId: "openai:deleted",
+          requestParams: {},
+        },
+      },
+    }),
+    /任务模型只能选择已连接供应商中的已连接模型/,
+  );
+  for (const taskModels of [
+    null,
+    { unknownTask: {} },
+    {
+      selectionChat: {
+        providerId: "openai",
+        requestParams: {},
+      },
+    },
+    {
+      selectionChat: {
+        providerId: "",
+        modelId: "",
+        requestParams: null,
+      },
+    },
+    {
+      selectionChat: {
+        providerId: "",
+        modelId: "",
+        requestParams: {},
+        extra: true,
+      },
+    },
+  ]) {
+    await assert.rejects(
+      harness.runtime.facade.saveConfig({ taskModels }),
+      /任务模型|请求参数/,
+    );
+  }
 });
 
 test("Codex refresh re-reads the latest config after a slow scan before merging and persisting", async () => {

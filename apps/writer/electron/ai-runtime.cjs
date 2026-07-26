@@ -55,6 +55,9 @@ const {
   createAiGenerationRuntime,
 } = require("./ai-generation-runtime.cjs");
 const {
+  createAiSelectionGenerationRuntime,
+} = require("./ai-selection-generation-runtime.cjs");
+const {
   createAiHttpRuntime,
 } = require("./ai-http-runtime.cjs");
 
@@ -160,11 +163,40 @@ function createAiRuntime({
     atomicWriteFile,
     AbortControllerApi,
   });
+  const selectionGenerationRuntime = createAiSelectionGenerationRuntime({
+    readAiConfig: configRuntime.readConfig,
+    taskAiProviderConfig,
+    mergeAiRequestParams,
+    getCodexRuntimeStatus: configRuntime.getCodexRuntimeStatus,
+    streamAiCompletion: httpRuntime.streamCompletion,
+    streamCodexCompletion,
+    throwIfAiAborted: throwIfAborted,
+    resolveCodexScopeDirectory,
+    path,
+    getTempPath,
+    emitRendererEvent,
+    writeDebugLog,
+    AbortControllerApi,
+  });
+  const generationFacade = Object.freeze({
+    ...generationRuntime.facade,
+    generateSelectionAi: selectionGenerationRuntime.facade.generate,
+    cancel: async (requestId) => {
+      const selectionResult = await selectionGenerationRuntime.facade.cancel(
+        requestId,
+      );
+      if (selectionResult.canceled) return selectionResult;
+      return generationRuntime.facade.cancel(requestId);
+    },
+  });
 
   return {
-    abortAll: generationRuntime.abortAll,
+    abortAll: () => {
+      selectionGenerationRuntime.abortAll();
+      generationRuntime.abortAll();
+    },
     configFacade: configRuntime.facade,
-    generationFacade: generationRuntime.facade,
+    generationFacade,
     initialize: configRuntime.initialize,
   };
 }

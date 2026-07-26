@@ -110,7 +110,10 @@ test("status metrics subscribe to primitive fields instead of rerendering the wh
 test("closing a right-group document uses the lifecycle snapshot boundary", () => {
   assert.match(source, /<GroupTabStrip[\s\S]*groupId=\{WORKSPACE_GROUP_ID\.SECONDARY\}/);
   assert.match(source, /onClose=\{\(viewId\) => handleCloseGroupView\(WORKSPACE_GROUP_ID\.SECONDARY, viewId\)\}/);
-  assert.match(source, /const handleCloseTab = documentPersistenceController\.closeTab/);
+  assert.match(
+    source,
+    /const handleCloseTab = useCallback\(async \(tabId\)[\s\S]*?return documentPersistenceController\.closeTab\(tabId\)/,
+  );
   const closeStart = persistenceControllerSource.indexOf("const closeTab = async");
   const closeEnd = persistenceControllerSource.indexOf("const closeWindow = async", closeStart);
   assert.match(persistenceControllerSource.slice(closeStart, closeEnd), /snapshotTabs\(\{ includeEditorJson: true \}\)/);

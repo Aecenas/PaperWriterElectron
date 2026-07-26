@@ -42,6 +42,12 @@ export const AI_REASONING_EFFORT_OPTIONS = [
 ];
 export const AI_TASK_MODEL_DEFINITIONS = [
   {
+    id: "selectionChat",
+    label: "选区问答",
+    description: "只用于选中文字后的临时多轮问答，不读取整篇信笺或资料。未单独指定时跟随默认模型。",
+    selectLabel: "选区问答模型",
+  },
+  {
     id: "applyResolver",
     label: "直接应用定位",
     description: "只判断优化块在正文中的替换或插入位置，不参与内容优化与改写。内置 Gemini、DeepSeek 固定使用 JSON 输出，并使用各自模型允许的最大输出上限。",
@@ -62,7 +68,10 @@ export const DEFAULT_AI_CONFIG = {
   baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
   hasApiKey: false,
   apiKeyLast4: "",
-  taskModels: { applyResolver: { providerId: "", modelId: "", requestParams: {} } },
+  taskModels: {
+    selectionChat: { providerId: "", modelId: "", requestParams: {} },
+    applyResolver: { providerId: "", modelId: "", requestParams: {} },
+  },
 };
 
 export function getAiProviderDefaults(provider, config = {}) {
@@ -209,6 +218,7 @@ export function normalizePublicAiConfig(config) {
   const requestedModelId = config?.activeModelId || config?.modelId || activeProviderConfig.activeModelId;
   const activeModel = activeProviderConfig.models.find((model) => model.id === requestedModelId) || activeProviderConfig.models[0] || {};
   const activeModelId = activeModel.id || "";
+  const selectionChat = normalizePublicAiTaskModelAssignment(config?.taskModels?.selectionChat);
   const applyResolver = normalizePublicAiTaskModelAssignment(config?.taskModels?.applyResolver);
   return {
     ...DEFAULT_AI_CONFIG,
@@ -230,6 +240,7 @@ export function normalizePublicAiConfig(config) {
     testedAt: activeModel.testedAt || "",
     testMessage: activeModel.testMessage || "",
     taskModels: {
+      selectionChat,
       applyResolver,
     },
   };
@@ -337,4 +348,3 @@ export function formatAiProviderUpdatedAt(providerConfig) {
     hour12: false,
   });
 }
-

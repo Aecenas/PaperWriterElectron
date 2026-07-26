@@ -6,8 +6,37 @@ import { ICON_ASSETS } from "./assets.js";
 import {
   formatCacheBytes,
   formatClock,
+  getUpdateProgressAnnouncement,
+  getUpdateStatusDescription,
   getUpdateStatusMeta,
 } from "./status-display.js";
+
+const UPDATE_RING_RADIUS = 8;
+const UPDATE_RING_CIRCUMFERENCE = 2 * Math.PI * UPDATE_RING_RADIUS;
+
+function UpdateProgressIcon({ percent, progressKnown }) {
+  const progress = Math.min(100, Math.max(0, Number(percent) || 0));
+  const dashOffset = UPDATE_RING_CIRCUMFERENCE * (1 - progress / 100);
+  const preparingDash = `${UPDATE_RING_CIRCUMFERENCE * 0.28} ${UPDATE_RING_CIRCUMFERENCE * 0.72}`;
+  return (
+    <span
+      className={`statusbar-update-progress-icon ${progressKnown ? "determinate" : "preparing"}`}
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 20 20">
+        <circle className="statusbar-update-progress-track" cx="10" cy="10" r={UPDATE_RING_RADIUS} />
+        <circle
+          className="statusbar-update-progress-value"
+          cx="10"
+          cy="10"
+          r={UPDATE_RING_RADIUS}
+          strokeDasharray={progressKnown ? UPDATE_RING_CIRCUMFERENCE : preparingDash}
+          strokeDashoffset={progressKnown ? dashOffset : 0}
+        />
+      </svg>
+    </span>
+  );
+}
 
 export function LiveStatusMetric({ editor, field, label }) {
   const value = useEditorState({
@@ -27,6 +56,11 @@ export function StatusBar({ editor, updatedAt, dirty, version, cacheSummary, upd
   const cacheBytes = cacheSummary?.bytes || 0;
   const cacheCount = cacheSummary?.count || 0;
   const updateMeta = getUpdateStatusMeta(updateState);
+  const updateDescription = getUpdateStatusDescription(updateState, updateMeta);
+  const updateAnnouncement = getUpdateProgressAnnouncement(updateState);
+  const updateProgressClass = updateState?.status === "downloading"
+    ? (updateMeta.progressKnown ? "determinate" : "indeterminate")
+    : "";
   const persistenceLabel = readOnly
     ? "未来格式 · 只读"
     : (externalVersion || persistenceState === "external")
@@ -60,15 +94,42 @@ export function StatusBar({ editor, updatedAt, dirty, version, cacheSummary, upd
       <div className="statusbar-version">
         <button
           type="button"
-          className={`statusbar-update ${updateMeta.className}`}
+          className={`statusbar-update ${updateMeta.className} ${updateProgressClass}`.trim()}
           onClick={onRunUpdate}
           disabled={updateMeta.busy}
-          title={updateState?.message || updateMeta.label}
-          aria-label={updateState?.message || updateMeta.label}
+          title={updateDescription}
+          aria-label={updateDescription}
+          aria-busy={updateMeta.busy || undefined}
         >
-          <img src={ICON_ASSETS.updateArrow} alt="" />
+          {updateState?.status === "downloading" ? (
+            <UpdateProgressIcon
+              percent={updateMeta.percent}
+              progressKnown={updateMeta.progressKnown}
+            />
+          ) : (
+            <img src={ICON_ASSETS.updateArrow} alt="" />
+          )}
           <span>{updateMeta.label}</span>
         </button>
+        {updateState?.status === "downloading" ? (
+          <span
+            className="statusbar-update-a11y"
+            role="progressbar"
+            aria-label="更新下载进度"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow={updateMeta.progressKnown ? Math.round(updateMeta.percent) : undefined}
+            aria-valuetext={updateMeta.progressKnown ? undefined : "准备更新"}
+          />
+        ) : ""}
+        <span
+          className="statusbar-update-a11y"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {updateAnnouncement}
+        </span>
         <i />
         {version ? (
           <button

@@ -76,6 +76,8 @@ export async function installDesktopBridgeFixture(page, {
   activePath,
   readOnlyPaths = [],
   aiConfig = null,
+  selectionAiResponse = "",
+  updateState = null,
   sessionTabs = null,
   revisions = {},
 } = {}) {
@@ -104,11 +106,13 @@ export async function installDesktopBridgeFixture(page, {
     const documentsByPath = new Map(fixture.documentEntries);
     const revisionsByPath = new Map(fixture.revisionEntries);
     const readOnly = new Set(fixture.readOnlyPaths);
+    const selectionAiTimers = new Map();
     const calls = {
       cancelAi: [],
       closeCanceled: [],
       closeReady: [],
       exportEditable: [],
+      generateSelectionAi: [],
       pickExportPath: [],
       saveDocument: [],
     };
@@ -127,6 +131,15 @@ export async function installDesktopBridgeFixture(page, {
       activeModelId: "gemini-default",
       providers: {},
       taskModels: { applyResolver: { providerId: "", modelId: "", requestParams: {} } },
+    };
+    let currentUpdateState = clone(fixture.updateState || {
+      status: "idle",
+      message: "尚未检查更新",
+    });
+    const setUpdateState = (nextState = {}) => {
+      currentUpdateState = clone(nextState);
+      emit("update:state", currentUpdateState);
+      return clone(currentUpdateState);
     };
     const revisionFor = (filePath) => clone(revisionsByPath.get(filePath) || {
       size: JSON.stringify(documentsByPath.get(filePath) || {}).length,
@@ -148,7 +161,10 @@ export async function installDesktopBridgeFixture(page, {
       getAiConfig: async () => clone(fixture.aiConfig || emptyAiConfig),
       getFullscreen: async () => ({ fullscreen: false }),
       setFullscreen: async (fullscreen) => ({ ok: true, fullscreen: Boolean(fullscreen) }),
-      getUpdateState: async () => ({ status: "idle", message: "" }),
+      getUpdateState: async () => clone(currentUpdateState),
+      checkForUpdates: async () => clone(currentUpdateState),
+      downloadUpdate: async () => clone(currentUpdateState),
+      installUpdate: async () => clone(currentUpdateState),
       closeReady: async (payload = {}) => {
         calls.closeReady.push(clone(payload));
         return { ok: true };
@@ -256,7 +272,49 @@ export async function installDesktopBridgeFixture(page, {
         path: targetPath,
         count: Math.max(1, pageRects?.length || 0),
       }),
+      generateSelectionAi: async (payload = {}) => {
+        const requestId = String(payload.requestId || `fixture-selection-${Date.now()}`);
+        const response = fixture.selectionAiResponse
+          || "这是选区问答的桌面桥接测试回复。";
+        const splitAt = Math.max(1, Math.floor(response.length / 2));
+        const chunks = [
+          response.slice(0, splitAt),
+          response.slice(splitAt),
+        ].filter(Boolean);
+        const timers = chunks.map((delta, index) => window.setTimeout(() => {
+          if (!selectionAiTimers.has(requestId)) return;
+          emit("ai:chunk", { requestId, delta });
+        }, 20 * (index + 1)));
+        timers.push(window.setTimeout(() => {
+          if (!selectionAiTimers.has(requestId)) return;
+          selectionAiTimers.delete(requestId);
+          emit("ai:done", {
+            requestId,
+            usage: {
+              prompt_tokens: 24,
+              completion_tokens: 36,
+              total_tokens: 60,
+            },
+          });
+        }, 20 * (chunks.length + 1)));
+        selectionAiTimers.set(requestId, timers);
+        calls.generateSelectionAi.push(clone(payload));
+        return {
+          ok: true,
+          requestId,
+          model: {
+            providerId: "gemini",
+            providerLabel: "Gemini",
+            modelId: "gemini-e2e",
+            modelName: "离线测试模型",
+          },
+        };
+      },
       cancelAi: async (requestId = "") => {
+        (selectionAiTimers.get(requestId) || []).forEach((timer) => {
+          window.clearTimeout(timer);
+        });
+        selectionAiTimers.delete(requestId);
         calls.cancelAi.push(requestId);
         emit("ai:error", { requestId, message: "已停止生成", aborted: true });
         return { ok: true };
@@ -287,7 +345,7 @@ export async function installDesktopBridgeFixture(page, {
       configurable: false,
       enumerable: false,
       writable: false,
-      value: { calls, emit },
+      value: { calls, emit, setUpdateState },
     });
   }, {
     sessionStorageKey: SESSION_STORAGE_KEY,
@@ -297,6 +355,8 @@ export async function installDesktopBridgeFixture(page, {
     activePath: activePath || documentEntries[0]?.[0] || "",
     readOnlyPaths,
     aiConfig,
+    selectionAiResponse,
+    updateState,
   });
 }
 
