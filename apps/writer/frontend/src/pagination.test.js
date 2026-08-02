@@ -123,6 +123,47 @@ test("page map resolves a text selection from live coordinates instead of block 
   assert.equal(pageMap.positionToPage(75), 2);
 });
 
+test("page map keeps a block atom that starts a new page inside that page range", () => {
+  const imageNode = {
+    isAtom: true,
+    isBlock: true,
+    isText: false,
+    nodeSize: 1,
+  };
+  const doc = {
+    content: { size: 20 },
+    descendants(callback) {
+      callback(imageNode, 10);
+    },
+    forEach(callback) {
+      callback(imageNode, 10);
+    },
+  };
+  const editor = {
+    state: { doc },
+    view: {
+      coordsAtPos(position) {
+        return { left: position < 14 ? 0 : 822 };
+      },
+      nodeDOM(position) {
+        return position === 10
+          ? { getBoundingClientRect: () => ({ left: 821.9999 }) }
+          : null;
+      },
+    },
+  };
+  const editorElement = {
+    scrollWidth: 1464,
+    parentElement: { scrollWidth: 1464 },
+    getBoundingClientRect: () => ({ left: 0, width: 642 }),
+  };
+  const pageMap = buildPageMap({ editor, editorElement });
+  assert.deepEqual(
+    pageMap.pages.map(({ from, to }) => ({ from, to })),
+    [{ from: 0, to: 10 }, { from: 10, to: 20 }],
+  );
+});
+
 test("oversize block diagnostics are layout-only decorations", () => {
   const states = [];
   const makeElement = (height, kind = "block") => ({

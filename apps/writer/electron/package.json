@@ -1,6 +1,6 @@
 {
   "name": "paperwriter-electron",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": false,
   "license": "MIT",
   "main": "main.cjs",
