@@ -22,7 +22,11 @@ export function pageIndexFromClientRect(rect, editorRect, metrics = A4_PAGE_METR
   const renderedWidth = Number(editorRect.width) || content.width;
   const scale = Math.max(0.01, renderedWidth / content.width);
   const offset = Math.max(0, (rect.left - editorRect.left) / scale);
-  return Math.max(0, Math.floor(offset / stride));
+  // Chromium can place an exact column edge a tiny fraction below its logical
+  // coordinate after device-scale rounding (for example 821.99997 vs 822).
+  // Half a logical pixel absorbs only that rounding noise and keeps the node
+  // on the page where the rendered column actually starts.
+  return Math.max(0, Math.floor((offset + 0.5) / stride));
 }
 
 function safeCoordsAtPos(editor, position) {
@@ -63,6 +67,33 @@ function domRangeForPositions(editor, from, to) {
   } catch {
     return null;
   }
+}
+
+function alignPageStartWithRenderedBlockAtoms({
+  doc,
+  editor,
+  editorRect,
+  metrics,
+  position,
+  targetPageIndex,
+}) {
+  let start = position;
+  doc.forEach?.((node, candidate) => {
+    if (
+      candidate >= position
+      || !node?.isBlock
+      || !node.isAtom
+      || !(node.nodeSize > 0)
+    ) {
+      return;
+    }
+    const nodeElement = editor?.view?.nodeDOM?.(candidate);
+    const nodeRect = nodeElement?.getBoundingClientRect?.();
+    if (pageIndexFromClientRect(nodeRect, editorRect, metrics) === targetPageIndex) {
+      start = Math.min(start, candidate);
+    }
+  });
+  return start;
 }
 
 export function buildPageMap({
@@ -114,10 +145,17 @@ export function buildPageMap({
     }
     return low;
   };
-  const pageStarts = Array.from(
-    { length: pageCount },
-    (_item, pageIndex) => pageIndex === 0 ? 0 : firstPositionAtPage(pageIndex),
-  );
+  const pageStarts = Array.from({ length: pageCount }, (_item, pageIndex) => {
+    if (pageIndex === 0) return 0;
+    return alignPageStartWithRenderedBlockAtoms({
+      doc,
+      editor,
+      editorRect,
+      metrics,
+      position: firstPositionAtPage(pageIndex),
+      targetPageIndex: pageIndex,
+    });
+  });
   const pages = Array.from({ length: pageCount }, (_item, pageIndex) => {
     const from = pageStarts[pageIndex] ?? 0;
     const to = pageStarts[pageIndex + 1] ?? doc.content.size;

@@ -85,16 +85,16 @@ function cloneEditorRange(editor, from, to, documentObject) {
   return range.cloneContents();
 }
 
-function cleanStaticPage(page) {
+export function cleanStaticPage(page) {
   page.querySelectorAll?.(
-    ".image-size-tools, .media-size-tools, .comment-anchor-layer, "
+    ".image-size-tools, .media-size-tools, .paper-code-toolbar, .paper-mermaid-tools, "
+      + ".comment-anchor-layer, "
       + ".comment-highlight-layer, .selection-bubble-menu, .paper-page-break, "
       + ".paper-finalized-break",
   ).forEach((element) => element.remove());
   page.querySelectorAll?.("[contenteditable]").forEach((element) => {
     element.removeAttribute("contenteditable");
   });
-  page.querySelectorAll?.("button").forEach((element) => element.remove());
 }
 
 function createStaticPage({

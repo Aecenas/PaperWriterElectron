@@ -8,6 +8,18 @@ export const RELEASE_PHASE_DEFINITIONS = [
 
 export const RELEASE_NOTES = [
   {
+    version: "1.1.1",
+    phaseId: "professional-creation",
+    scale: "minor",
+    date: "2026-08-02",
+    title: "PDF 目录与分页图片热修复",
+    changes: [
+      "修复 PDF 导出时目录条目被静态页面清理逻辑误删，导出的目录现在会完整保留编号、层级和标题。",
+      "修复 Electron 设备缩放产生的亚像素分页误差，避免位于页首的图片被归入上一页后裁掉，并消除由此留下的大块空白。",
+      "分页导出继续忠于编辑器中的真实页位和内容顺序，不会为了填满页面前移或后移图片；同时补充语义内容与分页边界回归测试。",
+    ],
+  },
+  {
     version: "1.1.0",
     phaseId: "professional-creation",
     scale: "major",

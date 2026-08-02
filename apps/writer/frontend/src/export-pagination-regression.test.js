@@ -5,6 +5,7 @@ import { canonicalizeBrowserExportPageBreaks } from "./browser-bridge/document-e
 import { createExportExecutionActions } from "./controllers/export.js";
 import {
   capturePageMapExportSnapshot,
+  cleanStaticPage,
   createPageMapExportPlan,
   PAGE_MAP_EXPORT_UNSAFE_OVERSIZE,
 } from "./export/presentation.js";
@@ -42,6 +43,29 @@ test("PDF print mode hides current workspace chrome and paints the complete page
   assert.match(executionSource, /const handleExportPdf[\s\S]*?applyPrintBackground\(printSheet\)[\s\S]*?restorePrintPaperBackground\(\)/);
   assert.match(executionSource, /capturePageMap\(target\.canvas\)[\s\S]*?mountPageMapSnapshot\(pageMapSnapshot, "print"\)/);
   assert.match(stylesSource, /body\.page-map-export-print-body #root \{\s*display: none !important;/);
+});
+
+test("static page cleanup removes editor chrome without deleting semantic content buttons", () => {
+  const removed = [];
+  const editable = {
+    removeAttribute(name) {
+      assert.equal(name, "contenteditable");
+    },
+  };
+  const page = {
+    querySelectorAll(selector) {
+      if (selector === "[contenteditable]") return [editable];
+      if (selector === "button") {
+        throw new Error("semantic buttons must not be selected for blanket removal");
+      }
+      return [{ remove: () => removed.push(selector) }];
+    },
+  };
+  cleanStaticPage(page);
+  assert.equal(removed.length, 1);
+  assert.match(removed[0], /\.image-size-tools/);
+  assert.match(removed[0], /\.paper-code-toolbar/);
+  assert.match(removed[0], /\.paper-mermaid-tools/);
 });
 
 test("screen, PDF, and PNG share one bounded PageMap plan including hard page boundaries", () => {
