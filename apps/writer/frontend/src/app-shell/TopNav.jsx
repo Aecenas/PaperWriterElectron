@@ -4,8 +4,10 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  BookmarkPlus,
   BookOpen,
   BookOpenText,
+  Code2,
   Download,
   FileInput,
   FilePlus,
@@ -13,10 +15,12 @@ import {
   FileText,
   Focus,
   FolderSearch,
+  GitBranch,
   Hash,
   Heading1,
   Heading2,
   Heading3,
+  Heading4,
   HelpCircle,
   ImagePlus,
   Link2,
@@ -27,6 +31,7 @@ import {
   Music2,
   PanelLeftClose,
   PanelLeftOpen,
+  PackageOpen,
   Plus,
   Quote,
   Redo2,
@@ -35,7 +40,9 @@ import {
   Search,
   SeparatorHorizontal,
   Settings,
+  SmilePlus,
   Sparkles,
+  Sigma,
   Table2,
   Undo2,
   Video,
@@ -63,16 +70,23 @@ export function TopNav({
   onImport,
   onSave,
   onOpenExport,
+  onOpenProfileMigration,
   onInsertImage,
   onInsertAudio,
   onInsertVideo,
   onOpenLinkDialog,
   onInsertInternalLink,
   onInsertFootnote,
+  onInsertEmoji,
+  onInsertCodeBlock,
+  onInsertMath,
+  onInsertMermaid,
+  onInsertBookmark,
   onOpenCitationPicker,
   onOpenHelp,
   onOpenSettings,
   settingsTriggerRef,
+  elementsTriggerRef,
   exportTriggerRef,
   onOpenSearch,
   researchSearchAvailable,
@@ -101,7 +115,7 @@ export function TopNav({
       return {
         canUndo: activeEditor.can().undo(),
         canRedo: activeEditor.can().redo(),
-        activeHeadingLevel: [1, 2, 3].find((level) => activeEditor.isActive("heading", { level })) || 0,
+        activeHeadingLevel: [1, 2, 3, 4].find((level) => activeEditor.isActive("heading", { level })) || 0,
         bulletListActive: activeEditor.isActive("bulletList"),
         orderedListActive: activeEditor.isActive("orderedList"),
         activeAlignment: ["left", "center", "right"].find((value) => activeEditor.isActive({ textAlign: value })) || "",
@@ -253,7 +267,7 @@ export function TopNav({
         </MenuButton>
         <MenuButton
           icon={Download}
-          label="导出"
+          label="出入"
           menuId="interchange"
           openMenu={openMenu}
           onOpenMenu={setOpenMenu}
@@ -262,8 +276,8 @@ export function TopNav({
           showDisclosure={false}
         >
           <MenuItem icon={Download} label="导出信笺" description="PDF、图片与可编辑文档" shortcut="Ctrl+Alt+E" onClick={() => runMenuAction(onOpenExport)} />
-          <MenuDivider />
           <MenuItem icon={FileInput} label="导入文档" description="MD、HTML、TXT、DOCX" shortcut="Ctrl+Alt+I" onClick={() => runMenuAction(onImport)} />
+          <MenuItem icon={PackageOpen} label="备份与迁移" description="导入或导出软件配置" onClick={() => runMenuAction(onOpenProfileMigration)} />
         </MenuButton>
         <button
           type="button"
@@ -348,6 +362,7 @@ export function TopNav({
           <MenuItem icon={Heading1} label="一级标题" selection active={activeHeadingLevel === 1} onClick={() => runMenuAction(() => setHeadingLevel(editor, savedSelectionRef, 1))} />
           <MenuItem icon={Heading2} label="二级标题" selection active={activeHeadingLevel === 2} onClick={() => runMenuAction(() => setHeadingLevel(editor, savedSelectionRef, 2))} />
           <MenuItem icon={Heading3} label="三级标题" selection active={activeHeadingLevel === 3} onClick={() => runMenuAction(() => setHeadingLevel(editor, savedSelectionRef, 3))} />
+          <MenuItem icon={Heading4} label="四级标题" selection active={activeHeadingLevel === 4} onClick={() => runMenuAction(() => setHeadingLevel(editor, savedSelectionRef, 4))} />
         </MenuButton>
         <button
           type="button"
@@ -433,12 +448,20 @@ export function TopNav({
           disabled={!canEdit}
           triggerClassName={["tool-menu-trigger", editor?.isActive("blockquote") ? "active" : ""].filter(Boolean).join(" ")}
           showDisclosure={false}
+          triggerRef={elementsTriggerRef}
         >
+          <MenuItem icon={SmilePlus} label="表情" onClick={() => runMenuAction(onInsertEmoji)} />
+          <MenuItem icon={BookmarkPlus} label="书签" onClick={() => runMenuAction(onInsertBookmark)} />
+          <MenuDivider />
           <MenuItem icon={Quote} label={editor?.isActive("blockquote") ? "取消引文" : "引文"} checked={Boolean(editor?.isActive("blockquote"))} onClick={() => runMenuAction(() => insertStructuredQuote(editor, savedSelectionRef))} />
           <MenuItem icon={Table2} label="表格" onClick={() => runMenuAction(() => insertBasicTable(editor, savedSelectionRef))} />
           <MenuDivider />
           <MenuItem icon={Minus} label="分割线" onClick={() => runMenuAction(() => insertHorizontalRule(editor, savedSelectionRef))} />
           <MenuItem icon={SeparatorHorizontal} label="分页符" onClick={() => runMenuAction(() => insertPageBreak(editor, savedSelectionRef))} />
+          <MenuDivider />
+          <MenuItem icon={Code2} label="代码块" onClick={() => runMenuAction(onInsertCodeBlock)} />
+          <MenuItem icon={Sigma} label="公式" onClick={() => runMenuAction(onInsertMath)} />
+          <MenuItem icon={GitBranch} label="Mermaid 图" onClick={() => runMenuAction(onInsertMermaid)} />
           <MenuDivider />
           <MenuItem icon={Link2} label="关联信笺" onClick={() => runMenuAction(onInsertInternalLink)} />
           <MenuItem icon={Hash} label="脚注" onClick={() => runMenuAction(onInsertFootnote)} />

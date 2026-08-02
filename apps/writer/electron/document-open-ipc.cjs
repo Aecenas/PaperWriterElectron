@@ -253,6 +253,9 @@ function registerDocumentOpenIpcHandlers({
       document: normalizeDocument(payload.document || {}),
       targetPath,
       baseName: path.basename(targetPath, path.extname(targetPath)),
+      ...(["docx", "html"].includes(format) && typeof payload.renderedHtml === "string"
+        ? { renderedHtml: payload.renderedHtml }
+        : {}),
     });
     const root = path.dirname(targetPath);
     const writes = [];

@@ -16,6 +16,7 @@ import { getDocumentComments } from "../editor/decorations.js";
 export function createAiApplyPreviewActions({
   aiApplyPreview,
   buildManifest = buildAiApplyBlockManifest,
+  createSafetySnapshot,
   editor,
   findOverlappingComments = findCommentsOverlappingAiApplyOperation,
   getActiveDocumentSnapshot,
@@ -126,24 +127,36 @@ export function createAiApplyPreviewActions({
     showStatus("已取消这次修改，正文保持不变", "success");
   };
 
-  const confirmAiApplyPreview = () => {
-    if (!aiApplyPreview) return;
-    const committed = commitAiApplyOperation(aiApplyPreview.resolved);
-    setAiApplyPreview(null);
-    if (committed.ok) {
-      showStatus("已应用修改；按 Ctrl+Z 可完整撤销", "success");
-      return;
-    }
-    if (aiApplyPreview.block && aiApplyPreview.blockIndex >= 0) {
-      beginManualAiApply(
-        aiApplyPreview.block,
-        aiApplyPreview.blockIndex,
-        aiApplyPreview.blocks,
-        "确认前目标位置发生变化，请重新选择原文位置",
+  let confirmationInFlight = false;
+  const confirmAiApplyPreview = async () => {
+    if (!aiApplyPreview || confirmationInFlight) return;
+    confirmationInFlight = true;
+    try {
+      await createSafetySnapshot?.();
+      const committed = commitAiApplyOperation(aiApplyPreview.resolved);
+      setAiApplyPreview(null);
+      if (committed.ok) {
+        showStatus("已应用修改；按 Ctrl+Z 可完整撤销", "success");
+        return;
+      }
+      if (aiApplyPreview.block && aiApplyPreview.blockIndex >= 0) {
+        beginManualAiApply(
+          aiApplyPreview.block,
+          aiApplyPreview.blockIndex,
+          aiApplyPreview.blocks,
+          "确认前目标位置发生变化，请重新选择原文位置",
+        );
+        return;
+      }
+      showStatus("确认前目标位置发生变化，请重新选择", "warning");
+    } catch {
+      showStatus(
+        "无法创建应用前安全版本，正文未修改；请重试",
+        "warning",
       );
-      return;
+    } finally {
+      confirmationInFlight = false;
     }
-    showStatus("确认前目标位置发生变化，请重新选择", "warning");
   };
 
   return {
@@ -162,6 +175,7 @@ export function useAiApplyPreviewActions(options) {
     [
       options.aiApplyPreview,
       options.buildManifest,
+      options.createSafetySnapshot,
       options.editor,
       options.findOverlappingComments,
       options.getActiveDocumentSnapshot,

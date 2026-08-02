@@ -146,7 +146,7 @@ export function parseAiResponseBlocks(text, assets = { images: {} }) {
     if (headingMatch) {
       flushParagraph();
       flushList();
-      blocks.push({ type: "heading", level: Math.min(3, headingMatch[1].length), text: headingMatch[2].trim() });
+      blocks.push({ type: "heading", level: Math.min(4, headingMatch[1].length), text: headingMatch[2].trim() });
       continue;
     }
     const orderedListMatch = line.match(/^(\d+)[.)]\s+(.+)$/);
@@ -302,7 +302,7 @@ export function aiBlockHtml(block) {
     return `<blockquote>${bodyHtml}${source ? `<p>—— ${inlineStrongHtml(source)}</p>` : ""}</blockquote>`;
   }
   if (block.type === "heading") {
-    const tag = `h${Math.max(1, Math.min(3, block.level || 2))}`;
+    const tag = `h${Math.max(1, Math.min(4, block.level || 2))}`;
     return `<${tag}>${inlineStrongHtml(block.text)}</${tag}>`;
   }
   return `<p>${inlineStrongHtml(block.text).replace(/\n/g, "<br>")}</p>`;

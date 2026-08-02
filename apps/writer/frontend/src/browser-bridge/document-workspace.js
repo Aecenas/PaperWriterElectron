@@ -164,7 +164,7 @@ function createBrowserDocumentWorkspaceApi() {
       }
       const previousId = String(documentValue.documentId || "");
       const documentId = previousId && !force ? previousId : browserRandomId();
-      const nextDocument = { ...documentValue, version: 2, documentId, derivedFrom: force ? previousId : (documentValue.derivedFrom || ""), footnotes: documentValue.footnotes || [], citationSources: documentValue.citationSources || [] };
+      const nextDocument = { ...documentValue, version: 3, documentId, derivedFrom: force ? previousId : (documentValue.derivedFrom || ""), footnotes: documentValue.footnotes || [], citationSources: documentValue.citationSources || [], citationStyle: documentValue.citationStyle || { styleId: "gb-t-7714-2015-numeric", locale: "zh-CN" } };
       writeJson("paperwriter.preview.document", nextDocument);
       const diskRevision = await browserDiskRevision(nextDocument);
       storeBrowserRevision(filePath, diskRevision);

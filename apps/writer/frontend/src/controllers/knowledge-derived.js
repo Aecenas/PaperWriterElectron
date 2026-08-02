@@ -8,6 +8,41 @@ const EMPTY_KNOWLEDGE_REFERENCES = {
   footnotes: [],
 };
 
+export function mergeCitationSourcesWithFallbacks(
+  privateSources = [],
+  publicSources = [],
+  workspaceSources = [],
+) {
+  const merged = new Map((Array.isArray(privateSources) ? privateSources : []).map((source) => [source.id, source]));
+  for (const source of Array.isArray(publicSources) ? publicSources : []) {
+    if (!merged.has(source.id)) merged.set(source.id, source);
+  }
+  for (const source of Array.isArray(workspaceSources) ? workspaceSources : []) {
+    if (!merged.has(source.id)) merged.set(source.id, source);
+  }
+  return [...merged.values()];
+}
+
+export function buildCitationPickerSources(
+  privateSources = [],
+  publicSources = [],
+  workspaceSources = [],
+) {
+  const merged = new Map((Array.isArray(privateSources) ? privateSources : []).map((source) => [
+    source.id,
+    { ...source, libraryScope: "private" },
+  ]));
+  for (const source of Array.isArray(publicSources) ? publicSources : []) {
+    if (!merged.has(source.id)) merged.set(source.id, { ...source, libraryScope: "public" });
+  }
+  for (const source of Array.isArray(workspaceSources) ? workspaceSources : []) {
+    if (!merged.has(source.id)) {
+      merged.set(source.id, { ...source, libraryScope: "public", legacyWorkspaceSource: true });
+    }
+  }
+  return [...merged.values()];
+}
+
 export function useKnowledgeReferenceDerived({
   activeTabId,
   activeWorkDocument,
@@ -18,9 +53,10 @@ export function useKnowledgeReferenceDerived({
   documentState,
   editor,
   openTabs,
+  publicCitationSources = [],
   rightSplitTabId,
   splitPaneActive,
-  workspaceCitationSources,
+  workspaceCitationSources = [],
   writingWorkspaceRoot,
 }) {
   const structureWorkEditor = activeWorkEditor || editor;
@@ -42,20 +78,24 @@ export function useKnowledgeReferenceDerived({
   );
 
   const citationSourcesForDock = useMemo(() => {
-    const merged = new Map((structureWorkDocument?.citationSources || []).map((source) => [source.id, source]));
-    for (const source of workspaceCitationSources) merged.set(source.id, source);
-    return [...merged.values()];
-  }, [structureWorkDocument?.citationSources, workspaceCitationSources]);
+    return mergeCitationSourcesWithFallbacks(
+      structureWorkDocument?.citationSources,
+      publicCitationSources,
+      workspaceCitationSources,
+    );
+  }, [publicCitationSources, structureWorkDocument?.citationSources, workspaceCitationSources]);
 
   const citationPickerSources = useMemo(() => {
     const targetTab = citationPicker?.documentTabId
       ? openTabs.find((tab) => tab.id === citationPicker.documentTabId)
       : null;
     const targetDocument = targetTab?.id === activeTabId ? documentState : targetTab?.document;
-    const merged = new Map((targetDocument?.citationSources || []).map((source) => [source.id, source]));
-    for (const source of workspaceCitationSources) merged.set(source.id, source);
-    return [...merged.values()];
-  }, [activeTabId, citationPicker?.documentTabId, documentState, openTabs, workspaceCitationSources]);
+    return buildCitationPickerSources(
+      targetDocument?.citationSources,
+      publicCitationSources,
+      workspaceCitationSources,
+    );
+  }, [activeTabId, citationPicker?.documentTabId, documentState, openTabs, publicCitationSources, workspaceCitationSources]);
 
   const visibleFootnotes = useMemo(() => {
     const byId = new Map((structureWorkDocument?.footnotes || []).map((footnote) => [footnote.id, footnote]));

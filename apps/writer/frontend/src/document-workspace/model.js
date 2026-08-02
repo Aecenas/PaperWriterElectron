@@ -4,6 +4,7 @@ import {
   createDocumentId,
   getDocumentSchemaCompatibility,
   normalizeCitationSources,
+  normalizeCitationStyle,
   normalizeDocumentId,
   normalizeDocumentSchemaV2,
 } from "../document-schema-v2.js";
@@ -12,7 +13,6 @@ import { formatPaperDate } from "../editor/paper-date.js";
 import { normalizeCustomBackgroundSource } from "../resource-safety.js";
 import {
   DEFAULT_LETTER_TEMPLATES,
-  LAYOUT_MODES,
   normalizeLetterTemplateId,
   normalizeNewDocumentTemplateId,
 } from "../templates/model.js";
@@ -33,11 +33,12 @@ export function createBlankDocument(
     || DEFAULT_LETTER_TEMPLATES[0];
   const now = new Date().toISOString();
   return {
-    version: 2,
+    version: 3,
     documentId: createDocumentId(),
     derivedFrom: "",
     footnotes: [],
     citationSources: [],
+    citationStyle: normalizeCitationStyle(),
     title: "未命名信笺",
     author: "",
     html: "<p></p>",
@@ -45,7 +46,6 @@ export function createBlankDocument(
     templateId: letterTemplate.paperId,
     fontFamily: letterTemplate.typography.bodyFont,
     fontSize: letterTemplate.typography.bodySize,
-    layoutMode: LAYOUT_MODES.FLOW,
     customBackground: "",
     comments: [],
     aiState: createEmptyAiState(),
@@ -67,13 +67,9 @@ export function normalizeDocument(document, letterTemplates = DEFAULT_LETTER_TEM
     ? document.displayDate.trim().slice(0, 40)
     : formatPaperDate(createdAt);
   const compatibility = getDocumentSchemaCompatibility(document || {});
-  const usesV2 = compatibility.version >= 2
-    || Boolean(document?.documentId)
-    || Array.isArray(document?.footnotes)
-    || Array.isArray(document?.citationSources);
   const schemaDocument = compatibility.readOnly
     ? document
-    : (usesV2 ? normalizeDocumentSchemaV2(document || {}) : { ...(document || {}), version: 1 });
+    : normalizeDocumentSchemaV2(document || {});
   const normalized = {
     ...createBlankDocument(),
     ...schemaDocument,
@@ -86,22 +82,12 @@ export function normalizeDocument(document, letterTemplates = DEFAULT_LETTER_TEM
     templateId,
     fontFamily: letterTemplate.typography.bodyFont,
     fontSize: letterTemplate.typography.bodySize,
-    layoutMode: LAYOUT_MODES.FLOW,
     customBackground,
     comments: normalizeDocumentComments(schemaDocument?.comments),
     aiState: normalizeAiState(schemaDocument?.aiState),
     _readOnlyFutureSchema: compatibility.readOnly || Boolean(schemaDocument?._readOnlyFutureSchema),
   };
-  // Legacy files remain v1 until a v2-only feature is actually used. This
-  // avoids silently discarding compatibility with 0.9.2 merely by opening and
-  // saving an otherwise unchanged document.
-  if (!usesV2 && !compatibility.readOnly) {
-    normalized.version = 1;
-    delete normalized.documentId;
-    delete normalized.derivedFrom;
-    delete normalized.footnotes;
-    delete normalized.citationSources;
-  }
+  delete normalized.layoutMode;
   return normalized;
 }
 

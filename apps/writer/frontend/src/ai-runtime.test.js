@@ -44,6 +44,7 @@ test("AI prompt and chat context serialize only the current document snapshot", 
     { type: "paragraph", content: [{ type: "text", text: "已完成部分" }] },
     { type: "paperFinalizedBreak" },
     { type: "paragraph", content: [{ type: "text", text: "待优化部分" }] },
+    { type: "heading", attrs: { level: 4 }, content: [{ type: "text", text: "四级标题" }] },
     {
       type: "image",
       attrs: {
@@ -65,6 +66,7 @@ test("AI prompt and chat context serialize only the current document snapshot", 
   assert.match(prompt.prompt, /这是我正在写的文章/);
   assert.match(prompt.prompt, /【已定稿开始】[\s\S]*已完成部分[\s\S]*【已定稿结束】/);
   assert.match(prompt.prompt, /待优化部分/);
+  assert.match(prompt.prompt, /#### 四级标题/);
   assert.equal(prompt.assets.images[1].caption, "结构图");
 
   const signature = buildAiChatContextSignature(editor, document, { showImageCaptions: true });
@@ -75,9 +77,35 @@ test("AI prompt and chat context serialize only the current document snapshot", 
   assert.doesNotMatch(context.context, /never-serialize-this|researchRoot/);
 });
 
+test("Mermaid figures share figure numbering and obey the template caption visibility", () => {
+  const editor = editorWithContent([
+    { type: "paperMermaid", attrs: { caption: "研究流程", source: "flowchart LR\nA-->B" } },
+    {
+      type: "image",
+      attrs: {
+        caption: "结果图",
+        alt: "结果图",
+        src: "data:image/png;base64,AA==",
+        width: "65%",
+      },
+    },
+  ]);
+
+  const visible = buildAiPromptInput(editor, { showImageCaptions: true });
+  assert.match(visible.body, /\[图1\.研究流程\]/);
+  assert.match(visible.body, /\[图2\.结果图\]/);
+  assert.equal(visible.assets.images[2].number, 2);
+
+  const hidden = buildAiChatContextInput(editor, { title: "测试" }, { showImageCaptions: false });
+  assert.match(hidden.context, /\[Mermaid 图\]/);
+  assert.match(hidden.context, /\[图片\]/);
+  assert.doesNotMatch(hidden.context, /研究流程|结果图/);
+});
+
 test("AI response blocks retain Markdown structure and rich clipboard serialization", () => {
   const blocks = parseAiResponseBlocks([
     "## 结论",
+    "#### 细节",
     "",
     "| 项目 | 结果 |",
     "| --- | --- |",
@@ -100,15 +128,18 @@ test("AI response blocks retain Markdown structure and rich clipboard serializat
 
   assert.deepEqual(blocks.map((block) => block.type), [
     "heading",
+    "heading",
     "table",
     "orderedList",
     "quote",
     "image",
   ]);
-  assert.equal(aiBlockPlainText(blocks[1]), "项目\t结果\n结构\t清晰");
-  assert.match(aiBlockHtml(blocks[1]), /^<table>/);
-  assert.match(aiBlockHtml(blocks[3]), /<blockquote>[\s\S]*—— 来源/);
-  assert.match(aiBlockHtml(blocks[4]), /<figure><img src="data:image\/png;base64,AA=="/);
+  assert.equal(blocks[1].level, 4);
+  assert.equal(aiBlockHtml(blocks[1]), "<h4>细节</h4>");
+  assert.equal(aiBlockPlainText(blocks[2]), "项目\t结果\n结构\t清晰");
+  assert.match(aiBlockHtml(blocks[2]), /^<table>/);
+  assert.match(aiBlockHtml(blocks[4]), /<blockquote>[\s\S]*—— 来源/);
+  assert.match(aiBlockHtml(blocks[5]), /<figure><img src="data:image\/png;base64,AA=="/);
 });
 
 test("AI state normalization preserves versioned defaults and isolated Codex scope", () => {

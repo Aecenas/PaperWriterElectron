@@ -1,9 +1,13 @@
 import { useCallback, useEffect } from "react";
 import { NodeSelection } from "@tiptap/pm/state";
 import { bridge } from "../bridge.js";
-import { createDocumentId, normalizeDocumentId } from "../document-schema-v2.js";
 import {
-  createKnowledgeUpdateGuard,
+  createDocumentId,
+  normalizeCitationStyle,
+  normalizeDocumentId,
+} from "../document-schema-v2.js";
+import {
+  collectKnowledgeReferences,
   synchronizeKnowledgeReferences,
 } from "../knowledge-extensions.js";
 import {
@@ -44,17 +48,151 @@ export function useKnowledgeEditorSyncLifecycle({
 }) {
   useEffect(() => {
     if (!activeWorkEditor) return undefined;
-    const synchronize = createKnowledgeUpdateGuard(() => {
-      synchronizeStructuredInlineReferences(activeWorkEditor);
-      synchronizeKnowledgeReferences(activeWorkEditor, {
-        citationSources: activeWorkDocument?.citationSources || [],
-        footnotes: activeWorkDocument?.footnotes || [],
-      });
+    const synchronizer = createKnowledgeCitationSynchronizer({
+      citationApi: bridge,
+      editor: activeWorkEditor,
+      getDocument: () => activeWorkDocument,
     });
-    synchronize();
-    activeWorkEditor.on("update", synchronize);
-    return () => activeWorkEditor.off("update", synchronize);
-  }, [activeWorkDocument?.citationSources, activeWorkDocument?.footnotes, activeWorkEditor]);
+    synchronizeStructuredInlineReferences(activeWorkEditor);
+    void synchronizer.schedule({ immediate: true });
+    const handleUpdate = ({ transaction } = {}) => {
+      if (
+        transaction?.getMeta?.("paperKnowledgeDerived")
+        || transaction?.getMeta?.("paperStructuredDerived")
+      ) return;
+      synchronizeStructuredInlineReferences(activeWorkEditor);
+      void synchronizer.schedule();
+    };
+    activeWorkEditor.on("update", handleUpdate);
+    return () => {
+      activeWorkEditor.off("update", handleUpdate);
+      synchronizer.dispose();
+    };
+  }, [
+    activeWorkDocument?.citationSources,
+    activeWorkDocument?.citationStyle,
+    activeWorkDocument?.documentId,
+    activeWorkDocument?.footnotes,
+    activeWorkEditor,
+  ]);
+}
+
+function fallbackCitationKind(styleId) {
+  return /(?:author-date|apa|mla|chicago)/i.test(String(styleId || "")) ? "author-date" : "numeric";
+}
+
+export function citationFormattingRequestForEditor(editor, document = {}) {
+  const citationOrder = [];
+  const seen = new Set();
+  collectKnowledgeReferences(editor).citations
+    .sort((left, right) => Number(left.position) - Number(right.position))
+    .forEach((citation) => {
+      const sourceId = normalizeDocumentId(citation?.sourceId);
+      if (!sourceId || seen.has(sourceId)) return;
+      seen.add(sourceId);
+      citationOrder.push(sourceId);
+    });
+  const sourceById = new Map(
+    (Array.isArray(document?.citationSources) ? document.citationSources : [])
+      .map((source) => [normalizeDocumentId(source?.id), source]),
+  );
+  const style = normalizeCitationStyle(document?.citationStyle);
+  return {
+    citationOrder,
+    payload: {
+      sources: citationOrder.map((sourceId) => sourceById.get(sourceId)).filter(Boolean),
+      styleId: String(style.styleId || "gb-t-7714-2015-numeric"),
+      locale: String(style.locale || "zh-CN"),
+      ...(style.customStyle ? { customStyle: style.customStyle } : {}),
+    },
+  };
+}
+
+/**
+ * Owns one editor's debounce and generation token. A second editor receives a
+ * separate controller, so a late citeproc response can never decorate the
+ * other pane or a document that replaced this one.
+ */
+export function createKnowledgeCitationSynchronizer({
+  citationApi = bridge,
+  clearTimeoutImpl = globalThis.clearTimeout,
+  debounceMs = 140,
+  editor,
+  getDocument,
+  setTimeoutImpl = globalThis.setTimeout,
+} = {}) {
+  let disposed = false;
+  let generation = 0;
+  let pendingResolve = null;
+  let timer = null;
+
+  const run = async (requestedGeneration) => {
+    if (disposed || !editor?.state?.doc || !editor?.view?.dispatch || requestedGeneration !== generation) return false;
+    const document = typeof getDocument === "function" ? getDocument() : {};
+    const { citationOrder, payload } = citationFormattingRequestForEditor(editor, document);
+    let formatted = {
+      entriesById: {},
+      citationsById: {},
+      citationKind: fallbackCitationKind(payload.styleId),
+    };
+    if (citationOrder.length && typeof citationApi?.formatCitations === "function") {
+      try {
+        const result = await citationApi.formatCitations(payload);
+        formatted = {
+          entriesById: result?.entriesById || {},
+          citationsById: result?.citationsById || {},
+          citationKind: result?.citationKind === "author-date" ? "author-date" : "numeric",
+        };
+      } catch {
+        // Offline/browser previews retain deterministic fallback citations. A
+        // later edit or style change retries the main-process formatter.
+      }
+    }
+    if (disposed || !editor?.state?.doc || !editor?.view?.dispatch || requestedGeneration !== generation) return false;
+    try {
+      synchronizeKnowledgeReferences(editor, {
+        citationSources: document?.citationSources || [],
+        footnotes: document?.footnotes || [],
+        entriesById: formatted.entriesById,
+        citationsById: formatted.citationsById,
+        citationKind: formatted.citationKind,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const schedule = ({ immediate = false } = {}) => {
+    generation += 1;
+    const requestedGeneration = generation;
+    if (timer !== null) {
+      clearTimeoutImpl(timer);
+      timer = null;
+      pendingResolve?.(false);
+      pendingResolve = null;
+    }
+    if (immediate) return run(requestedGeneration);
+    return new Promise((resolve) => {
+      pendingResolve = resolve;
+      timer = setTimeoutImpl(() => {
+        timer = null;
+        pendingResolve = null;
+        void run(requestedGeneration).then(resolve);
+      }, debounceMs);
+    });
+  };
+
+  const dispose = () => {
+    disposed = true;
+    generation += 1;
+    if (timer !== null) clearTimeoutImpl(timer);
+    timer = null;
+    pendingResolve?.(false);
+    pendingResolve = null;
+  };
+
+  return { dispose, schedule };
 }
 
 export function useImageReferenceLifecycle({

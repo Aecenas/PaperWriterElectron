@@ -426,6 +426,46 @@ test("browser citation snapshots round-trip independent library identities while
   }
 });
 
+test("browser public citations migrate once and remain independent from document snapshots", async () => {
+  const memory = new Map();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem: (key, value) => memory.set(key, String(value)),
+      removeItem: (key) => memory.delete(key),
+    },
+  });
+  const workspace = "browser-public-citation-migration";
+  try {
+    const snapshot = await browserBridge.upsertCitation(workspace, {
+      title: "信笺快照",
+      authors: ["甲"],
+      year: 2026,
+      doi: "10.1000/public-test",
+    });
+    const migrated = await browserBridge.migrateWorkspaceCitationsToPublic(workspace);
+    assert.equal(migrated.migrated, true);
+    assert.equal(migrated.imported, 1);
+    const repeated = await browserBridge.migrateWorkspaceCitationsToPublic(workspace);
+    assert.equal(repeated.alreadyMigrated, true);
+    assert.equal(repeated.sources.length, 1);
+
+    const publicUpdate = await browserBridge.upsertPublicCitation({
+      ...repeated.sources[0],
+      title: "公域修订标题",
+    });
+    assert.equal(publicUpdate.source.title, "公域修订标题");
+    assert.equal((await browserBridge.listCitations(workspace)).sources[0].title, "信笺快照");
+
+    await browserBridge.deletePublicCitation(publicUpdate.source.id);
+    assert.equal((await browserBridge.listPublicCitations()).sources.length, 0);
+    assert.equal((await browserBridge.listCitations(workspace)).sources[0].id, snapshot.source.id);
+  } finally {
+    delete globalThis.localStorage;
+  }
+});
+
 test("browser relationship derivation never scans outside supplied overrides", async () => {
   const targetId = "11111111-1111-4111-8111-111111111111";
   const currentId = "22222222-2222-4222-8222-222222222222";
@@ -464,6 +504,7 @@ test("browser bridge exposes the desktop feature surface with explicit browser f
     "watchWorkspace", "getDocumentRevision", "regenerateDocumentIdentity", "listResearch", "createResearch",
     "updateResearch", "deleteResearch", "relinkResearch", "readResearchFile", "openResearchExternal",
     "listCitations", "upsertCitation", "deleteCitation",
+    "listPublicCitations", "upsertPublicCitation", "deletePublicCitation", "migrateWorkspaceCitationsToPublic",
     "getResearchRoot", "pickResearchRoot", "clearResearchRoot", "listResearchFolder", "createResearchFolder",
     "importResearchFiles", "importLegacyResearch", "renameResearchEntry", "moveResearchEntry", "trashResearchEntry", "showResearchEntry",
     "copyResearchEntryPath", "listResearchLibrarySources", "upsertResearchLibrarySource", "deleteResearchLibrarySource",

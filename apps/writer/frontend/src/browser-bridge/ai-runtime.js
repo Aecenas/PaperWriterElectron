@@ -24,6 +24,7 @@ const browserSelectionAiRequests = new Map();
 const BROWSER_AI_TASK_MODEL_KEYS = Object.freeze([
   "selectionChat",
   "applyResolver",
+  "composeDraft",
 ]);
 const BROWSER_AI_TASK_MODEL_KEY_SET = new Set(
   BROWSER_AI_TASK_MODEL_KEYS,

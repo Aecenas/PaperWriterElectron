@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { createHash } = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const test = require("node:test");
@@ -16,7 +17,7 @@ const IDS = [
 test("exports the unchanged document extensions, filters, schema, and naming helpers", () => {
   assert.equal(documentModel.DOCUMENT_EXTENSION, ".letterpaper");
   assert.equal(documentModel.LEGACY_DOCUMENT_EXTENSION, ".paperdoc");
-  assert.equal(documentModel.DOCUMENT_SCHEMA_VERSION, 2);
+  assert.equal(documentModel.DOCUMENT_SCHEMA_VERSION, 3);
   assert.deepEqual(documentModel.DOCUMENT_FILTERS, [
     { name: "笺间文档", extensions: ["letterpaper"] },
     {
@@ -54,7 +55,7 @@ test("exports the unchanged document extensions, filters, schema, and naming hel
   assert.equal(documentModel.formatPaperDate("invalid"), "今天");
 });
 
-test("v2 document normalization round-trips stable model fields", () => {
+test("v2 document normalization migrates to v3 and round-trips stable model fields", () => {
   const source = {
     version: 2,
     documentId: IDS[0].toUpperCase(),
@@ -101,16 +102,17 @@ test("v2 document normalization round-trips stable model fields", () => {
   const twice = documentModel.normalizeDocument(once);
 
   assert.deepEqual(twice, once);
+  assert.equal(once.version, 3);
   assert.equal(once.documentId, IDS[0]);
   assert.equal(once.title, "标题");
-  assert.equal(once.layoutMode, "flow");
+  assert.equal(Object.hasOwn(once, "layoutMode"), false);
   assert.deepEqual(once.preservedExtensionField, { keep: true });
   assert.equal(once.footnotes[0].text, "脚注");
   assert.equal(once.citationSources[0].researchSourceId, "legacy_note_01");
   assert.equal(once.comments[0].text, "评论");
 });
 
-test("legacy and future schemas preserve their exact compatibility and read-only boundaries", () => {
+test("legacy schemas migrate to v3 while future schemas preserve read-only boundaries", () => {
   const legacy = documentModel.normalizeDocument({
     version: 1,
     title: "",
@@ -118,15 +120,15 @@ test("legacy and future schemas preserve their exact compatibility and read-only
     fontSize: 99,
     unknownLegacyField: "drop-me",
   });
-  assert.equal(legacy.version, 1);
-  assert.equal("documentId" in legacy, false);
-  assert.equal("footnotes" in legacy, false);
-  assert.equal("citationSources" in legacy, false);
+  assert.equal(legacy.version, 3);
+  assert.match(legacy.documentId, /^[0-9a-f-]{36}$/i);
+  assert.deepEqual(legacy.footnotes, []);
+  assert.deepEqual(legacy.citationSources, []);
   assert.equal("unknownLegacyField" in legacy, false);
   assert.equal(legacy.title, "未命名信笺");
   assert.equal(legacy.html, "<p></p>");
   assert.equal(legacy.fontSize, 32);
-  assert.equal(legacy.layoutMode, "flow");
+  assert.equal(Object.hasOwn(legacy, "layoutMode"), false);
 
   const future = documentModel.normalizeDocument({
     version: 9,
@@ -135,11 +137,13 @@ test("legacy and future schemas preserve their exact compatibility and read-only
     html: "<p>未来</p>",
     createdAt: "2026-07-24T00:00:00.000Z",
     updatedAt: "2026-07-25T00:00:00.000Z",
+    layoutMode: "legacy-layout",
     futureOnlyField: { retain: true },
   });
   assert.equal(future.version, 9);
   assert.equal(future.documentId, IDS[0]);
   assert.equal(future._readOnlyFutureSchema, true);
+  assert.equal(Object.hasOwn(future, "layoutMode"), false);
   assert.deepEqual(future.futureOnlyField, { retain: true });
   assert.equal(
     "_readOnlyFutureSchema"
@@ -225,6 +229,42 @@ test("citation snapshots retain only portable paired or legacy research identiti
   assert.deepEqual(
     documentModel.normalizeCitationSources(normalized),
     normalized,
+  );
+});
+
+test("v3 citation styles preserve only hash-bound passive custom CSL", () => {
+  const xml = '<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0"><info><title>本地样式</title><id>local</id></info><citation><layout><text variable="title"/></layout></citation><bibliography><layout><text variable="title"/></layout></bibliography></style>';
+  const hash = createHash("sha256").update(xml, "utf8").digest("hex");
+  const styleId = `custom-${hash.slice(0, 24)}`;
+  const normalized = documentModel.normalizeCitationStyle({
+    styleId,
+    locale: "zh-CN",
+    customStyle: {
+      styleId,
+      title: "本地样式",
+      hash,
+      xml,
+    },
+  });
+  assert.equal(normalized.customStyle.hash, hash);
+  assert.equal(normalized.customStyle.xml, xml);
+  assert.deepEqual(
+    documentModel.normalizeCitationStyle({
+      ...normalized,
+      customStyle: { ...normalized.customStyle, hash: "0".repeat(64) },
+    }),
+    { styleId, locale: "zh-CN" },
+  );
+  assert.equal(
+    documentModel.normalizeCitationStyle({
+      styleId,
+      customStyle: {
+        styleId,
+        hash,
+        xml: '<!DOCTYPE style><style xmlns="http://purl.org/net/xbiblio/csl"></style>',
+      },
+    }).customStyle,
+    undefined,
   );
 });
 

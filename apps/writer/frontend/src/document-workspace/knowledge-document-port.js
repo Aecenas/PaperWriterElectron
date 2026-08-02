@@ -246,7 +246,7 @@ export function createKnowledgeDocumentPort({
         ...tab,
         document: result.document || {
           ...tab.document,
-          version: 2,
+          version: 3,
           documentId: result.documentId,
           derivedFrom: result.document?.derivedFrom || tab.document?.derivedFrom || "",
           footnotes: tab.document?.footnotes || [],
@@ -259,7 +259,7 @@ export function createKnowledgeDocumentPort({
     setOpenTabs(nextTabs);
     if (sameDocumentPath(currentPathRef.current, result.path) && !dirtyRef.current) {
       const nextDocument = normalizeDocument(
-        result.document || { ...documentStateRef.current, version: 2, documentId: result.documentId },
+        result.document || { ...documentStateRef.current, version: 3, documentId: result.documentId },
         letterTemplates,
       );
       documentStateRef.current = nextDocument;

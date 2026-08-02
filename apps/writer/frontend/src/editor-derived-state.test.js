@@ -54,13 +54,15 @@ test("derives outline, contents and finalized boundary state", () => {
   const derived = computePaperDerivedState(fakeDoc([
     [node("paperTableOfContents"), 0],
     [node("heading", { attrs: { level: 1 }, textContent: "第一章" }), 5],
-    [node("heading", { attrs: { level: 4 }, textContent: "忽略" }), 12],
+    [node("heading", { attrs: { level: 4, numberingMode: "on" }, textContent: "第四级" }), 12],
     [node("paperFinalizedBreak"), 20],
   ]));
   assert.deepEqual(derived.outlineItems, [
     { id: "toc-0", type: "toc", level: 1, text: "目录", pos: 0 },
-    { id: "5-1-第一章", type: "heading", level: 1, text: "第一章", pos: 5 },
+    { id: "5-1-第一章", type: "heading", level: 1, text: "第一章", pos: 5, numberingMode: "inherit" },
+    { id: "12-4-第四级", type: "heading", level: 4, text: "第四级", pos: 12, numberingMode: "on" },
   ]);
+  assert.equal(derived.headingItems[1].level, 4);
   assert.equal(derived.hasTableOfContents, true);
   assert.equal(derived.hasFinalizedBreak, true);
 });

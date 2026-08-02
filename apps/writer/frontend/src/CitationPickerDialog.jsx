@@ -57,6 +57,20 @@ export default function CitationPickerDialog({
     return sources.filter((source) => searchableSourceText(source).includes(needle));
   }, [query, sources]);
   const selected = sources.find((source) => source.id === selectedId) || null;
+  const groupedSources = useMemo(() => ([
+    {
+      id: "private",
+      label: "本文文献",
+      description: "保存在当前信笺中的独立快照",
+      sources: visibleSources.filter((source) => source.libraryScope !== "public"),
+    },
+    {
+      id: "public",
+      label: "公域文献",
+      description: "选择后会复制一份到本文",
+      sources: visibleSources.filter((source) => source.libraryScope === "public"),
+    },
+  ].filter((group) => group.sources.length)), [visibleSources]);
 
   if (!picker) return null;
 
@@ -83,21 +97,29 @@ export default function CitationPickerDialog({
         <div className="citation-picker-body">
           {loading ? <p className="citation-picker-empty">正在刷新来源…</p> : null}
           {!loading && !visibleSources.length ? <p className="citation-picker-empty">没有匹配的参考文献来源，可以新建后直接插入。</p> : null}
-          {visibleSources.map((source) => (
-            <button
-              key={source.id}
-              type="button"
-              className={selectedId === source.id ? "citation-picker-source active" : "citation-picker-source"}
-              onClick={() => choose(source)}
-              onDoubleClick={() => onSelect?.(source, String(defaultPageForSource?.(source) || source.pages || ""))}
-            >
-              <strong>{source.title || "未命名来源"}</strong>
-              <span>{[
-                Array.isArray(source.authors) ? source.authors.join("、") : "",
-                source.year,
-                source.publisher || source.url,
-              ].filter(Boolean).join(" · ") || "暂无书目信息"}</span>
-            </button>
+          {groupedSources.map((group) => (
+            <section key={group.id} className="citation-picker-group" aria-labelledby={`citation-picker-${group.id}`}>
+              <header>
+                <strong id={`citation-picker-${group.id}`}>{group.label}</strong>
+                <small>{group.description}</small>
+              </header>
+              {group.sources.map((source) => (
+                <button
+                  key={source.id}
+                  type="button"
+                  className={selectedId === source.id ? "citation-picker-source active" : "citation-picker-source"}
+                  onClick={() => choose(source)}
+                  onDoubleClick={() => onSelect?.(source, String(defaultPageForSource?.(source) || source.pages || ""))}
+                >
+                  <strong>{source.title || "未命名来源"}</strong>
+                  <span>{[
+                    Array.isArray(source.authors) ? source.authors.join("、") : "",
+                    source.year,
+                    source.publisher || source.url,
+                  ].filter(Boolean).join(" · ") || "暂无书目信息"}</span>
+                </button>
+              ))}
+            </section>
           ))}
         </div>
         <footer>

@@ -332,8 +332,8 @@ export const DEFAULT_TEMPLATE_PRESENTATION = Object.freeze({
   showSignatureDate: true,
   indentParagraphs: true,
   paragraphAlign: "left",
-  headingColors: Object.freeze({ 1: "#9a5635", 2: "#9a5635", 3: "#9a5635" }),
-  headingNumbering: Object.freeze({ 1: true, 2: true, 3: true }),
+  headingColors: Object.freeze({ 1: "#9a5635", 2: "#9a5635", 3: "#9a5635", 4: "#9a5635" }),
+  headingNumbering: Object.freeze({ 1: true, 2: true, 3: true, 4: true }),
   showImageCaptions: true,
   numberImageCaptions: true,
 });
@@ -356,11 +356,13 @@ export function normalizeTemplatePresentation(presentation) {
       1: normalizeHeadingColor(1),
       2: normalizeHeadingColor(2),
       3: normalizeHeadingColor(3),
+      4: normalizeHeadingColor(4),
     },
     headingNumbering: {
       1: headingNumbering[1] !== false,
       2: headingNumbering[2] !== false,
       3: headingNumbering[3] !== false,
+      4: headingNumbering[4] !== false,
     },
     showImageCaptions: source.showImageCaptions !== false,
     numberImageCaptions: source.numberImageCaptions !== false,
@@ -462,7 +464,7 @@ export function getLetterTemplate(document, letterTemplates = DEFAULT_LETTER_TEM
 }
 
 export function fontStack(font, fallback = "serif") {
-  return `"${font}", "LXGW WenKai Screen", "LXGW WenKai", "KaiTi", "Noto Serif SC", "STSong", "SimSun", ${fallback}`;
+  return `"${font}", "LXGW WenKai Screen", "LXGW WenKai", "KaiTi", "Noto Serif SC", "STSong", "SimSun", "Segoe UI Emoji", ${fallback}`;
 }
 
 function createTemplateId() {

@@ -114,6 +114,37 @@
   scrollbar-color: rgba(154, 86, 53, 0.24) transparent;
 }
 
+.citation-picker-group {
+  display: grid;
+  gap: 6px;
+}
+
+.citation-picker-group + .citation-picker-group {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(99, 86, 67, 0.1);
+}
+
+.citation-picker-group > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 3px 2px;
+}
+
+.citation-picker-group > header strong {
+  color: #65584b;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.citation-picker-group > header small {
+  color: rgba(82, 75, 66, 0.54);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
 .citation-picker-source {
   min-width: 0;
   border: 1px solid rgba(99, 86, 67, 0.1);

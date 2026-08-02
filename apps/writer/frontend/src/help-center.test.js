@@ -93,14 +93,14 @@ function parseTopics(source) {
   }));
 }
 
-test("help center has five valid categories and 24 complete topics with valid screenshot coverage", async () => {
+test("help center has five valid categories and 29 complete topics with valid screenshot coverage", async () => {
   const source = await helpSource();
   const categoryIds = [...source.categories.matchAll(/\{\s*id:\s*"([^"]+)"/g)].map((match) => match[1]);
   const screenshots = parseScreenshots(source.screenshots);
   const topics = parseTopics(source.topics);
 
   assert.deepEqual(categoryIds, ["files", "writing", "research", "ai", "view"]);
-  assert.equal(topics.length, 24);
+  assert.equal(topics.length, 29);
   assert.equal(new Set(topics.map((topic) => topic.id)).size, topics.length, "topic ids must be unique");
   assert.equal(new Set(screenshots.map((item) => item.key)).size, screenshots.length, "screenshot keys must be unique");
   assert.equal(new Set(topics.map((topic) => topic.illustration)).size, topics.length, "each topic needs its own screenshot");
@@ -125,7 +125,7 @@ test("help center has five valid categories and 24 complete topics with valid sc
   }
 
   assert.deepEqual(new Set(referencedScreenshots), screenshotKeys, "every mapped screenshot must be used by a help topic");
-  for (const topicId of ["selection-links", "comments", "ai-modes", "codex-cli", "ai-optimize", "templates-gallery", "template-editor", "status-cache-update"]) {
+  for (const topicId of ["tabs-groups", "selection-links", "comments", "ai-modes", "codex-cli", "ai-optimize", "templates-gallery", "template-editor", "status-cache-update"]) {
     assert.ok(topics.find((topic) => topic.id === topicId)?.illustrations.length > 0, `${topicId} needs multiple screenshots`);
   }
 });
@@ -136,7 +136,7 @@ test("help screenshots exist one-to-one without orphans or duplicate image conte
   const mappedFiles = screenshots.map((item) => item.file).sort();
   const actualFiles = (await readdir(screenshotsUrl)).filter((name) => name.endsWith(".webp")).sort();
 
-  assert.equal(screenshots.length, 34);
+  assert.equal(screenshots.length, 40);
   assert.deepEqual(actualFiles, mappedFiles, "screenshot folder must contain exactly the mapped help images");
 
   const hashes = await Promise.all(mappedFiles.map(async (file) => {
@@ -147,7 +147,7 @@ test("help screenshots exist one-to-one without orphans or duplicate image conte
   assert.equal(new Set(hashes).size, hashes.length, "help screenshots must not reuse identical image content");
 });
 
-test("help preserves user-visible boundaries, covers 1.0.0 additions and rejects stale guidance", async () => {
+test("help preserves user-visible boundaries, covers 1.1.0 additions and rejects stale guidance", async () => {
   const { topics } = await helpSource();
   const required = [
     "导入结果始终成为未保存的新信笺",
@@ -163,6 +163,14 @@ test("help preserves user-visible boundaries, covers 1.0.0 additions and rejects
     "不会读取其他正文或资料",
     "红蓝修改对比",
     "一次 `Ctrl+Z` 完整撤销",
+    "AI 起稿从写作简报开始",
+    "当前信笺不会被覆盖",
+    "结构区的[[检查]]页在本机识别中英文拼写",
+    "BibTeX、RIS、CSL-JSON",
+    "历史只保存在本机",
+    "使用 scrypt 与 AES-256-GCM 加密",
+    "连续、单页或双页",
+    "Mermaid 预览失败不会清空源码",
   ];
   required.forEach((copy) => assert.ok(topics.includes(copy), `missing protected help copy: ${copy}`));
 

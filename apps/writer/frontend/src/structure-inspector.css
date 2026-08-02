@@ -18,6 +18,45 @@
   color: rgba(78, 70, 59, 0.42);
 }
 
+.structure-bookmarks {
+  padding: 11px 9px 18px;
+}
+
+.structure-bookmark-heading {
+  margin: 0 2px 10px;
+  border-bottom: 1px solid rgba(101, 89, 72, 0.11);
+  padding: 3px 7px 11px;
+}
+
+.structure-bookmark-heading > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.structure-bookmark-heading strong {
+  color: #4a443b;
+  font-size: 12px;
+}
+
+.structure-bookmark-heading small,
+.structure-bookmark-heading p {
+  color: var(--muted, #827d74);
+  font-size: 10px;
+}
+
+.structure-bookmark-heading p {
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+.structure-bookmark-item .structure-item-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .structure-references > section + section {
   margin-top: 24px;
   border-top: 0;

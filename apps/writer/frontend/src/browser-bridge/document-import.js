@@ -50,7 +50,8 @@ function sanitizeBrowserImportedHtml(html, warnings = []) {
       const name = attribute.name.toLowerCase();
       const keepData = [
         "data-citation-source-id", "data-citation-pages", "data-document-id", "data-footnote-id",
-        "data-footnote-ref", "data-reference-list", "data-type",
+        "data-footnote-ref", "data-reference-list", "data-type", "data-bookmark-id",
+        "data-bookmark-label",
       ].includes(name);
       if (name === "href" && tagName === "A") {
         const href = sanitizeBrowserHref(attribute.value);
@@ -139,11 +140,12 @@ function browserTextToHtml(text) {
 function createBrowserImportedDocument({ title, author = "", html, footnotes = [], citationSources = [] }) {
   const now = new Date().toISOString();
   return {
-    version: 2,
+    version: 3,
     documentId: browserRandomId(),
     derivedFrom: "",
     footnotes,
     citationSources,
+    citationStyle: { styleId: "gb-t-7714-2015-numeric", locale: "zh-CN" },
     title: String(title || "导入的信笺").trim().slice(0, 200) || "导入的信笺",
     author: String(author || "").trim().slice(0, 100),
     html: String(html || "<p></p>"),

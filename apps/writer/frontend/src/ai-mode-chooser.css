@@ -17,7 +17,7 @@
 .ai-mode-chooser {
   position: relative;
   display: grid;
-  width: min(760px, 100%);
+  width: min(1100px, 100%);
   max-height: calc(100vh - var(--desktop-titlebar-height, 40px) - 48px);
   max-height: calc(100dvh - var(--desktop-titlebar-height, 40px) - 48px);
   overflow: visible;
@@ -36,8 +36,8 @@
 
 .ai-mode-card-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: clamp(28px, 3vw, 46px);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(20px, 2.4vw, 36px);
   padding: 0;
 }
 
@@ -95,6 +95,15 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.74);
 }
 
+.ai-mode-card[data-mode="compose"] {
+  border-color: rgba(210, 188, 241, 0.7);
+  background: #eee8f3;
+  box-shadow:
+    0 22px 54px rgba(7, 8, 15, 0.3),
+    0 0 24px rgba(137, 91, 190, 0.17),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76);
+}
+
 .ai-mode-card-art {
   position: absolute;
   inset: 0;
@@ -132,6 +141,31 @@
   opacity: 0;
 }
 
+.ai-mode-card-mark {
+  position: absolute;
+  bottom: 3.7%;
+  left: 50%;
+  z-index: 2;
+  width: 5.6%;
+  aspect-ratio: 1;
+  background: linear-gradient(145deg, #fbf7ff 8%, #b995e4 48%, #7045ab 92%);
+  clip-path: polygon(50% 0, 58% 42%, 100% 50%, 58% 58%, 50% 100%, 42% 58%, 0 50%, 42% 42%);
+  filter:
+    drop-shadow(0 0 2px rgba(255, 255, 255, 0.9))
+    drop-shadow(0 0 7px rgba(142, 92, 202, 0.58));
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: filter 220ms ease, transform 280ms cubic-bezier(0.18, 0.82, 0.2, 1);
+}
+
+.ai-mode-card-mark::after {
+  content: "";
+  position: absolute;
+  inset: 30%;
+  background: rgba(255, 255, 255, 0.96);
+  clip-path: inherit;
+}
+
 .ai-mode-card-copy {
   position: absolute;
   top: 65%;
@@ -163,6 +197,10 @@
   color: #26384e;
 }
 
+.ai-mode-card[data-mode="compose"] .ai-mode-card-title {
+  color: #463354;
+}
+
 .ai-mode-card-description {
   color: rgba(67, 53, 39, 0.8);
   font-size: clamp(11px, 4.2cqi, 22px);
@@ -175,6 +213,10 @@
 
 .ai-mode-card[data-mode="chat"] .ai-mode-card-description {
   color: rgba(41, 60, 82, 0.8);
+}
+
+.ai-mode-card[data-mode="compose"] .ai-mode-card-description {
+  color: rgba(70, 51, 84, 0.8);
 }
 
 .ai-mode-card:is(:hover, :focus-visible):not(:disabled) {
@@ -194,6 +236,13 @@
   opacity: 1;
 }
 
+.ai-mode-card.visual-active:not(:disabled) .ai-mode-card-mark {
+  filter:
+    drop-shadow(0 0 3px rgba(255, 255, 255, 1))
+    drop-shadow(0 0 10px rgba(159, 99, 231, 0.88));
+  transform: translateX(-50%) scale(1.1);
+}
+
 .ai-mode-card[data-mode="optimize"].visual-active:not(:disabled) {
   border-color: rgba(255, 224, 164, 0.96);
   box-shadow:
@@ -209,6 +258,15 @@
     0 28px 68px rgba(7, 10, 17, 0.4),
     0 0 42px rgba(75, 151, 255, 0.38),
     0 0 0 2px rgba(188, 223, 255, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.ai-mode-card[data-mode="compose"].visual-active:not(:disabled) {
+  border-color: rgba(230, 213, 255, 0.98);
+  box-shadow:
+    0 28px 68px rgba(10, 8, 17, 0.4),
+    0 0 42px rgba(151, 91, 217, 0.4),
+    0 0 0 2px rgba(224, 203, 250, 0.25),
     inset 0 1px 0 rgba(255, 255, 255, 0.92);
 }
 
@@ -395,7 +453,7 @@
 
 @media (max-height: 740px) and (min-width: 761px) {
   .ai-mode-chooser {
-    width: min(700px, 100%);
+    width: min(960px, 100%);
   }
 
   .ai-mode-card-grid {
@@ -405,7 +463,7 @@
 
 @media (max-height: 620px) and (min-width: 761px) {
   .ai-mode-chooser {
-    width: min(600px, 100%);
+    width: min(800px, 100%);
   }
 
   .ai-mode-card-grid {
@@ -419,7 +477,14 @@
   }
 
   .ai-mode-card-grid {
-    gap: 22px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+  }
+
+  .ai-mode-card[data-mode="compose"] {
+    grid-column: 1 / -1;
+    width: calc((100% - 18px) / 2);
+    justify-self: center;
   }
 
   .ai-mode-card {
@@ -442,7 +507,13 @@
   }
 
   .ai-mode-card-grid {
+    grid-template-columns: 1fr;
     gap: 10px;
+  }
+
+  .ai-mode-card[data-mode="compose"] {
+    grid-column: auto;
+    width: 100%;
   }
 
   .ai-mode-card {
@@ -482,6 +553,7 @@
   .ai-mode-card::after,
   .ai-mode-card-art,
   .ai-mode-card-image,
+  .ai-mode-card-mark,
   .ai-mode-card-copy,
   .ai-mode-exit-button,
   .ai-mode-exit-icon,

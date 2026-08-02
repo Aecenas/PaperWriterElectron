@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Bookmark,
   BookOpen,
+  BookCheck,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   CornerUpLeft,
   Hash,
   Link2,
@@ -11,18 +14,23 @@ import {
   LocateFixed,
   NotebookPen,
   Pencil,
-  Plus,
   RefreshCw,
   ShieldAlert,
   Trash2,
 } from "lucide-react";
+import { buildVisibleOutlineRows } from "./outline-model.js";
+import { WritingAssistancePane } from "./writing-assistance/index.js";
+import { CitationLibraryPanel, collectBookmarks } from "./professional-content/index.js";
 import "./research-workspace.css";
 import "./structure-inspector.css";
 
 const STRUCTURE_TABS = [
   { id: "outline", label: "大纲", icon: ListTree },
-  { id: "references", label: "注引", icon: NotebookPen },
+  { id: "references", label: "脚注", icon: NotebookPen },
   { id: "related", label: "关联", icon: Link2 },
+  { id: "writing", label: "检查", icon: BookCheck },
+  { id: "bibliography", label: "文献", icon: BookOpen },
+  { id: "bookmarks", label: "书签", icon: Bookmark },
 ];
 
 function tabId(mode) {
@@ -64,23 +72,53 @@ function ReferenceSectionHeading({ id, label, count, icon: Icon, expanded, onTog
 }
 
 export function OutlinePane({ items = [], onItemClick }) {
+  const [collapsedIds, setCollapsedIds] = useState(() => new Set());
+  const rows = buildVisibleOutlineRows(items, collapsedIds);
+  const toggleCollapsed = (item) => {
+    setCollapsedIds((current) => {
+      const next = new Set(current);
+      if (next.has(item.id)) next.delete(item.id);
+      else next.add(item.id);
+      return next;
+    });
+  };
   return (
     <div className="structure-outline" aria-label="当前信笺大纲">
-      {items.length ? items.map((item) => (
-        <button
+      {items.length ? rows.map((item) => (
+        <div
           key={item.id || `${item.level}-${item.text}`}
-          type="button"
-          className={`structure-outline-row level-${Math.min(3, Math.max(1, Number(item.level) || 1))}`}
-          onClick={() => onItemClick?.(item)}
-          title={item.text}
+          className={`structure-outline-item level-${Math.min(4, item.level)}${item.hasChildren ? " has-children" : ""}`}
         >
-          <span className="structure-outline-marker" aria-hidden="true" />
-          <span>{item.text || "无标题"}</span>
-        </button>
+          <button
+            type="button"
+            className={`structure-outline-row level-${Math.min(4, item.level)}${item.number ? " is-numbered" : ""}`}
+            onClick={() => onItemClick?.(item)}
+            title={item.text}
+          >
+            {item.number ? (
+              <span className="structure-outline-number" aria-hidden="true">{item.number}</span>
+            ) : (
+              <span className="structure-outline-marker" aria-hidden="true" />
+            )}
+            <span>{item.text || "无标题"}</span>
+          </button>
+          {item.hasChildren ? (
+            <button
+              type="button"
+              className="structure-outline-collapse"
+              aria-expanded={!item.isCollapsed}
+              aria-label={`${item.isCollapsed ? "展开" : "收起"}“${item.text || "无标题"}”的子项`}
+              title={item.isCollapsed ? "展开子项" : "收起子项"}
+              onClick={() => toggleCollapsed(item)}
+            >
+              {item.isCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+            </button>
+          ) : null}
+        </div>
       )) : (
         <div className="structure-empty">
           <ListTree size={25} aria-hidden="true" />
-          <span>当前信笺还没有一、二、三级标题。</span>
+          <span>当前信笺还没有一、二、三、四级标题。</span>
         </div>
       )}
     </div>
@@ -89,24 +127,14 @@ export function OutlinePane({ items = [], onItemClick }) {
 
 export function ReferencesPane({
   footnotes = [],
-  sources = [],
-  citationOrder = [],
-  pendingPage,
-  loading = false,
-  error = "",
   readOnly = false,
   onJumpFootnote,
   onEditFootnote,
   onDeleteFootnote,
-  onAddCitationSource,
-  onEditCitationSource,
-  onDeleteCitationSource,
-  onJumpCitationSource,
 }) {
   const [footnotesExpanded, setFootnotesExpanded] = useState(true);
-  const [sourcesExpanded, setSourcesExpanded] = useState(true);
   return (
-    <div className="structure-references">
+    <div className="structure-references structure-footnotes-only">
       <section aria-labelledby="structure-footnotes-heading">
         <ReferenceSectionHeading id="structure-footnotes-heading" label="脚注" count={footnotes.length} icon={Hash} expanded={footnotesExpanded} onToggle={() => setFootnotesExpanded((value) => !value)} />
         {footnotesExpanded ? (
@@ -133,48 +161,85 @@ export function ReferencesPane({
           </div>
         ) : null}
       </section>
+    </div>
+  );
+}
 
-      <section aria-labelledby="structure-citations-heading">
-        <ReferenceSectionHeading id="structure-citations-heading" label="参考文献来源" count={sources.length} icon={BookOpen} expanded={sourcesExpanded} onToggle={() => setSourcesExpanded((value) => !value)}>
-          {!readOnly && onAddCitationSource ? <button type="button" className="structure-reference-add" onClick={onAddCitationSource} aria-label="新增参考文献来源" title="新增参考文献来源"><Plus size={14} /></button> : null}
-        </ReferenceSectionHeading>
-        {sourcesExpanded ? (
-          <div id="structure-citations-heading-content" className="structure-reference-section-body">
-            <p className="structure-reference-section-description">{pendingPage ? `PDF 待用页码：${pendingPage}` : "统一管理来源与正文使用状态"}</p>
-            {loading ? <p className="structure-loading" role="status"><LoaderCircle className="research-spin" size={15} />正在读取来源库…</p> : null}
-            {!loading && error ? <p className="structure-loading is-error" role="alert"><ShieldAlert size={14} />{error}</p> : null}
-            {!loading && !error ? (
-              <div className="structure-item-list">
-                {sources.length ? sources.map((source, sourceIndex) => {
-              const details = [(source.authors || []).join("、"), source.year, source.publisher].filter(Boolean).join(" · ") || source.url || "书目信息待完善";
-              const number = citationOrder.indexOf(source.id);
-              const isUsed = number >= 0;
-              return (
-                <article key={source.id} className={`structure-item is-citation${isUsed ? " is-used" : " is-unused"}`}>
-                  <button
-                    type="button"
-                    className="structure-item-main is-numbered"
-                    disabled={!isUsed || !onJumpCitationSource}
-                    title={isUsed ? "跳转到正文中的首次引用" : "正文尚未使用此来源"}
-                    onClick={() => onJumpCitationSource?.(source)}
-                  >
-                    <strong className="structure-order-number" aria-label={`来源 ${sourceIndex + 1}`}>{sourceIndex + 1}</strong>
-                    <span className="structure-item-copy">
-                      <strong>{source.title || "未命名来源"}</strong>
-                      <span>{isUsed ? `已引用 [${number + 1}] · ${details}` : `未使用 · ${details}`}</span>
-                    </span>
-                  </button>
-                  {!readOnly && onEditCitationSource ? <button type="button" className="structure-item-delete structure-item-action" aria-label={`编辑参考文献来源 ${source.title || ""}`} title="编辑来源" onClick={() => onEditCitationSource(source)}><Pencil size={13} /></button> : null}
-                  {!readOnly && onDeleteCitationSource ? <button type="button" className="structure-item-delete" aria-label={`移除参考文献来源 ${source.title || ""}`} title="移除参考文献来源" onClick={() => onDeleteCitationSource(source)}><Trash2 size={13} /></button> : null}
-                </article>
-              );
-                }) : <p className="structure-compact-empty">还没有结构化参考文献来源。</p>}
-              </div>
+function useEditorBookmarks(editor) {
+  const [items, setItems] = useState(() => collectBookmarks(editor?.state?.doc));
+  useEffect(() => {
+    const sync = () => setItems(collectBookmarks(editor?.state?.doc));
+    sync();
+    editor?.on?.("transaction", sync);
+    return () => editor?.off?.("transaction", sync);
+  }, [editor]);
+  return items;
+}
+
+export function BookmarksPane({
+  editor,
+  readOnly = false,
+  onJump,
+  onRename,
+  onDelete,
+}) {
+  const items = useEditorBookmarks(editor);
+  return (
+    <div className="structure-bookmarks" aria-label="当前信笺书签">
+      <header className="structure-bookmark-heading">
+        <div>
+          <strong>正文书签</strong>
+          <small>{items.length} 处</small>
+        </div>
+        <p>书签固定在段落左侧，不占用正文位置。</p>
+      </header>
+      <div className="structure-item-list">
+        {items.length ? items.map((item, index) => (
+          <article key={item.bookmarkId} className="structure-item structure-bookmark-item">
+            <button
+              type="button"
+              className="structure-item-main is-numbered"
+              onClick={() => onJump?.(item)}
+              title={`定位到${item.displayLabel}`}
+            >
+              <strong className="structure-order-number" aria-label={`书签 ${index + 1}`}>
+                {index + 1}
+              </strong>
+              <span className="structure-item-copy">
+                <strong>{item.displayLabel}</strong>
+                <span>{item.context || "空段落"}</span>
+              </span>
+            </button>
+            {!readOnly && onRename ? (
+              <button
+                type="button"
+                className="structure-item-delete structure-item-action"
+                aria-label={`编辑${item.displayLabel}`}
+                title="编辑书签名"
+                onClick={() => onRename(item)}
+              >
+                <Pencil size={13} />
+              </button>
             ) : null}
+            {!readOnly && onDelete ? (
+              <button
+                type="button"
+                className="structure-item-delete"
+                aria-label={`删除${item.displayLabel}`}
+                title="删除书签"
+                onClick={() => onDelete(item)}
+              >
+                <Trash2 size={13} />
+              </button>
+            ) : null}
+          </article>
+        )) : (
+          <div className="structure-empty">
+            <Bookmark size={24} aria-hidden="true" />
+            <span>还没有书签。可从顶部“元素”菜单为当前段落添加。</span>
           </div>
-        ) : null}
-      </section>
-
+        )}
+      </div>
     </div>
   );
 }
@@ -287,6 +352,9 @@ export default function StructureInspector({
   onOutlineItemClick,
   referenceProps = {},
   relatedProps = {},
+  writingProps = {},
+  citationLibraryProps = {},
+  bookmarkProps = {},
   loading = false,
   error = "",
 }) {
@@ -342,6 +410,9 @@ export default function StructureInspector({
         {!loading && !error && activeMode === "outline" ? <OutlinePane items={outlineItems} onItemClick={onOutlineItemClick} /> : null}
         {!loading && !error && activeMode === "references" ? <ReferencesPane {...referenceProps} /> : null}
         {!loading && !error && activeMode === "related" ? <RelatedPane {...relatedProps} /> : null}
+        {!loading && !error && activeMode === "writing" ? <WritingAssistancePane {...writingProps} /> : null}
+        {!loading && !error && activeMode === "bibliography" ? <CitationLibraryPanel embedded {...citationLibraryProps} /> : null}
+        {!loading && !error && activeMode === "bookmarks" ? <BookmarksPane {...bookmarkProps} /> : null}
       </div>
     </section>
   );

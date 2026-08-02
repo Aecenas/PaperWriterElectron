@@ -1,5 +1,11 @@
 import { useEffect, useRef } from "react";
-import { ArrowRight, Palette, Settings, Sparkles, X } from "lucide-react";
+import {
+  ArrowRight,
+  Palette,
+  Settings,
+  Sparkles,
+  X,
+} from "lucide-react";
 
 const SETTINGS_DESTINATIONS = [
   {

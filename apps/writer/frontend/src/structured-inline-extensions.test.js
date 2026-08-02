@@ -14,6 +14,7 @@ import {
   StructuredInlineBehavior,
   synchronizeStructuredInlineReferences,
 } from "./structured-inline-extensions.js";
+import { createProfessionalContentExtensions } from "./editor/professional-content-extensions.js";
 import { readAppStylesSync } from "./style-test-utils.js";
 
 const IMAGE_ONE = "11111111-1111-4111-8111-111111111111";
@@ -30,10 +31,11 @@ const TestImage = Image.extend({
 function createEditor(content) {
   return new Editor({
     extensions: [
-      StarterKit.configure({ link: false }),
+      StarterKit.configure({ link: false, codeBlock: false }),
       TestImage,
       ...createStructuredInlineExtensions(),
       ...createKnowledgeExtensions(),
+      ...createProfessionalContentExtensions(),
     ],
     content,
   });

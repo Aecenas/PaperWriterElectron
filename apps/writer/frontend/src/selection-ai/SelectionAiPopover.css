@@ -504,7 +504,8 @@
 
 .selection-ai-markdown h1,
 .selection-ai-markdown h2,
-.selection-ai-markdown h3 {
+.selection-ai-markdown h3,
+.selection-ai-markdown h4 {
   margin: 0.75em 0 0.38em;
   color: #4f453d;
   font-family: inherit;
@@ -521,6 +522,10 @@
 
 .selection-ai-markdown h3 {
   font-size: 1.04em;
+}
+
+.selection-ai-markdown h4 {
+  font-size: 1em;
 }
 
 .selection-ai-markdown-list {

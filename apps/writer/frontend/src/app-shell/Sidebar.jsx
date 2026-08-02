@@ -12,7 +12,11 @@ import {
   FolderOpen,
   ListTree,
 } from "lucide-react";
-import { getPaperDerivedState } from "../editor/index.js";
+import {
+  getHeadingNumberingDefaults,
+  getPaperDerivedState,
+  numberOutlineItems,
+} from "../editor/index.js";
 import { HierarchicalTreeRows, TreeItemButton } from "../HierarchicalTree.jsx";
 import { ICON_ASSETS } from "./assets.js";
 import { TreeContextMenu } from "./Menus.jsx";
@@ -136,7 +140,10 @@ export function FolderEntryRows({
 export function LiveOutlineSidebar({ editor, renderStructurePanel, ...props }) {
   const outlineItems = useEditorState({
     editor,
-    selector: ({ editor: activeEditor }) => getPaperDerivedState(activeEditor).outlineItems,
+    selector: ({ editor: activeEditor }) => numberOutlineItems(
+      getPaperDerivedState(activeEditor).outlineItems,
+      getHeadingNumberingDefaults(activeEditor),
+    ),
   }) || [];
   const structurePanel = typeof renderStructurePanel === "function"
     ? renderStructurePanel(outlineItems)
@@ -485,7 +492,7 @@ export function LeftSidebar({
             ) : (
               <div className="folder-empty outline-empty">
                 <ListTree size={28} />
-                <span>当前信笺还没有一、二、三级标题。</span>
+                <span>当前信笺还没有一、二、三、四级标题。</span>
               </div>
             )}
           </div>

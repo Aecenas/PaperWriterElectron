@@ -9,6 +9,7 @@ export const PROTECTED_INLINE_NODE_TYPES = Object.freeze([
   "paperInternalLink",
   "paperFootnoteReference",
   "paperCitationReference",
+  "paperBookmark",
 ]);
 
 const PROTECTED_INLINE_NODE_TYPE_SET = new Set(PROTECTED_INLINE_NODE_TYPES);

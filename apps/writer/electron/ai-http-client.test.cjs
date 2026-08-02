@@ -337,7 +337,7 @@ test("stream completion emits no chunks after a pending read is canceled", async
   assert.equal(released, true);
 });
 
-test("redacts API keys from malformed SSE parse diagnostics", async () => {
+test("does not log malformed SSE payload text", async () => {
   const apiKey = "sk-live-secret";
   const harness = createHttpRuntimeHarness({
     contentType: "text/event-stream",
@@ -361,7 +361,8 @@ test("redacts API keys from malformed SSE parse diagnostics", async () => {
   assert.equal(result, null);
   assert.equal(harness.logs.length, 1);
   assert.equal(harness.logs[0][0], "ai:stream:parse-error");
-  assert.equal(harness.logs[0][1].data, "[REDACTED]");
+  assert.equal(harness.logs[0][1].dataCharacters, apiKey.length);
+  assert.equal("data" in harness.logs[0][1], false);
   assertSecretAbsent({
     events: harness.events,
     logs: harness.logs,

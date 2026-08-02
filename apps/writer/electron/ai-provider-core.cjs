@@ -303,11 +303,23 @@ function normalizeAiConfig(config = {}) {
   const applyResolver = normalizeAiTaskModelAssignment(
     source.taskModels?.applyResolver,
   );
+  const compositionAssignments = [
+    source.taskModels?.composeDraft,
+    source.taskModels?.composeOutline,
+    source.taskModels?.composeReview,
+  ].map((assignment) => normalizeAiTaskModelAssignment(assignment));
+  const composeDraft = compositionAssignments.find(
+    (assignment) => assignment.providerId && assignment.modelId,
+  ) || compositionAssignments[0];
   return {
     activeProvider,
     activeModelId,
     providers,
-    taskModels: { selectionChat, applyResolver },
+    taskModels: {
+      selectionChat,
+      applyResolver,
+      composeDraft,
+    },
   };
 }
 

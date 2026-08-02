@@ -4,15 +4,18 @@ import test from "node:test";
 import { readAppStylesSync } from "./style-test-utils.js";
 
 const source = fs.readFileSync(new URL("./GroupTabStrip.jsx", import.meta.url), "utf8");
+const contextMenuSource = fs.readFileSync(new URL("./DocumentContextMenu.jsx", import.meta.url), "utf8");
 const styles = readAppStylesSync();
 const topNav = fs.readFileSync(new URL("./app-shell/TopNav.jsx", import.meta.url), "utf8");
 
-test("top navigation puts exporting the letter before importing a document", () => {
-  assert.match(topNav, /<MenuButton\s+icon=\{Download\}\s+label="导出"/);
+test("top navigation groups export, import, and migration under an undivided interchange menu", () => {
+  assert.match(topNav, /<MenuButton\s+icon=\{Download\}\s+label="出入"/);
   assert.doesNotMatch(topNav, /<MenuButton icon=\{ArrowUpDown\} label="交换"/);
   assert.match(topNav, /label="导入文档"/);
   assert.match(topNav, /label="导出信笺"/);
   assert.ok(topNav.indexOf('label="导出信笺"') < topNav.indexOf('label="导入文档"'));
+  const interchangeMenu = topNav.match(/<MenuButton\s+icon=\{Download\}\s+label="出入"[\s\S]*?<\/MenuButton>/)?.[0] || "";
+  assert.doesNotMatch(interchangeMenu, /<MenuDivider\s*\/>/);
 });
 
 test("group tab strip supports scrolling, mixed research tabs and document moves", () => {
@@ -29,14 +32,15 @@ test("group tab strip supports scrolling, mixed research tabs and document moves
 
 test("group tab strip blocks unsupported moves without hiding the action", () => {
   assert.match(source, /canMoveDocument/);
-  assert.match(source, /左侧编辑组至少需要保留一个信笺/);
-  assert.match(source, /disabled=\{!moveAllowed\}/);
+  assert.match(source, /moveAllowed=\{moveAllowed\}/);
+  assert.match(contextMenuSource, /disabled=\{!moveAllowed\}/);
+  assert.match(contextMenuSource, /当前页面视图不支持开启右侧编辑组/);
 });
 
 test("group tab strip opens a separate template picker from the context menu", () => {
   assert.match(source, /onOpenTemplatePicker/);
-  assert.match(source, /<LayoutTemplate size=\{15\}/);
-  assert.match(source, /<span>修改模板<\/span>/);
+  assert.match(contextMenuSource, /<LayoutTemplate size=\{16\}/);
+  assert.match(contextMenuSource, /<span>修改模板<\/span>/);
   assert.match(
     source,
     /onOpenTemplatePicker\?\.\(contextView, returnFocusElement\);/,
@@ -46,9 +50,31 @@ test("group tab strip opens a separate template picker from the context menu", (
   assert.doesNotMatch(source, /role="menuitemradio"|group-tab-template-/);
 });
 
-test("group tab context menu stays keyboard-visible without embedded template-list styles", () => {
-  assert.match(source, /GROUP_TAB_MENU_WIDTH\s*=\s*160/);
-  assert.match(styles, /\.group-tab-menu\s*\{[^}]*width:\s*min\(160px/s);
-  assert.match(styles, /\.group-tab-menu button:focus-visible\s*\{[^}]*outline:/s);
+test("document context menu stays keyboard-visible and shares page-view controls", () => {
+  assert.match(contextMenuSource, /MENU_WIDTH\s*=\s*184/);
+  assert.match(contextMenuSource, /className={`document-context-view-submenu/);
+  assert.match(contextMenuSource, /aria-haspopup="menu"/);
+  assert.match(contextMenuSource, /role="menuitemradio"/);
+  assert.match(contextMenuSource, /onClick=\{\(\) => openPageViewMenu\(false\)\}/);
+  assert.doesNotMatch(contextMenuSource, /onPointerLeave=\{\(\) => setPageViewOpen\(false\)\}/);
+  assert.match(contextMenuSource, /onDismissRef\.current\?\.\(\)/);
+  assert.match(contextMenuSource, /\}, \[menu\]\);/);
+  assert.match(contextMenuSource, /版本历史/);
+  assert.match(styles, /\.document-context-menu\s*\{[^}]*width:\s*184px/s);
+  assert.match(styles, /\.document-context-view-submenu\s*\{[^}]*width:\s*196px/s);
+  assert.match(styles, /\.document-context-view-submenu::before\s*\{[^}]*left:\s*-7px[^}]*width:\s*7px/s);
+  assert.match(styles, /\.document-context-view-submenu\.opens-left::before\s*\{[^}]*right:\s*-7px[^}]*left:\s*auto/s);
+  assert.match(styles, /\.document-context-menu > button:focus-visible[\s\S]*?box-shadow:/s);
   assert.doesNotMatch(styles, /\.group-tab-template-|--group-tab-template-swatch/);
+});
+
+test("tab history remembers the invoking tab for modal focus return", () => {
+  assert.match(
+    source,
+    /onOpenHistory\?\.\(contextView\.tabId, returnFocusElement\);/,
+  );
+  assert.match(
+    source,
+    /onOpenHistory=\{contextView\.kind === "document"[\s\S]*data-view-id=.*CSS\.escape\(contextView\.viewId\)/,
+  );
 });

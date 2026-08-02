@@ -99,7 +99,7 @@ export function extractAiBodyContent(editor, { includeFinalizedBoundary = true, 
   const rootBlocks = json?.content || [];
   const lines = [];
   const assets = { images: {}, quotes: [] };
-  let imageIndex = 0;
+  let figureIndex = 0;
   let skipNextTocList = false;
   let finalizedBoundaryIndex = -1;
 
@@ -149,7 +149,7 @@ export function extractAiBodyContent(editor, { includeFinalizedBoundary = true, 
         skipNextTocList = true;
         return;
       }
-      const level = Math.max(1, Math.min(3, Number(node.attrs?.level) || 1));
+      const level = Math.max(1, Math.min(4, Number(node.attrs?.level) || 1));
       pushLine(`${"#".repeat(level)} ${text}`);
       return;
     }
@@ -170,18 +170,25 @@ export function extractAiBodyContent(editor, { includeFinalizedBoundary = true, 
     }
 
     if (node.type === "image") {
-      imageIndex += 1;
+      figureIndex += 1;
       const caption = includeImageCaptions
         ? normalizeImageCaption(node.attrs?.caption || normalizeImageText(node.attrs?.alt) || "图片").trim()
         : "图片";
-      assets.images[imageIndex] = {
-        number: imageIndex,
+      assets.images[figureIndex] = {
+        number: figureIndex,
         caption,
         src: normalizeImageSource(node.attrs?.src),
         alt: normalizeImageText(node.attrs?.alt || caption),
         width: normalizeEmbedWidth(node.attrs?.width),
       };
-      pushLine(includeImageCaptions ? `[图${imageIndex}.${caption}]` : "[图片]");
+      pushLine(includeImageCaptions ? `[图${figureIndex}.${caption}]` : "[图片]");
+      return;
+    }
+
+    if (node.type === "paperMermaid") {
+      figureIndex += 1;
+      const caption = normalizeImageCaption(node.attrs?.caption || "Mermaid 图").trim() || "Mermaid 图";
+      pushLine(includeImageCaptions ? `[图${figureIndex}.${caption}]` : "[Mermaid 图]");
       return;
     }
 
@@ -267,7 +274,7 @@ export function buildAiChatContextInput(editor, document, presentation = DEFAULT
   const normalizedPresentation = normalizeTemplatePresentation(presentation);
   const { body, assets } = extractAiBodyContent(editor, {
     includeFinalizedBoundary: false,
-    includeImageCaptions: true,
+    includeImageCaptions: normalizedPresentation.showImageCaptions,
   });
   const title = (document?.title || "未命名信笺").trim();
   const author = (document?.author || "").trim();

@@ -54,6 +54,39 @@ test("one AI runtime owns config, HTTP, generation, and shutdown state while mai
   assert.match(aiRuntime, /createAiHttpRuntime\(\{/);
   assert.match(aiRuntime, /createAiConfigRuntime\(\{/);
   assert.match(aiRuntime, /createAiGenerationRuntime\(\{/);
+  assert.match(aiRuntime, /async function getCompositionModelAssignments\(\)/);
+  assert.match(aiRuntime, /const compositionModelTaskKey = "composeDraft"/);
+  assert.match(
+    aiRuntime,
+    /storedConfig\.taskModels\?\.\[compositionModelTaskKey\][\s\S]*Object\.fromEntries\(\[\.\.\.compositionTaskKeys\]/,
+  );
+  assert.match(
+    aiRuntime,
+    /modelAssignment[\s\S]*requestedAssignment[\s\S]*taskAiProviderConfig\(storedConfig, assignment\)/,
+  );
+  assert.match(main, /resolveModelAssignments:\s*aiRuntime\.getCompositionModelAssignments/);
+  assert.match(
+    main,
+    /convertedMarkdown\s*=\s*markdownToHtml\(withCitationLinks\)[\s\S]*sanitizeImportedHtml\(\s*generatedHtml[\s\S]*html:\s*sanitizedGenerated\.html/,
+  );
+  assert.match(main, /job\?\.generatedTitle \|\| job\?\.outline\?\.\[0\]\?\.title \|\| job\?\.brief\?\.topic/);
+  assert.match(main, /generatedHtml\.includes\("\[object Object\]"\)/);
+  assert.match(
+    main,
+    /await onIntent\(\{[\s\S]*documentId:\s*document\.documentId[\s\S]*storageFacade\.savePaperDocument/,
+  );
+  assert.match(
+    main,
+    /reconcileOutputIntent:\s*reconcileCompositionOutputIntent/,
+  );
+  assert.match(
+    main,
+    /loadPaperDocument\(targetPath\)[\s\S]*state:\s*"committed"/,
+  );
+  assert.match(
+    main,
+    /await initializeFilesystemAccess\(\);\s*await compositionRuntime\.initialize\(\)/,
+  );
   assert.match(configRuntime, /let aiConfigMutationTail = Promise\.resolve\(\)/);
   assert.match(configRuntime, /let codexRuntimeStatus = \{/);
   assert.match(

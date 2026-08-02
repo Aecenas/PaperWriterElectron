@@ -1,6 +1,7 @@
 export function getAiModeLabel(mode) {
   if (mode === "optimize") return "AI优化";
   if (mode === "chat") return "AI问答";
+  if (mode === "compose") return "AI起稿";
   return "未启用";
 }
 

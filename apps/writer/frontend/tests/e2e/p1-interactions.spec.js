@@ -26,7 +26,7 @@ test.describe("P1 interaction regressions", () => {
     await reader.getByRole("button", { name: "展开资料搜索", exact: true }).click();
     await reader.getByRole("textbox", { name: "搜索资料内容", exact: true }).fill("DOCX");
     await expect(reader.locator("mark")).toHaveCount(3);
-    await expect(page.getByRole("button", { name: "查看版本 1.0.0 的更新历史", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看版本 1.1.0 的更新历史", exact: true })).toBeVisible();
 
     expect(pageErrors).toEqual([]);
   });
@@ -37,7 +37,7 @@ test.describe("P1 interaction regressions", () => {
     const primaryGroup = page.locator('[data-group-id="primary"]');
     await expect(primaryGroup.getByRole("tab")).toHaveCount(1);
 
-    const exportTrigger = page.getByRole("button", { name: "导出", exact: true });
+    const exportTrigger = page.getByRole("button", { name: "出入", exact: true });
     await exportTrigger.click();
     await page.getByRole("menuitem", { name: /导出信笺/ }).click();
     const dialog = page.getByRole("dialog", { name: "导出" });
@@ -81,7 +81,7 @@ test.describe("P1 interaction regressions", () => {
     await secondaryGroup.getByRole("tab").click();
     await expect(page.locator(".right-split-canvas.active-pane .paper-title-input")).toHaveValue("右侧导出目标");
 
-    await page.getByRole("button", { name: "导出", exact: true }).click();
+    await page.getByRole("button", { name: "出入", exact: true }).click();
     await page.getByRole("menuitem", { name: /导出信笺/ }).click();
     const dialog = page.getByRole("dialog", { name: "导出" });
     await dialog.getByRole("radio", { name: /Markdown/ }).check();
@@ -153,7 +153,7 @@ test.describe("P1 interaction regressions", () => {
     });
     const pageErrors = await openPaperWriter(page);
 
-    await page.getByRole("button", { name: "导出", exact: true }).click();
+    await page.getByRole("button", { name: "出入", exact: true }).click();
     await page.getByRole("menuitem", { name: /导出信笺/ }).click();
     const dialog = page.getByRole("dialog", { name: "导出" });
     await dialog.getByRole("radio", { name: /Markdown/ }).check();
@@ -271,10 +271,14 @@ test.describe("P1 interaction regressions", () => {
     await expect(page.getByRole("menu")).toHaveCount(0);
 
     await page.getByRole("tab", { name: "结构", exact: true }).click();
-    await page.getByRole("tab", { name: "注引", exact: true }).click();
-    await expect(page.getByRole("button", { name: "新增参考文献来源" })).toHaveCount(0);
+    await page.getByRole("tab", { name: "脚注", exact: true }).click();
     await expect(page.getByRole("button", { name: /编辑脚注/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /删除脚注/ })).toHaveCount(0);
+    await page.getByRole("tab", { name: "文献", exact: true }).click();
+    await page.getByRole("button", { name: "管理文献库", exact: true }).click();
+    const citationManager = page.getByRole("dialog", { name: "文献库管理" });
+    await expect(citationManager.getByRole("button", { name: "新增文献", exact: true })).toBeDisabled();
+    await expect(citationManager.getByRole("button", { name: "导入 BibTeX", exact: true })).toBeDisabled();
 
     expect(pageErrors).toEqual([]);
   });

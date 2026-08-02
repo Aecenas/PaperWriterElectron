@@ -62,7 +62,7 @@ export function computePaperDerivedState(doc) {
     if (type === "heading") {
       const level = Number(node.attrs?.level) || 1;
       const text = node.textContent?.trim();
-      if (level >= 1 && level <= 3 && text) {
+      if (level >= 1 && level <= 4 && text) {
         headingItems.push({
           id: `heading-${pos}-${level}`,
           level,
@@ -70,7 +70,14 @@ export function computePaperDerivedState(doc) {
           pos,
           numberingMode: ["inherit", "on", "off"].includes(node.attrs?.numberingMode) ? node.attrs.numberingMode : "inherit",
         });
-        outlineItems.push({ id: `${pos}-${level}-${text}`, type: "heading", level, text, pos });
+        outlineItems.push({
+          id: `${pos}-${level}-${text}`,
+          type: "heading",
+          level,
+          text,
+          pos,
+          numberingMode: ["inherit", "on", "off"].includes(node.attrs?.numberingMode) ? node.attrs.numberingMode : "inherit",
+        });
       }
     }
     return true;

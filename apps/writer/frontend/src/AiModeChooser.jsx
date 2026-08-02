@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LogOut, Settings } from "lucide-react";
+import aiComposeIdle from "./assets/ai-modes/ai-compose-card-idle-v3.png";
+import aiComposeSelected from "./assets/ai-modes/ai-compose-card-selected-v3.png";
 import aiChatIdle from "./assets/ai-modes/ai-chat-card-idle-v3.png";
 import aiChatSelected from "./assets/ai-modes/ai-chat-card-selected-v3.png";
 import aiOptimizeIdle from "./assets/ai-modes/ai-optimize-card-idle-v3.png";
@@ -22,6 +24,13 @@ const MODE_OPTIONS = [
     idleImage: aiChatIdle,
     selectedImage: aiChatSelected,
   },
+  {
+    id: "compose",
+    label: "AI起稿",
+    description: "从简报和大纲生成完整文章",
+    idleImage: aiComposeIdle,
+    selectedImage: aiComposeSelected,
+  },
 ];
 
 function focusableElements(container) {
@@ -36,6 +45,7 @@ export default function AiModeChooser({
   anchorRef,
   activeMode = "none",
   configured = false,
+  compositionAvailable = true,
   onSelectMode,
   onExitMode,
   onOpenSettings,
@@ -171,6 +181,7 @@ export default function AiModeChooser({
           {MODE_OPTIONS.map((mode, index) => {
             const active = activeMode === mode.id;
             const visuallyActive = configured && (previewMode === mode.id || committingMode === mode.id);
+            const disabled = !configured || (mode.id === "compose" && !compositionAvailable);
             return (
               <button
                 key={mode.id}
@@ -184,7 +195,7 @@ export default function AiModeChooser({
                   committingMode === mode.id ? "is-committing" : "",
                 ].filter(Boolean).join(" ")}
                 data-mode={mode.id}
-                disabled={!configured}
+                disabled={disabled}
                 aria-pressed={active}
                 aria-label={`${mode.label}${active ? "，当前正在使用" : ""}，${mode.description}`}
                 onPointerEnter={() => setPreviewMode(mode.id)}
@@ -199,6 +210,7 @@ export default function AiModeChooser({
                 <span className="ai-mode-card-art" aria-hidden="true">
                   <img className="ai-mode-card-image idle" src={mode.idleImage} alt="" draggable="false" />
                   <img className="ai-mode-card-image selected" src={mode.selectedImage} alt="" draggable="false" />
+                  {mode.id === "compose" ? <span className="ai-mode-card-mark" /> : null}
                 </span>
                 <span className="ai-mode-card-copy" aria-hidden="true">
                   <strong className="ai-mode-card-title">{mode.label}</strong>

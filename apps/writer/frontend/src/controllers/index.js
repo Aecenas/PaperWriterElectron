@@ -103,6 +103,7 @@ export {
 export {
   useCitationActions,
   useFootnoteActions,
+  usePublicCitationLibrary,
   useWorkspaceCitationLibrary,
   useWorkspaceCitationLibraryLifecycle,
 } from "./knowledge-reference-actions.js";

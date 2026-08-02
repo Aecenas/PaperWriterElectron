@@ -311,6 +311,11 @@
   .research-search-progress-copy{grid-column:1/-1;grid-row:2}
 }
 
+.paper-citation-reference[data-citation-kind="author-date"]::before,
+.paper-citation-reference[data-citation-kind="author-date"]::after {
+  content: "";
+}
+
 .statusbar-save.external{color:#a15a43}.statusbar-save.external::before{background:#c97854}
 
 /* 0.9.6 left navigation: 文件 / 资料 / 结构。 */

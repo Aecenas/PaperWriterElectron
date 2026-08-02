@@ -1,0 +1,1019 @@
+.writing-assistance-pane {
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 0 6px 12px;
+  color: #3f3731;
+}
+
+.writing-assistance-pane > header,
+.writing-assistance-settings > header,
+.writing-assistance-rules-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.writing-assistance-pane > header {
+  min-height: 39px;
+  align-items: center;
+  padding: 4px 3px 4px 0;
+}
+
+.writing-assistance-rules-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.writing-assistance-pane-title {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 7px;
+  color: #4a443b;
+}
+
+.writing-assistance-pane-title svg {
+  flex: none;
+  color: rgba(116, 78, 57, 0.78);
+}
+
+.writing-assistance-pane-title strong {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.writing-assistance-pane small,
+.writing-assistance-settings small,
+.writing-assistance-settings p {
+  color: #7b7068;
+  font-size: 12px;
+}
+
+.writing-assistance-scanning {
+  color: #8d624a;
+  font-size: 9.5px;
+}
+
+.writing-assistance-pane-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.writing-assistance-pane-count {
+  min-width: 20px;
+  color: var(--muted, #827d74);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.writing-assistance-pane-description {
+  margin: -1px 0 8px;
+  padding: 0 9px;
+  color: var(--muted, #827d74);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.writing-assistance-settings-button {
+  width: 29px;
+  height: 29px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: rgba(91, 73, 60, 0.7);
+  background: transparent;
+}
+
+.writing-assistance-settings-button:hover,
+.writing-assistance-settings-button:focus-visible {
+  border-color: rgba(168, 101, 63, 0.2);
+  color: #9a5635;
+  background: rgba(244, 238, 228, 0.76);
+  outline: none;
+}
+
+.writing-assistance-settings-button:focus-visible {
+  box-shadow: 0 0 0 2px rgba(184, 97, 54, 0.28);
+}
+
+.writing-assistance-list {
+  display: grid;
+  gap: 4px;
+  padding: 2px;
+}
+
+.writing-assistance-card {
+  min-width: 0;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid rgba(101, 89, 72, 0.1);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.writing-assistance-card:hover,
+.writing-assistance-card:focus-within {
+  border-color: rgba(154, 86, 53, 0.2);
+  background: rgba(255, 250, 242, 0.82);
+}
+
+.writing-assistance-card-main {
+  min-width: 0;
+  min-height: 46px;
+  flex: 1;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px 7px 10px;
+  color: #4c453d;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+}
+
+/* Keep the suggestion copy subordinate to its type label inside Structure. */
+.writing-assistance-card .writing-assistance-card-main {
+  font-size: 10px;
+}
+
+.writing-assistance-card-kind {
+  min-width: 31px;
+  flex: none;
+  border-right: 1px solid rgba(133, 100, 77, 0.22);
+  padding-right: 7px;
+  color: #9a5635;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.4;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.writing-assistance-card-kind.is-wording {
+  color: #6b6953;
+}
+
+.writing-assistance-card-change {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.writing-assistance-card-change del,
+.writing-assistance-card-change ins {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writing-assistance-card-change del {
+  color: #a44f43;
+}
+
+.writing-assistance-card-change svg {
+  flex: none;
+  color: #9c7b67;
+}
+
+.writing-assistance-card-change ins {
+  color: #467249;
+  text-decoration: none;
+  font-weight: 680;
+}
+
+.writing-assistance-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-right: 3px;
+}
+
+.writing-assistance-actions button,
+.writing-assistance-rules-heading button {
+  min-height: 29px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #ded2c5;
+  border-radius: 8px;
+  color: #5f5045;
+  background: #fffdf9;
+  font: inherit;
+  font-size: 12px;
+}
+
+.writing-assistance-actions button:hover,
+.writing-assistance-actions button:focus-visible,
+.writing-assistance-rules-heading button:hover,
+.writing-assistance-rules-heading button:focus-visible {
+  border-color: #ba9277;
+  background: #f7eee5;
+}
+
+.writing-assistance-actions button {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  flex: none;
+  justify-content: center;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 6px;
+  color: rgba(91, 73, 60, 0.72);
+  background: transparent;
+}
+
+.writing-assistance-actions button svg {
+  flex: none;
+}
+
+.writing-assistance-actions button:hover,
+.writing-assistance-actions button:focus-visible {
+  border-color: rgba(154, 86, 53, 0.16);
+  outline: none;
+  color: #9a5635;
+  background: rgba(255, 245, 234, 0.9);
+}
+
+.writing-assistance-compact-empty {
+  margin: 0;
+  padding: 22px 8px;
+  color: var(--muted, #827d74);
+  font-size: 10px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.writing-assistance-settings {
+  display: grid;
+  gap: 12px;
+  color: #49392f;
+}
+
+.writing-assistance-settings h3,
+.writing-assistance-settings p {
+  margin: 0;
+}
+
+.writing-assistance-settings .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.writing-assistance-overview {
+  min-height: 84px;
+  box-sizing: border-box;
+  border: 1px solid rgba(173, 104, 65, 0.17);
+  border-radius: 13px;
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center !important;
+  gap: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(255, 248, 238, 0.96), rgba(252, 240, 225, 0.82));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.writing-assistance-overview-icon,
+.writing-assistance-section-heading > span {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: #a75d3a;
+  background: #fff8ee;
+  border: 1px solid rgba(178, 103, 62, 0.19);
+}
+
+.writing-assistance-overview-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  box-shadow: 0 6px 16px rgba(128, 75, 42, 0.07);
+}
+
+.writing-assistance-overview-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.writing-assistance-overview-copy h3 {
+  color: #33281f;
+  font-size: 14.5px;
+  font-weight: 780;
+  letter-spacing: 0.01em;
+}
+
+.writing-assistance-overview-copy p {
+  color: #817267;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.writing-assistance-overview-controls,
+.writing-assistance-switch-wrap,
+.writing-assistance-inline-language,
+.writing-assistance-inline-language > span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.writing-assistance-overview-controls {
+  gap: 11px;
+}
+
+.writing-assistance-inline-language {
+  gap: 8px;
+}
+
+.writing-assistance-inline-language > span {
+  gap: 4px;
+  color: #79685b;
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.writing-assistance-inline-language > span svg {
+  color: #a76543;
+}
+
+.writing-assistance-overview-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(140, 97, 68, 0.15);
+}
+
+.writing-assistance-switch-wrap {
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.writing-assistance-switch-wrap > span {
+  color: #79685b;
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.writing-assistance-switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex: none;
+  border: 1px solid rgba(107, 91, 79, 0.18);
+  border-radius: 999px;
+  padding: 0;
+  background: #d9d0c6;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.writing-assistance-switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fffdf8;
+  box-shadow: 0 2px 6px rgba(67, 47, 34, 0.22);
+  transition: transform 160ms ease;
+}
+
+.writing-assistance-switch.checked {
+  border-color: #b6653e;
+  background: #bd6a43;
+}
+
+.writing-assistance-switch.checked i {
+  transform: translateX(18px);
+}
+
+.writing-assistance-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(190, 105, 65, 0.2);
+}
+
+.writing-assistance-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.writing-assistance-section {
+  border: 1px solid rgba(150, 105, 76, 0.17);
+  border-radius: 13px;
+  padding: 13px;
+  background: rgba(255, 251, 245, 0.88);
+  box-shadow: 0 7px 20px rgba(82, 58, 38, 0.035), inset 0 1px 0 rgba(255, 255, 255, 0.68);
+}
+
+.writing-assistance-section-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.writing-assistance-section-heading > span {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
+.writing-assistance-section-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.writing-assistance-section-heading strong {
+  color: #45352a;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.writing-assistance-section-heading small {
+  color: #8c7c70;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.writing-assistance-language-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 172px;
+  gap: 2px;
+  border: 1px solid rgba(153, 104, 74, 0.18);
+  border-radius: 11px;
+  padding: 2px;
+  background: rgba(238, 225, 211, 0.66);
+}
+
+.writing-assistance-language-options button {
+  min-width: 0;
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0 8px;
+  color: #856f60;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 680;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.writing-assistance-language-options button:hover:not(:disabled) {
+  color: #70442f;
+  background: rgba(255, 250, 242, 0.64);
+}
+
+.writing-assistance-language-options button.selected {
+  border-color: rgba(169, 91, 52, 0.2);
+  color: #9b4f30;
+  background: #fffaf2;
+  box-shadow: 0 3px 9px rgba(91, 57, 34, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.writing-assistance-language-options button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(187, 102, 61, 0.16);
+}
+
+.writing-assistance-language-options button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.writing-assistance-whitelist-section {
+  display: grid;
+  gap: 9px;
+}
+
+.writing-assistance-whitelist {
+  min-height: 50px;
+  box-sizing: border-box;
+  border: 1px solid rgba(149, 103, 74, 0.16);
+  border-radius: 10px;
+  display: flex;
+  align-content: flex-start;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 8px;
+  background: rgba(255, 254, 251, 0.94);
+}
+
+.writing-assistance-whitelist-item {
+  min-height: 30px;
+  max-width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(160, 103, 67, 0.18);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 10px;
+  color: #5a4639;
+  background: #fff8ef;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.writing-assistance-whitelist-item > span {
+  max-width: min(220px, 46vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writing-assistance-whitelist-item > button {
+  width: 23px;
+  height: 23px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #9a6750;
+  background: transparent;
+}
+
+.writing-assistance-whitelist-item > button:hover,
+.writing-assistance-whitelist-item > button:focus-visible {
+  border-color: rgba(163, 94, 56, 0.14);
+  outline: none;
+  color: #a44f42;
+  background: #ffefe3;
+}
+
+.writing-assistance-whitelist-item > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.writing-assistance-whitelist-empty {
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  color: #8c7e73 !important;
+  font-size: 11px !important;
+}
+
+.writing-assistance-whitelist-note {
+  color: #89796d;
+  font-size: 10.5px !important;
+  line-height: 1.45;
+}
+
+.writing-assistance-field {
+  display: grid;
+  gap: 5px;
+}
+
+.writing-assistance-field select,
+.writing-assistance-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(145, 105, 79, 0.23);
+  border-radius: 9px;
+  color: #4d3c31;
+  background: rgba(255, 254, 251, 0.98);
+  font: inherit;
+  font-size: 12.5px;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+
+.writing-assistance-field select {
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+.writing-assistance-field textarea {
+  min-height: 88px;
+  padding: 9px 10px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.writing-assistance-field select:focus,
+.writing-assistance-field textarea:focus {
+  border-color: rgba(180, 94, 52, 0.62);
+  outline: none;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(187, 102, 61, 0.12);
+}
+
+.writing-assistance-field select:disabled,
+.writing-assistance-field textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  background: rgba(241, 236, 229, 0.72);
+}
+
+.writing-assistance-terminology-section {
+  display: grid;
+  gap: 11px;
+}
+
+.writing-assistance-rules-heading {
+  align-items: center;
+}
+
+.writing-assistance-rules-heading > .writing-assistance-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.writing-assistance-optional {
+  display: inline-flex;
+  align-items: center;
+  min-height: 17px;
+  border: 1px solid rgba(165, 101, 63, 0.16);
+  border-radius: 999px;
+  margin-left: 4px;
+  padding: 0 6px;
+  color: #9a6f56;
+  background: #fff7ed;
+  font-size: 9.5px;
+  font-weight: 650;
+  vertical-align: 1px;
+}
+
+.writing-assistance-rules-heading > button {
+  min-height: 32px;
+  border-color: rgba(172, 106, 66, 0.19);
+  color: #80523b;
+  background: #fff9f1;
+  font-size: 11.5px;
+  font-weight: 670;
+}
+
+.writing-assistance-rules-heading > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.writing-assistance-rule-list {
+  display: grid;
+  gap: 8px;
+}
+
+.writing-assistance-rule {
+  min-height: 48px;
+  box-sizing: border-box;
+  padding: 7px 8px 7px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(149, 103, 74, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 254, 251, 0.94);
+}
+
+.writing-assistance-rule.is-disabled {
+  background: rgba(246, 241, 234, 0.78);
+}
+
+.writing-assistance-rule-map {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #514137;
+}
+
+.writing-assistance-rule-map > span {
+  max-width: min(260px, 32vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 660;
+}
+
+.writing-assistance-rule-map > svg {
+  flex: none;
+  color: #9f7961;
+}
+
+.writing-assistance-rule-map > small {
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #88796d;
+  background: #eee7df;
+  font-size: 9.5px;
+}
+
+.writing-assistance-rule-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.writing-assistance-rule-actions button {
+  width: 31px;
+  height: 31px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #806958;
+  background: transparent;
+}
+
+.writing-assistance-rule-actions button:last-child {
+  color: #a44f42;
+}
+
+.writing-assistance-rule-actions button:hover,
+.writing-assistance-rule-actions button:focus-visible {
+  border-color: rgba(163, 94, 56, 0.15);
+  outline: none;
+  background: #fff5e9;
+}
+
+.writing-assistance-rule-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.writing-assistance-no-rules {
+  min-height: 86px;
+  box-sizing: border-box;
+  padding: 20px;
+  border: 1px dashed rgba(153, 111, 83, 0.26);
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: #8c7e73 !important;
+  text-align: center;
+  line-height: 1.55;
+}
+
+.writing-assistance-rule-editor-layer {
+  position: fixed;
+  inset: var(--desktop-titlebar-height, 40px) 0 0;
+  z-index: 92;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(63, 46, 34, 0.27);
+}
+
+.writing-assistance-rule-editor-dialog {
+  width: min(480px, calc(100vw - 40px));
+  max-height: calc(100dvh - var(--desktop-titlebar-height, 40px) - 48px);
+  border: 1px solid rgba(154, 96, 59, 0.2);
+  border-radius: 15px;
+  overflow: hidden;
+  color: #49392f;
+  background: #fffaf3;
+  box-shadow: 0 24px 70px rgba(60, 42, 29, 0.27), 0 2px 8px rgba(60, 42, 29, 0.08);
+}
+
+.writing-assistance-rule-editor-dialog > form {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.writing-assistance-rule-editor-dialog > form > header,
+.writing-assistance-rule-editor-dialog > form > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.writing-assistance-rule-editor-dialog > form > header {
+  min-height: 64px;
+  border-bottom: 1px solid rgba(138, 93, 63, 0.12);
+  padding: 0 16px 0 18px;
+}
+
+.writing-assistance-rule-editor-dialog h3,
+.writing-assistance-rule-editor-dialog p {
+  margin: 0;
+}
+
+.writing-assistance-rule-editor-dialog h3 {
+  color: #33271f;
+  font-size: 16px;
+  font-weight: 780;
+}
+
+.writing-assistance-rule-editor-dialog header p {
+  margin-top: 3px;
+  color: #8a796d;
+  font-size: 10.5px;
+}
+
+.writing-assistance-rule-editor-dialog header > button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #756355;
+  background: transparent;
+}
+
+.writing-assistance-rule-editor-dialog header > button:hover,
+.writing-assistance-rule-editor-dialog header > button:focus-visible {
+  border-color: rgba(162, 91, 53, 0.18);
+  outline: none;
+  background: #fff3e7;
+}
+
+.writing-assistance-rule-editor-body {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+  padding: 17px 18px 18px;
+  background: #fffdf9;
+}
+
+.writing-assistance-rule-editor-map {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.writing-assistance-rule-editor-map > svg {
+  height: 38px;
+  align-self: end;
+  color: #9d745c;
+}
+
+.writing-assistance-rule-editor-map label,
+.writing-assistance-rule-editor-description,
+.writing-assistance-whitelist-editor-field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: #6e5b4e;
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.writing-assistance-rule-editor-description span small {
+  color: #9a8a7f;
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+.writing-assistance-rule-editor-dialog input[type="text"],
+.writing-assistance-rule-editor-dialog label > input:not([type]) {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid rgba(145, 105, 79, 0.24);
+  border-radius: 9px;
+  padding: 0 10px;
+  color: #4d3c31;
+  background: #fff;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.writing-assistance-rule-editor-dialog label > input:not([type]):focus {
+  border-color: rgba(180, 94, 52, 0.62);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(187, 102, 61, 0.12);
+}
+
+.writing-assistance-whitelist-editor-dialog {
+  width: min(400px, calc(100vw - 40px));
+}
+
+.writing-assistance-whitelist-editor-dialog .writing-assistance-rule-editor-body {
+  gap: 7px;
+}
+
+.writing-assistance-rule-editor-dialog fieldset {
+  margin: 0;
+  border: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0;
+}
+
+.writing-assistance-rule-editor-dialog legend {
+  width: 100%;
+  margin-bottom: 6px;
+  color: #6e5b4e;
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.writing-assistance-rule-editor-dialog fieldset label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #75655a;
+  font-size: 10.5px;
+}
+
+.writing-assistance-rule-editor-dialog input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #b9643d;
+}
+
+.writing-assistance-rule-editor-error {
+  color: #a54f43 !important;
+  font-size: 10.5px;
+}
+
+.writing-assistance-rule-editor-dialog > form > footer {
+  min-height: 58px;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(138, 93, 63, 0.12);
+  padding: 0 16px;
+  background: #fbf3e9;
+}
+
+.writing-assistance-rule-editor-dialog footer button {
+  min-width: 82px;
+  min-height: 36px;
+  border: 1px solid rgba(154, 86, 53, 0.17);
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 13px;
+  color: #6c5545;
+  background: #fffaf4;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.writing-assistance-rule-editor-dialog footer button.primary {
+  border-color: rgba(177, 91, 48, 0.18);
+  color: #fffaf4;
+  background: linear-gradient(180deg, #d68151, #bd653d);
+  box-shadow: 0 8px 18px rgba(183, 96, 52, 0.18);
+}
+
+.writing-assistance-rule-editor-dialog footer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+@media (max-width: 560px) {
+  .writing-assistance-overview {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .writing-assistance-overview-controls {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .writing-assistance-rule-editor-map {
+    grid-template-columns: 1fr;
+  }
+
+  .writing-assistance-rule-editor-map > svg {
+    display: none;
+  }
+}

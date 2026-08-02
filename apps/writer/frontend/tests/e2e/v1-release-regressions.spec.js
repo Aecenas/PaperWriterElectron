@@ -394,9 +394,10 @@ test.describe("1.0.0 release regressions", () => {
 
     const taskList = aiSettings.getByRole("region", { name: "任务模型列表" });
     const taskHeaders = taskList.locator(".ai-task-model-summary");
-    await expect(taskHeaders).toHaveCount(2);
-    await expect(taskHeaders.nth(0)).toHaveAttribute("aria-expanded", "false");
-    await expect(taskHeaders.nth(1)).toHaveAttribute("aria-expanded", "false");
+    await expect(taskHeaders).toHaveCount(3);
+    for (let index = 0; index < 3; index += 1) {
+      await expect(taskHeaders.nth(index)).toHaveAttribute("aria-expanded", "false");
+    }
     await expect(taskHeaders.locator(".ai-task-model-badge.default")).toHaveCount(0);
     if (process.env.PAPERWRITER_TASK_MODEL_SCREENSHOT) {
       await page.screenshot({
@@ -454,8 +455,11 @@ test.describe("1.0.0 release regressions", () => {
       .click();
     aiSettings = page.locator(".ai-settings-dialog");
     await aiSettings.getByRole("button", { name: /任务模型/ }).click();
-    await expect(aiSettings.locator(".ai-task-model-summary").nth(0)).toHaveAttribute("aria-expanded", "false");
-    await expect(aiSettings.locator(".ai-task-model-summary").nth(1)).toHaveAttribute("aria-expanded", "false");
+    const reopenedTaskHeaders = aiSettings.locator(".ai-task-model-summary");
+    await expect(reopenedTaskHeaders).toHaveCount(3);
+    for (let index = 0; index < 3; index += 1) {
+      await expect(reopenedTaskHeaders.nth(index)).toHaveAttribute("aria-expanded", "false");
+    }
     await aiSettings.getByRole("button", { name: "关闭 AI 设置" }).click();
 
     const invalidConfig = createTestAiConfig();

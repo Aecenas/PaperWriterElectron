@@ -3,6 +3,7 @@ const { autoUpdater } = require("electron-updater");
 const nativeFs = require("node:fs");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { createHash, randomUUID } = require("node:crypto");
 const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
@@ -13,6 +14,11 @@ const docx = require("docx");
 const iconvLite = require("iconv-lite");
 const { registerAiConfigIpcHandlers } = require("./ai-config-ipc.cjs");
 const { registerAiGenerationIpcHandlers } = require("./ai-generation-ipc.cjs");
+const { registerCitationIpcHandlers } = require("./citation-ipc.cjs");
+const { registerCompositionIpcHandlers } = require("./composition-ipc.cjs");
+const { registerDocumentHistoryIpcHandlers } = require("./document-history-ipc.cjs");
+const { registerProfileIpcHandlers } = require("./profile-ipc.cjs");
+const { registerWritingAssistanceIpcHandlers } = require("./writing-assistance-ipc.cjs");
 const { registerApplicationIpcHandlers } = require("./application-ipc.cjs");
 const { registerAutosaveIpcHandlers } = require("./autosave-ipc.cjs");
 const { registerDiagnosticsIpcHandlers } = require("./diagnostics-ipc.cjs");
@@ -20,12 +26,26 @@ const { registerDocumentOpenIpcHandlers } = require("./document-open-ipc.cjs");
 const { registerDocumentOutputIpcHandlers } = require("./document-output-ipc.cjs");
 const { registerDocumentSaveIpcHandlers } = require("./document-save-ipc.cjs");
 const { createAiRuntime } = require("./ai-runtime.cjs");
+const { createCitationRuntime } = require("./citation-runtime.cjs");
+const { createCompositionJobStore } = require("./composition-job-store.cjs");
+const { createCompositionRuntime } = require("./composition-runtime.cjs");
+const { createDocumentHistoryRuntime } = require("./document-history-runtime.cjs");
 const { createDocumentAssetsRuntime } = require("./document-assets-runtime.cjs");
 const { createDocumentStorageRuntime } = require("./document-storage-runtime.cjs");
 const documentModel = require("./document-model.cjs");
 const { createExportRuntime } = require("./export-runtime.cjs");
 const { createFilesystemRuntime } = require("./filesystem-runtime.cjs");
+const {
+  FAIL_CLOSED_DICTIONARY_URL,
+  createOfflineDictionaryRuntime,
+} = require("./offline-dictionary-runtime.cjs");
 const { createResearchRuntime } = require("./research-runtime.cjs");
+const { createProfileRuntime } = require("./profile-runtime.cjs");
+const { createPublicCitationLibraryRuntime } = require("./public-citation-library.cjs");
+const {
+  createWritingAssistanceRuntime,
+  installSpellingContextMenu,
+} = require("./writing-assistance-runtime.cjs");
 const { createTrustedIpcRegistrar } = require("./ipc-registrar.cjs");
 const {
   createInitialUpdateState,
@@ -97,6 +117,7 @@ const {
 const { createResearchLibraryManager, importLegacyResearch, normalizeWebScopeKey } = require("./research-library.cjs");
 const {
   DOCUMENT_EXTENSION,
+  DOCUMENT_FILTERS,
   isSupportedDocument,
   normalizeDocument,
   normalizeDocumentId,
@@ -146,7 +167,7 @@ const PRODUCTION_CONTENT_SECURITY_POLICY = [
   `img-src 'self' data: blob: ${ASSET_PROTOCOL}:`,
   `media-src 'self' data: blob: ${ASSET_PROTOCOL}:`,
   "connect-src 'none'",
-  "worker-src 'none'",
+  "worker-src 'self'",
 ].join("; ");
 
 let mainWindow = null;
@@ -156,6 +177,9 @@ let closeAttentionActive = false;
 let rendererCanConfirmClose = false;
 let pendingUpdateInstall = false;
 let downloadGuardInstalled = false;
+let compositionShutdownComplete = false;
+let compositionShutdownPromise = null;
+let removeSpellingContextMenu = null;
 let updateState = createInitialUpdateState(app.getVersion());
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
@@ -224,6 +248,7 @@ const documentStorageRuntime = createDocumentStorageRuntime({
   readFileSnapshot,
   readDiskRevision,
   createDocumentInterchange,
+  formatCitations: (payload) => citationFacade.formatSources(payload),
   mammoth,
   docx,
   iconvLite,
@@ -232,6 +257,38 @@ const documentStorageRuntime = createDocumentStorageRuntime({
   writeDebugLog: writeAiDebugLog,
 });
 const storageFacade = documentStorageRuntime.facade;
+
+const documentHistoryRuntime = createDocumentHistoryRuntime({
+  fs,
+  path,
+  createHash,
+  randomUUID,
+  atomicWriteFile,
+  getUserDataPath: () => app.getPath("userData"),
+  readDiskRevision: storageFacade.readDiskRevision,
+  assertDiskRevision: storageFacade.assertDiskRevision,
+  loadPaperDocumentSnapshot:
+    storageFacade.loadPaperDocumentSnapshot,
+});
+const historyFacade = documentHistoryRuntime.facade;
+
+const writingAssistanceRuntime = createWritingAssistanceRuntime({
+  fs,
+  path,
+  atomicWriteFile,
+  getUserDataPath: () => app.getPath("userData"),
+  randomUUID,
+});
+const writingAssistanceFacade =
+  writingAssistanceRuntime.facade;
+const offlineDictionaryRuntime = createOfflineDictionaryRuntime({
+  dictionaryPath: path.join(
+    __dirname,
+    "assets",
+    "dictionaries",
+    "en-US-10-1.bdic",
+  ),
+});
 
 const filesystemRuntime = createFilesystemRuntime({
   app,
@@ -282,6 +339,55 @@ const aiRuntime = createAiRuntime({
   sanitizeName,
   timestampForFileName,
   randomUUID,
+});
+
+const profileRuntime = createProfileRuntime({
+  fs,
+  path,
+  JSZip,
+  crypto,
+  atomicWriteFile,
+  getAppVersion: () => app.getVersion(),
+  readAiConfig: aiRuntime.profileFacade.readConfig,
+  writeAiConfig: aiRuntime.profileFacade.replaceConfig,
+  readWritingAssistance:
+    writingAssistanceFacade.getConfig,
+  writeWritingAssistance:
+    writingAssistanceFacade.replaceConfig,
+});
+const profileFacade = profileRuntime.facade;
+
+const citationFacade = createCitationRuntime({
+  fetchImpl: net.fetch.bind(net),
+  idFactory: randomUUID,
+  loadLookupCache: loadCitationLookupCache,
+  saveLookupCache: saveCitationLookupCache,
+});
+const publicCitationLibraryRuntime = createPublicCitationLibraryRuntime({
+  fs,
+  path,
+  atomicWriteFile,
+  getUserDataPath: () => app.getPath("userData"),
+  normalizeCitationSources: documentModel.normalizeCitationSources,
+  randomUUID,
+});
+
+const compositionJobStore = createCompositionJobStore({
+  fs,
+  path,
+  getUserDataPath: () => app.getPath("userData"),
+  atomicWriteFile,
+  randomUUID,
+});
+const compositionRuntime = createCompositionRuntime({
+  store: compositionJobStore,
+  completeTask: aiRuntime.completeCompositionTask,
+  resolveModelAssignments: aiRuntime.getCompositionModelAssignments,
+  finalizeDocument: finalizeCompositionDocument,
+  reconcileOutputIntent: reconcileCompositionOutputIntent,
+  emitEvent: (sender, payload) => {
+    sendRendererEvent(sender, "composition:event", payload);
+  },
 });
 
 const workspaceRuntime = createWorkspaceRuntime({
@@ -462,6 +568,291 @@ function sendRendererEvent(sender, channel, payload) {
   return true;
 }
 
+function citationLookupCachePath() {
+  return path.join(
+    app.getPath("userData"),
+    "Citation",
+    "lookup-cache.json",
+  );
+}
+
+async function loadCitationLookupCache() {
+  let handle;
+  try {
+    handle = await fs.open(citationLookupCachePath(), "r");
+    const before = await handle.stat();
+    if (!before.isFile() || before.size <= 0 || before.size > 16 * 1024 * 1024) {
+      throw new Error("文献缓存超出安全上限");
+    }
+    const buffer = await handle.readFile();
+    const after = await handle.stat();
+    if (
+      before.size !== after.size
+      || before.mtimeMs !== after.mtimeMs
+      || buffer.length !== after.size
+    ) {
+      throw new Error("文献缓存读取期间发生变化");
+    }
+    const parsed = JSON.parse(buffer.toString("utf8"));
+    return parsed?.version === 1 && Array.isArray(parsed.entries)
+      ? parsed
+      : { version: 1, entries: [] };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { version: 1, entries: [] };
+    throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function saveCitationLookupCache(cache) {
+  const serialized = `${JSON.stringify(cache)}\n`;
+  if (Buffer.byteLength(serialized, "utf8") > 16 * 1024 * 1024) {
+    throw new Error("文献缓存超出安全上限");
+  }
+  await atomicWriteFile(citationLookupCachePath(), serialized);
+}
+
+async function createInMemoryHistorySnapshot({
+  documentId,
+  document,
+  name,
+  pinned,
+}) {
+  const safeDocumentId = String(documentId || "").trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(safeDocumentId)) {
+    throw new Error("文档身份无效");
+  }
+  const stagingDirectory = path.join(
+    app.getPath("temp"),
+    "jianjian-history-staging",
+  );
+  await fs.mkdir(stagingDirectory, { recursive: true });
+  const stagingPath = path.join(
+    stagingDirectory,
+    `${randomUUID()}.letterpaper`,
+  );
+  try {
+    const saved = await storageFacade.savePaperDocument(
+      stagingPath,
+      document,
+    );
+    if (saved?.document?.documentId !== safeDocumentId) {
+      throw new Error("历史快照与当前信笺身份不一致");
+    }
+    return await historyFacade.createSnapshot({
+      documentId: safeDocumentId,
+      filePath: stagingPath,
+      kind: "manual",
+      name,
+      pinned,
+    });
+  } finally {
+    await fs.unlink(stagingPath).catch((error) => {
+      if (error?.code !== "ENOENT") throw error;
+    });
+  }
+}
+
+async function finalizeCompositionDocument({
+  job,
+  markdown,
+  signal,
+  outputPath,
+  onIntent,
+}) {
+  if (signal?.aborted) throw new Error("AI 起稿落稿已停止");
+  const title = sanitizeName(
+    job?.generatedTitle || job?.outline?.[0]?.title || job?.brief?.topic,
+    "AI 起稿",
+  );
+  let sourceDocument = null;
+  let authorizedSourcePath = "";
+  if (job?.derivedFrom?.path) {
+    try {
+      authorizedSourcePath = await assertAuthorizedDocument(
+        String(job.derivedFrom.path).slice(0, 32768),
+      );
+      sourceDocument = await storageFacade.loadPaperDocument(
+        authorizedSourcePath,
+      );
+    } catch {
+      authorizedSourcePath = "";
+      sourceDocument = null;
+    }
+  }
+
+  let targetPath = "";
+  if (outputPath) {
+    const requested = isSupportedDocument(outputPath)
+      ? outputPath
+      : ensureExtension(outputPath, DOCUMENT_EXTENSION);
+    targetPath = await assertAuthorizedDocumentTarget(
+      await resolveDocumentTargetPath(requested),
+    );
+  } else if (authorizedSourcePath) {
+    targetPath = await uniquePath(path.join(
+      path.dirname(authorizedSourcePath),
+      `${sanitizeFilesystemName(title, "AI起稿", 60)}-AI起稿-${timestampForFileName()}${DOCUMENT_EXTENSION}`,
+    ));
+    await authorizeDocumentPath(targetPath, { mustExist: false });
+  } else {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: "保存 AI 起稿派生信笺",
+      defaultPath: path.join(
+        defaultDocumentsDir(),
+        `${sanitizeFilesystemName(title, "AI起稿", 60)}-AI起稿-${timestampForFileName()}${DOCUMENT_EXTENSION}`,
+      ),
+      filters: DOCUMENT_FILTERS,
+    });
+    if (result.canceled || !result.filePath) {
+      throw new Error("已取消生成派生信笺");
+    }
+    targetPath = isSupportedDocument(result.filePath)
+      ? result.filePath
+      : ensureExtension(result.filePath, DOCUMENT_EXTENSION);
+    targetPath = await resolveDocumentTargetPath(targetPath);
+    await authorizeDocumentPath(targetPath, { mustExist: false });
+  }
+  if (
+    authorizedSourcePath
+    && (
+      process.platform === "win32"
+        ? path.resolve(targetPath).toLocaleLowerCase("en-US")
+          === path.resolve(authorizedSourcePath).toLocaleLowerCase("en-US")
+        : path.resolve(targetPath) === path.resolve(authorizedSourcePath)
+    )
+  ) {
+    throw new Error("AI 起稿必须保存为新的派生信笺，不能覆盖来源原稿");
+  }
+
+  const sourceIdToCitationId = new Map();
+  const generatedCitationSources = (Array.isArray(job?.sourceSnapshots)
+    ? job.sourceSnapshots
+    : []).map((snapshot) => {
+    const citation = snapshot?.citationSource
+      && typeof snapshot.citationSource === "object"
+      ? snapshot.citationSource
+      : {};
+    const citationId = normalizeDocumentId(citation.id)
+      || normalizeDocumentId(snapshot.sourceId)
+      || randomUUID();
+    sourceIdToCitationId.set(String(snapshot.sourceId || ""), citationId);
+    return {
+      ...citation,
+      id: citationId,
+      citationKey: citation.citationKey
+        || String(snapshot.sourceId || citationId),
+      title: citation.title || snapshot.title || "未命名资料",
+      notes: citation.notes
+        || `AI 起稿资料快照，捕获于 ${snapshot.capturedAt || job.createdAt || ""}`,
+    };
+  });
+  const citationSources = documentModel.normalizeCitationSources([
+    ...(sourceDocument?.citationSources || []),
+    ...generatedCitationSources,
+  ]);
+  const withCitationLinks = String(markdown || "").replace(
+    /\[\[cite:([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})(?:\|([^\]]{0,256}))?\]\]/g,
+    (_match, sourceId, locator = "") => {
+      const citationId = sourceIdToCitationId.get(sourceId);
+      if (!citationId) return `【待核实：${sourceId}】`;
+      return `[1](#jianjian-citation=${encodeURIComponent(citationId)}${locator ? `&pages=${encodeURIComponent(locator)}` : ""})`;
+    },
+  );
+  const convertedMarkdown = markdownToHtml(withCitationLinks);
+  const generatedHtml = typeof convertedMarkdown?.html === "string"
+    ? convertedMarkdown.html
+    : "";
+  if (!generatedHtml.trim() || generatedHtml.includes("[object Object]")) {
+    throw new Error("AI 起稿正文转换失败，未写入派生信笺");
+  }
+  const sanitizedGenerated = await sanitizeImportedHtml(
+    generatedHtml,
+    {
+      sourcePath: "",
+      fsApi: fs,
+      pathApi: path,
+      warnings: [],
+    },
+  );
+  if (signal?.aborted) throw new Error("AI 起稿落稿已停止");
+  const timestamp = new Date().toISOString();
+  const document = documentModel.normalizeDocument({
+    version: documentModel.DOCUMENT_SCHEMA_VERSION,
+    documentId: randomUUID(),
+    derivedFrom: normalizeDocumentId(
+      job?.derivedFrom?.documentId
+      || sourceDocument?.documentId,
+    ),
+    title,
+    author: sourceDocument?.author || "",
+    html: sanitizedGenerated.html,
+    letterTemplateId: sourceDocument?.letterTemplateId || "",
+    templateId: sourceDocument?.templateId || "warm",
+    fontFamily: sourceDocument?.fontFamily
+      || "LXGW WenKai Screen",
+    fontSize: sourceDocument?.fontSize || 18,
+    citationSources,
+    citationStyle: sourceDocument?.citationStyle,
+    footnotes: convertedMarkdown.footnotes || [],
+    comments: [],
+    aiState: documentModel.createEmptyAiState(),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  });
+  if (signal?.aborted) throw new Error("AI 起稿落稿已停止");
+  if (typeof onIntent !== "function") {
+    throw new Error("AI 起稿落稿缺少提交登记");
+  }
+  await onIntent({
+    path: targetPath,
+    documentId: document.documentId,
+    preparedAt: timestamp,
+  });
+  if (signal?.aborted) throw new Error("AI 起稿落稿已停止");
+  const saved = await storageFacade.savePaperDocument(
+    targetPath,
+    document,
+  );
+  await authorizeDocumentPath(targetPath);
+  return {
+    path: targetPath,
+    documentId: saved.document.documentId,
+    diskRevision: saved.diskRevision,
+  };
+}
+
+async function reconcileCompositionOutputIntent(intent) {
+  const targetPath = String(intent?.path || "").slice(0, 32768);
+  const expectedDocumentId = normalizeDocumentId(intent?.documentId);
+  if (!targetPath || !expectedDocumentId || !isSupportedDocument(targetPath)) {
+    return { state: "indeterminate", error: "派生信笺落稿意图无效" };
+  }
+  try {
+    const document = await storageFacade.loadPaperDocument(targetPath);
+    if (normalizeDocumentId(document?.documentId) !== expectedDocumentId) {
+      return { state: "missing" };
+    }
+    await authorizeDocumentPath(targetPath).catch((error) => (
+      writeAiDebugLog("composition:output-authorization-repair-failed", {
+        message: String(error?.message || error).slice(0, 500),
+      })
+    ));
+    return {
+      state: "committed",
+      path: targetPath,
+      documentId: expectedDocumentId,
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { state: "missing" };
+    return {
+      state: "indeterminate",
+      error: String(error?.message || "派生文件状态无法确认").slice(0, 4000),
+    };
+  }
+}
+
 function stopCloseAttention() {
   if (!closeAttentionActive || !mainWindow || mainWindow.isDestroyed()) return;
   if (process.platform === "win32") mainWindow.flashFrame(false);
@@ -518,7 +909,15 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      spellcheck: true,
     },
+  });
+  removeSpellingContextMenu?.();
+  removeSpellingContextMenu = installSpellingContextMenu({
+    webContents: mainWindow.webContents,
+    Menu,
+    getConfig: writingAssistanceFacade.getConfig,
+    addWord: writingAssistanceFacade.addWord,
   });
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -605,6 +1004,8 @@ function createWindow() {
     closeAttentionActive = false;
     rendererCanConfirmClose = false;
     researchRuntime.destroyWebViews();
+    removeSpellingContextMenu?.();
+    removeSpellingContextMenu = null;
     mainWindow = null;
   });
 
@@ -723,6 +1124,47 @@ registerAiGenerationIpcHandlers({
   generationFacade: aiRuntime.generationFacade,
 });
 
+registerCompositionIpcHandlers({
+  ipcMain,
+  compositionFacade: compositionRuntime,
+});
+
+registerCitationIpcHandlers({
+  ipcMain,
+  citationFacade,
+  dialog,
+  fs,
+  path,
+  getMainWindow: () => mainWindow,
+  defaultDocumentsDir,
+  publicCitationLibrary: publicCitationLibraryRuntime.facade,
+  assertAuthorizedDirectory,
+  ensureWorkspace,
+  listCitationSources,
+});
+
+registerDocumentHistoryIpcHandlers({
+  ipcMain,
+  historyFacade,
+  assertAuthorizedDocument,
+  createDocumentSnapshot: createInMemoryHistorySnapshot,
+});
+
+registerProfileIpcHandlers({
+  ipcMain,
+  profileFacade,
+  dialog,
+  getMainWindow: () => mainWindow,
+  path,
+  defaultDirectory: defaultDocumentsDir,
+  randomUUID,
+});
+
+registerWritingAssistanceIpcHandlers({
+  ipcMain,
+  writingAssistanceFacade,
+});
+
 registerWorkspaceFolderIpcHandlers({
   ipcMain,
   app,
@@ -837,6 +1279,8 @@ registerDocumentSaveIpcHandlers({
   platform: process.platform,
   assertAuthorizedDocumentTarget,
   fs,
+  historyFacade,
+  writeDebugLog: writeAiDebugLog,
 });
 
 registerDocumentOutputIpcHandlers({
@@ -881,7 +1325,27 @@ app.whenReady().then(async () => {
   }
   await documentStorageRuntime.initializeAutosaveStorage();
   await aiRuntime.initialize();
+  await documentHistoryRuntime.initialize();
+  const spellCheckerSession = session.defaultSession;
+  spellCheckerSession.setSpellCheckerDictionaryDownloadURL(
+    FAIL_CLOSED_DICTIONARY_URL,
+  );
+  try {
+    const dictionaryUrl = await offlineDictionaryRuntime.start();
+    spellCheckerSession.setSpellCheckerDictionaryDownloadURL(
+      dictionaryUrl,
+    );
+  } catch (error) {
+    await writeAiDebugLog(
+      "writing-assistance:offline-dictionary-unavailable",
+      { message: String(error?.message || error).slice(0, 500) },
+    );
+  }
+  await writingAssistanceRuntime.initialize(
+    spellCheckerSession,
+  );
   await initializeFilesystemAccess();
+  await compositionRuntime.initialize();
   await researchRuntime.initialize();
   await documentAssetsRuntime.initialize();
   documentStorageRuntime.initializeDocumentInterchange();
@@ -892,6 +1356,20 @@ app.whenReady().then(async () => {
 });
 
 app.on("before-quit", (event) => {
+  if (!compositionShutdownComplete) {
+    event.preventDefault();
+    if (!compositionShutdownPromise) {
+      compositionShutdownPromise = Promise.allSettled([
+        compositionRuntime.abortAll(),
+        offlineDictionaryRuntime.stop(),
+      ])
+        .finally(() => {
+          compositionShutdownComplete = true;
+          app.quit();
+        });
+    }
+    return;
+  }
   workspaceRuntime.shutdown();
   researchRuntime.shutdown();
   aiRuntime.abortAll();

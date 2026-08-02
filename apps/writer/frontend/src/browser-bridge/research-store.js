@@ -11,6 +11,7 @@ const BROWSER_CITATION_TYPES = new Set(["book", "article", "web", "pdf", "report
 const BROWSER_SOURCE_LIMIT = 5000;
 const BROWSER_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BROWSER_RESEARCH_LIBRARY_SOURCE_TYPES = new Set(["web"]);
+const BROWSER_PUBLIC_CITATIONS_KEY = "paperwriter.preview.public-citations.v1";
 
 function legacyBrowserResearchKey(workspacePath) {
   return `paperwriter.preview.research.${String(workspacePath || "default").slice(0, 2048)}`;
@@ -110,6 +111,40 @@ function listBrowserResearch(workspacePath) {
 
 function listBrowserCitations(workspacePath) {
   return listBrowserSources(workspacePath).filter((source) => source.kind === "citation");
+}
+
+function listBrowserPublicCitationState() {
+  const stored = readJson(BROWSER_PUBLIC_CITATIONS_KEY, {});
+  const seen = new Set();
+  const sources = (Array.isArray(stored?.sources) ? stored.sources : [])
+    .slice(0, BROWSER_SOURCE_LIMIT)
+    .flatMap((source) => {
+      const normalized = normalizeBrowserCitationSource(source, { generateId: false });
+      if (!normalized || seen.has(normalized.id)) return [];
+      seen.add(normalized.id);
+      return [normalized];
+    });
+  const migratedWorkspaces = [...new Set(
+    (Array.isArray(stored?.migratedWorkspaces) ? stored.migratedWorkspaces : [])
+      .map((value) => String(value || "").slice(0, 2048))
+      .filter(Boolean),
+  )].slice(0, BROWSER_SOURCE_LIMIT);
+  return { version: 1, sources, migratedWorkspaces };
+}
+
+function saveBrowserPublicCitationState(state = {}) {
+  if (!Array.isArray(state.sources) || state.sources.length > BROWSER_SOURCE_LIMIT) {
+    throw new Error("公域文献数量已达上限");
+  }
+  const committed = {
+    version: 1,
+    sources: state.sources,
+    migratedWorkspaces: Array.isArray(state.migratedWorkspaces)
+      ? state.migratedWorkspaces.slice(0, BROWSER_SOURCE_LIMIT)
+      : [],
+  };
+  writeJson(BROWSER_PUBLIC_CITATIONS_KEY, committed);
+  return committed;
 }
 
 function saveBrowserSources(workspacePath, sources) {
@@ -392,6 +427,7 @@ export {
   browserResearchFileUnsupported,
   browserResearchRevisionConflict,
   listBrowserCitations,
+  listBrowserPublicCitationState,
   listBrowserResearch,
   listBrowserResearchLibrarySources,
   listBrowserResearchWebTree,
@@ -406,5 +442,6 @@ export {
   normalizeBrowserResearchSource,
   sameBrowserLibraryRevision,
   saveBrowserResearchLibrarySources,
+  saveBrowserPublicCitationState,
   saveBrowserSources,
 };

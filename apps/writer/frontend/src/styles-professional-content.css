@@ -1,0 +1,723 @@
+.paper-code-block {
+  position: relative;
+  overflow: auto;
+  padding: 1rem 1.1rem;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, #f1e8dc 84%, white);
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, "Segoe UI Emoji", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.paper-code-block.is-wrapped {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.paper-code-shell {
+  --paper-code-font-size: 13px;
+  --paper-code-line-height: 1.6;
+  position: relative;
+  margin: 1em 0;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, #f3ece2 88%, white);
+  break-inside: avoid;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.paper-code-shell.selected {
+  border-color: color-mix(in srgb, #a45e3e 48%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, #a45e3e 13%, transparent);
+}
+
+.paper-code-toolbar {
+  position: absolute;
+  z-index: 8;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, currentColor 11%, transparent);
+  border-radius: 9px;
+  color: #4c554f;
+  background: color-mix(in srgb, #fffaf3 94%, transparent);
+  box-shadow: 0 7px 22px rgba(70, 52, 37, 0.14);
+  opacity: 0;
+  pointer-events: none;
+  translate: 0 -3px;
+  transition: opacity 120ms ease, translate 120ms ease;
+  user-select: none;
+  backdrop-filter: blur(10px);
+}
+
+.paper-code-shell:hover .paper-code-toolbar,
+.paper-code-shell:focus-within .paper-code-toolbar,
+.paper-code-shell.selected .paper-code-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+  translate: 0 0;
+}
+
+.paper-code-language {
+  position: relative;
+}
+
+.paper-code-language-trigger,
+.paper-code-tool {
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  font: 600 11px/1 "Segoe UI", sans-serif;
+}
+
+.paper-code-language-trigger {
+  min-width: 84px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 7px 0 9px;
+}
+
+.paper-code-tool {
+  width: 30px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+}
+
+.paper-code-language-trigger:hover,
+.paper-code-tool:hover,
+.paper-code-tool[aria-pressed="true"] {
+  color: #8b4f32;
+  background: rgba(229, 213, 198, 0.64);
+}
+
+.paper-code-tool.is-danger:hover {
+  color: #a3443d;
+  background: rgba(238, 206, 201, 0.62);
+}
+
+.paper-code-language-trigger:disabled,
+.paper-code-tool:disabled {
+  cursor: default;
+  opacity: 0.46;
+}
+
+.paper-code-toolbar small {
+  max-width: 74px;
+  overflow: hidden;
+  padding: 0 5px;
+  color: color-mix(in srgb, currentColor 58%, transparent);
+  font: 500 10px/1 "Segoe UI", sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paper-code-language-menu {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 7px);
+  right: 0;
+  width: 184px;
+  max-height: 286px;
+  overflow: auto;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid rgba(91, 80, 65, 0.15);
+  border-radius: 9px;
+  color: #433d35;
+  background: rgba(255, 253, 248, 0.99);
+  box-shadow: 0 16px 38px rgba(48, 40, 31, 0.2);
+}
+
+.paper-code-language-menu button {
+  min-height: 29px;
+  border: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px;
+  color: inherit;
+  background: transparent;
+  font: 560 11px/1 "Segoe UI", sans-serif;
+  text-align: left;
+}
+
+.paper-code-language-menu button:hover,
+.paper-code-language-menu button[aria-selected="true"] {
+  color: #8c4e30;
+  background: rgba(234, 217, 198, 0.62);
+}
+
+.paper-code-body {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: stretch;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.paper-code-line-numbers {
+  min-width: 3.25em;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 0.7rem;
+  border-right: 1px solid color-mix(in srgb, currentColor 9%, transparent);
+  color: color-mix(in srgb, currentColor 38%, transparent);
+  background: color-mix(in srgb, #e8ded1 84%, white);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: var(--paper-code-font-size);
+  line-height: var(--paper-code-line-height);
+  text-align: right;
+  user-select: none;
+}
+
+.paper-code-shell .paper-code-block {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--paper-code-font-size);
+  line-height: var(--paper-code-line-height);
+}
+
+.paper-code-shell:not(.is-wrapped) .paper-code-body {
+  overflow-x: auto;
+}
+
+.paper-code-shell:not(.is-wrapped) .paper-code-block {
+  overflow: visible;
+}
+
+.paper-code-shell[data-highlight-limited="true"] .paper-code-toolbar {
+  border-color: rgba(166, 105, 64, 0.22);
+}
+
+.paper-code-block .hljs-comment,
+.paper-code-block .hljs-quote {
+  color: #8b8178;
+  font-style: italic;
+}
+
+.paper-code-block .hljs-keyword,
+.paper-code-block .hljs-selector-tag,
+.paper-code-block .hljs-literal,
+.paper-code-block .hljs-doctag {
+  color: #a34f3c;
+  font-weight: 650;
+}
+
+.paper-code-block .hljs-string,
+.paper-code-block .hljs-regexp,
+.paper-code-block .hljs-template-tag,
+.paper-code-block .hljs-template-variable {
+  color: #3e7767;
+}
+
+.paper-code-block .hljs-number,
+.paper-code-block .hljs-built_in,
+.paper-code-block .hljs-type,
+.paper-code-block .hljs-params {
+  color: #7b5d9b;
+}
+
+.paper-code-block .hljs-title,
+.paper-code-block .hljs-section,
+.paper-code-block .hljs-function .hljs-title {
+  color: #765aa0;
+  font-weight: 650;
+}
+
+.paper-code-block .hljs-attr,
+.paper-code-block .hljs-attribute,
+.paper-code-block .hljs-variable,
+.paper-code-block .hljs-property {
+  color: #99601f;
+}
+
+.paper-code-block .hljs-tag,
+.paper-code-block .hljs-name,
+.paper-code-block .hljs-selector-class,
+.paper-code-block .hljs-selector-id {
+  color: #9b513d;
+}
+
+.paper-code-block .hljs-meta,
+.paper-code-block .hljs-symbol,
+.paper-code-block .hljs-bullet {
+  color: #4d708c;
+}
+
+.paper-code-block .hljs-addition {
+  color: #477552;
+  background: rgba(93, 143, 101, 0.1);
+}
+
+.paper-code-block .hljs-deletion {
+  color: #a34f43;
+  background: rgba(175, 81, 67, 0.09);
+}
+
+.paper-inline-math,
+.paper-block-math,
+.paper-inline-math-shell,
+.paper-block-math-shell,
+[data-type="inline-math"],
+[data-type="block-math"] {
+  font-family: KaTeX_Main, "Times New Roman", serif;
+}
+
+.paper-inline-math-shell {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  border-radius: 4px;
+  cursor: default;
+}
+
+.paper-inline-math-shell.selected {
+  background: rgba(211, 145, 99, 0.14);
+  box-shadow: 0 0 0 2px rgba(180, 101, 59, 0.18);
+}
+
+.paper-inline-math-render {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.paper-inline-math-tools {
+  position: absolute;
+  z-index: 7;
+  left: 50%;
+  bottom: calc(100% + 5px);
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid rgba(91, 80, 65, 0.14);
+  border-radius: 8px;
+  color: #51473d;
+  background: rgba(255, 252, 246, 0.98);
+  box-shadow: 0 8px 22px rgba(48, 40, 31, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  translate: -50% 3px;
+  transition: opacity 120ms ease, translate 120ms ease;
+}
+
+.paper-inline-math-shell:hover .paper-inline-math-tools,
+.paper-inline-math-shell:focus-within .paper-inline-math-tools,
+.paper-inline-math-shell.selected .paper-inline-math-tools {
+  opacity: 1;
+  pointer-events: auto;
+  translate: -50% 0;
+}
+
+.paper-block-math,
+.paper-block-math-shell,
+[data-type="block-math"] {
+  position: relative;
+  margin: 1.3em 0;
+  text-align: center;
+}
+
+.paper-block-math-shell {
+  min-height: 58px;
+  overflow: visible;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 15px 58px;
+  cursor: default;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.paper-equation-hover-label {
+  position: absolute;
+  z-index: 6;
+  top: 9px;
+  left: 11px;
+  max-width: min(48%, 320px);
+  overflow: hidden;
+  border: 1px solid rgba(146, 94, 61, 0.15);
+  border-radius: 6px;
+  padding: 3px 7px;
+  color: #7a5f4c;
+  background: rgba(255, 250, 242, 0.96);
+  box-shadow: 0 5px 15px rgba(65, 47, 33, 0.08);
+  font: 600 10px/1.35 var(--body-font, "Segoe UI", sans-serif);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  translate: 0 -2px;
+  transition: opacity 120ms ease, translate 120ms ease;
+}
+
+.paper-block-math-shell:hover .paper-equation-hover-label,
+.paper-block-math-shell:focus-within .paper-equation-hover-label,
+.paper-block-math-shell.selected .paper-equation-hover-label {
+  opacity: 1;
+  translate: 0 0;
+}
+
+.paper-equation-number {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  font: 500 0.88em/1.2 KaTeX_Main, "Times New Roman", serif;
+  translate: 0 -50%;
+  user-select: none;
+}
+
+.paper-block-math-shell:hover,
+.paper-block-math-shell.selected {
+  border-color: rgba(126, 102, 78, 0.12);
+  background: rgba(255, 253, 249, 0.46);
+}
+
+.paper-block-math-render {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.paper-block-math-tools {
+  position: absolute;
+  z-index: 7;
+  top: 7px;
+  right: 7px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid rgba(91, 80, 65, 0.13);
+  border-radius: 8px;
+  color: #51473d;
+  background: rgba(255, 252, 246, 0.96);
+  box-shadow: 0 8px 22px rgba(48, 40, 31, 0.13);
+  opacity: 0;
+  pointer-events: none;
+  translate: 0 -3px;
+  transition: opacity 120ms ease, translate 120ms ease;
+}
+
+.paper-block-math-shell:hover .paper-block-math-tools,
+.paper-block-math-shell:focus-within .paper-block-math-tools,
+.paper-block-math-shell.selected .paper-block-math-tools {
+  opacity: 1;
+  pointer-events: auto;
+  translate: 0 0;
+}
+
+.paper-math-tool {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+}
+
+.paper-math-tool:hover {
+  color: #8b4f32;
+  background: rgba(229, 213, 198, 0.64);
+}
+
+.paper-math-tool.is-danger:hover {
+  color: #a3443d;
+  background: rgba(238, 206, 201, 0.62);
+}
+
+.paper-math-error {
+  display: block;
+  margin-top: 7px;
+  color: #a3443d;
+  font: 500 10px/1.45 "Segoe UI", sans-serif;
+}
+
+.paper-block-math[data-equation-number]::after {
+  content: "(" attr(data-equation-number) ")";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  translate: 0 -50%;
+  font-family: inherit;
+}
+
+.paper-equation-reference {
+  display: inline;
+  color: #9a5635 !important;
+  vertical-align: baseline;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: inherit !important;
+  font-size: 0.92em;
+  font-style: normal !important;
+  font-weight: 500 !important;
+  line-height: inherit;
+  text-decoration: none !important;
+}
+
+.paper-equation-reference-icon {
+  display: inline-block;
+  width: 0.92em;
+  height: 0.92em;
+  margin: 0;
+  vertical-align: -0.1em;
+  stroke-width: 2;
+}
+
+.paper-equation-reference-label {
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px dashed currentColor;
+}
+
+.paper-equation-reference[data-equation-missing="true"] {
+  color: #a13b3b;
+}
+
+:where(p, h1, h2, h3, h4, h5, h6, blockquote):has(> .paper-bookmark) {
+  position: relative;
+}
+
+.paper-bookmark {
+  --paper-bookmark-asset: url("./assets/decor/bookmarks/bookmark-teal-woven.svg");
+  position: absolute;
+  z-index: 2;
+  top: -0.12em;
+  left: -56px;
+  display: block;
+  width: 30px;
+  height: 60px;
+  overflow: visible;
+  font-size: 0;
+  line-height: 0;
+  cursor: pointer;
+}
+
+.paper-bookmark::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--paper-bookmark-asset) center / contain no-repeat;
+  transform-origin: 50% 8%;
+  transition: filter 140ms ease, transform 140ms ease;
+}
+
+.paper-bookmark:hover::before,
+.paper-bookmark:focus-visible::before,
+.paper-bookmark.ProseMirror-selectednode::before {
+  filter: brightness(1.06) drop-shadow(0 0 3px rgba(52, 115, 109, 0.28));
+  transform: translateY(-1px);
+}
+
+.paper-bookmark:focus-visible {
+  outline: 2px solid rgba(52, 115, 109, 0.32);
+  outline-offset: 2px;
+}
+
+.paper-mermaid {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  margin: 1.45em 0;
+  display: grid;
+  justify-items: center;
+  text-indent: 0;
+  counter-increment: paper-figure;
+  break-inside: avoid;
+}
+
+.paper-mermaid-frame {
+  position: relative;
+  width: min(var(--mermaid-width, 78%), 100%);
+  min-width: 0;
+  transition: width 160ms ease;
+}
+
+.paper-mermaid-preview {
+  min-height: 96px;
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid rgba(99, 86, 67, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.42);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.paper-mermaid:hover .paper-mermaid-preview,
+.paper-mermaid.selected .paper-mermaid-preview {
+  border-color: rgba(198, 111, 66, 0.28);
+  box-shadow: 0 10px 28px rgba(83, 62, 37, 0.08);
+}
+
+.paper-mermaid-svg svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin: auto;
+}
+
+.paper-mermaid-status,
+.paper-mermaid-error {
+  display: grid;
+  place-items: center;
+  min-height: 78px;
+  color: #7b4747;
+}
+
+.paper-mermaid-error pre {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
+
+.paper-mermaid-tools {
+  position: absolute;
+  top: 10px;
+  right: -12px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(80, 72, 63, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.96);
+  box-shadow: 0 12px 28px rgba(67, 55, 40, 0.14);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(100%) translateY(4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.paper-mermaid:hover .paper-mermaid-tools,
+.paper-mermaid.selected .paper-mermaid-tools,
+.paper-mermaid-tools:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(100%) translateY(0);
+}
+
+.paper-mermaid-tool {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  color: #5f5a52;
+  background: transparent;
+  font: 700 11px/1 var(--body-font, "Segoe UI", sans-serif);
+}
+
+.paper-mermaid-tool:hover,
+.paper-mermaid-tool.active {
+  color: #8f4f31;
+  background: rgba(231, 215, 195, 0.8);
+}
+
+.paper-mermaid-tool.is-danger:hover {
+  color: #a13b34;
+  background: rgba(190, 73, 64, 0.1);
+}
+
+.paper-mermaid-tool-separator {
+  width: 18px;
+  height: 1px;
+  margin: 2px auto;
+  background: rgba(95, 90, 82, 0.18);
+}
+
+.paper-mermaid-caption {
+  width: min(var(--mermaid-width, 78%), 100%);
+  max-width: min(var(--mermaid-width, 78%), 100%);
+  min-height: 24px;
+  padding: 7px 0 0;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0.2em;
+  color: rgba(154, 86, 53, 0.76);
+  font-family: var(--image-caption-font), "Segoe UI Emoji";
+  font-size: var(--image-caption-size);
+  font-weight: 650;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.paper-mermaid-caption::before {
+  flex: 0 0 auto;
+  content: "图" counter(paper-figure) ". ";
+}
+
+.paper-mermaid-caption-placeholder {
+  color: rgba(154, 86, 53, 0.38);
+  font-weight: 500;
+}
+
+.paper-sheet.plain-image-captions .paper-mermaid-caption::before {
+  content: "";
+}
+
+.paper-sheet.hides-image-captions .paper-mermaid-caption {
+  display: none;
+}
+
+.paper-mermaid.mermaid-reference-target .paper-mermaid-preview {
+  box-shadow: 0 0 0 4px rgba(198, 111, 66, 0.24), 0 14px 34px rgba(154, 86, 53, 0.16);
+}
+
+.paper-mermaid-reference {
+  display: inline;
+  color: #9a5635 !important;
+  vertical-align: baseline;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: inherit !important;
+  font-size: 0.92em;
+  font-style: normal !important;
+  font-weight: 500 !important;
+  line-height: inherit;
+  text-decoration: none !important;
+}
+
+.paper-mermaid-reference-icon {
+  display: inline-block;
+  width: 0.92em;
+  height: 0.92em;
+  margin: 0;
+  vertical-align: -0.1em;
+  stroke-width: 2;
+}
+
+.paper-mermaid-reference-label {
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px dashed currentColor;
+}
+
+.paper-mermaid-reference[data-mermaid-missing="true"] {
+  color: #a13b3b !important;
+  cursor: default;
+}

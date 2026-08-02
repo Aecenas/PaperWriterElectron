@@ -557,7 +557,7 @@ export function aiResultBlockToTiptapContent(block) {
   const type = typeof block?.type === "string" ? block.type : "paragraph";
   if (type === "divider") return [{ type: "paperHorizontalRule" }];
   if (type === "heading") {
-    const level = Math.max(1, Math.min(3, Math.floor(Number(block.level) || 2)));
+    const level = Math.max(1, Math.min(4, Math.floor(Number(block.level) || 2)));
     return [{ type: "heading", attrs: { level }, content: inlineTiptapContent(block.text) }];
   }
   if (type === "orderedList" || type === "bulletList") {
@@ -627,7 +627,7 @@ export function aiResultBlockToSafeHtml(block) {
   const type = typeof block?.type === "string" ? block.type : "paragraph";
   if (type === "divider") return "<hr>";
   if (type === "heading") {
-    const level = Math.max(1, Math.min(3, Math.floor(Number(block.level) || 2)));
+    const level = Math.max(1, Math.min(4, Math.floor(Number(block.level) || 2)));
     return `<h${level}>${inlineSafeHtml(block.text)}</h${level}>`;
   }
   if (type === "orderedList" || type === "bulletList") {

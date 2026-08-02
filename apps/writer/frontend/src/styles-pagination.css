@@ -1,0 +1,517 @@
+.page-view-toolbar {
+  position: sticky;
+  top: 12px;
+  z-index: 18;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  min-height: 38px;
+  margin: 12px auto -50px;
+  border: 1px solid rgba(113, 95, 72, 0.16);
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  color: rgba(62, 55, 47, 0.76);
+  background: rgba(255, 252, 247, 0.93);
+  box-shadow: 0 10px 28px rgba(67, 55, 40, 0.12);
+  backdrop-filter: blur(16px);
+}
+
+.page-view-toolbar.page-view-navigation {
+  min-height: 36px;
+  margin-bottom: -48px;
+  padding-inline: 6px;
+}
+
+.page-view-toolbar.page-view-navigation.is-collapsed {
+  top: 0;
+  min-height: 20px;
+  margin-top: 0;
+  margin-bottom: -20px;
+  padding: 0 5px 1px;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 5px 14px rgba(67, 55, 40, 0.09);
+}
+
+.page-view-modes {
+  display: flex;
+  gap: 2px;
+}
+
+.page-view-toolbar button {
+  min-height: 29px;
+  border: 0;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+}
+
+.page-view-toolbar button:hover:not(:disabled),
+.page-view-toolbar button.active {
+  color: #8d4d30;
+  background: rgba(218, 153, 112, 0.14);
+}
+
+.page-view-toolbar button:focus-visible,
+.page-view-page-input input:focus-visible {
+  outline: 2px solid rgba(198, 111, 66, 0.46);
+  outline-offset: 1px;
+}
+
+.page-view-toolbar button:disabled {
+  opacity: 0.38;
+}
+
+.page-view-separator {
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: rgba(103, 88, 68, 0.13);
+}
+
+.page-view-icon-button {
+  width: 29px;
+  padding: 0 !important;
+}
+
+.page-view-collapse-button {
+  width: 25px;
+  padding: 0 !important;
+}
+
+.page-view-toolbar.is-collapsed .page-view-collapse-button {
+  width: 36px;
+  min-height: 19px;
+  border-radius: 0 0 6px 6px;
+}
+
+.page-view-page-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-view-page-input input {
+  width: 38px;
+  height: 27px;
+  border: 1px solid rgba(113, 95, 72, 0.15);
+  border-radius: 6px;
+  padding: 0 4px;
+  color: #52473b;
+  background: rgba(255, 255, 255, 0.72);
+  text-align: center;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  appearance: textfield;
+}
+
+.page-view-page-input input::-webkit-inner-spin-button {
+  appearance: none;
+}
+
+.page-view-fit {
+  min-width: 72px;
+}
+
+.page-mode-zoom-frame {
+  position: relative;
+  flex: 0 0 auto;
+  margin: 20px auto 48px;
+}
+
+.canvas.page-view-spread .paper-viewport {
+  padding-right: 12px;
+  padding-left: 12px;
+}
+
+.canvas.page-view-spread .page-mode-zoom-frame {
+  margin-top: 14px;
+}
+
+.page-mode-window {
+  position: absolute;
+  inset: 0 auto auto 0;
+  overflow: hidden;
+  transform-origin: 0 0;
+}
+
+.page-mode-stage {
+  position: relative;
+  transition: transform 180ms ease;
+  will-change: transform;
+}
+
+.paper-page-chrome-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.paper-page-chrome {
+  position: absolute;
+  top: 0;
+  width: 794px;
+  height: 1123px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--paper-edge);
+  border-radius: 5px;
+  background: var(--paper-repeat-bg) center top / 100% auto repeat-y, var(--paper-base);
+  box-shadow: 0 12px 30px rgba(62, 51, 38, 0.14);
+}
+
+.paper-page-chrome::before,
+.paper-page-chrome::after {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  content: "";
+}
+
+.paper-page-chrome::before {
+  top: 0;
+  height: 310px;
+  background: var(--paper-top-bg) center top / 100% 100% no-repeat;
+}
+
+.paper-page-chrome::after {
+  bottom: 0;
+  height: 310px;
+  background: var(--paper-bottom-bg) center bottom / 100% 100% no-repeat;
+}
+
+.paper-page-number {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 2;
+  color: rgba(76, 66, 55, 0.48);
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+}
+
+.page-mode-stage > .paper-sheet {
+  position: absolute;
+  inset: 0 auto auto 0;
+  z-index: 1;
+  width: 794px;
+  height: 1123px;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  isolation: auto;
+}
+
+.page-mode-stage > .paper-sheet::before,
+.page-mode-stage > .paper-sheet::after {
+  display: none;
+}
+
+.page-mode-stage .paper-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 794px;
+  box-sizing: border-box;
+  padding: 76px 76px 0;
+}
+
+.page-mode-stage .paper-editor {
+  width: 642px;
+  height: 953px;
+  min-height: 0;
+  margin: 78px 0 0 76px;
+  box-sizing: border-box;
+  column-width: 642px;
+  column-gap: 180px;
+  column-fill: auto;
+  padding: 0 0 0;
+  overflow: visible;
+}
+
+.page-mode-stage > .paper-sheet.without-paper-header .paper-editor {
+  padding-top: 0;
+}
+
+.page-mode-stage .paper-sheet.has-paper-header .paper-editor::before {
+  display: block;
+  height: 134px;
+  break-inside: avoid;
+  content: "";
+}
+
+.page-mode-stage .paper-page-break {
+  height: 1px;
+  margin: 0;
+  break-after: column;
+}
+
+.page-mode-stage .paper-page-break::before,
+.page-mode-stage .paper-page-break span {
+  display: none;
+}
+
+.page-mode-stage .paper-editor > h1,
+.page-mode-stage .paper-editor > h2,
+.page-mode-stage .paper-editor > h3,
+.page-mode-stage .paper-editor > h4,
+.page-mode-stage .paper-editor > figure,
+.page-mode-stage .paper-editor > .paper-block-math,
+.page-mode-stage .paper-editor > [data-type="block-math"],
+.page-mode-stage .paper-editor > .paper-mermaid,
+.page-mode-stage .paper-editor > pre {
+  break-inside: avoid;
+}
+
+.page-mode-stage .paper-editor table tr {
+  break-inside: avoid;
+}
+
+.page-mode-stage .paper-editor .paper-oversize-block {
+  outline: 1px dashed rgba(184, 78, 56, 0.58);
+  outline-offset: 4px;
+}
+
+.page-mode-stage .paper-editor .paper-oversize-row {
+  outline: 1px dashed rgba(184, 78, 56, 0.72);
+  outline-offset: -1px;
+}
+
+/*
+ * Continuous view keeps the normal editing surface. During an export-only
+ * measurement pass this transient class applies the exact same A4 column
+ * geometry used by single/spread view, then the registry restores the view.
+ */
+.page-map-measurement-mode .paper-viewport {
+  width: 794px;
+  min-height: 1123px;
+  display: block;
+  padding: 0;
+}
+
+.page-map-measurement-mode .paper-sheet {
+  position: relative;
+  width: 794px;
+  min-width: 794px;
+  height: 1123px;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  isolation: auto;
+}
+
+.page-map-measurement-mode .paper-sheet::before,
+.page-map-measurement-mode .paper-sheet::after {
+  display: none;
+}
+
+.page-map-measurement-mode .paper-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 794px;
+  box-sizing: border-box;
+  padding: 76px 76px 0;
+}
+
+.page-map-measurement-mode .paper-editor {
+  width: 642px;
+  height: 953px;
+  min-height: 0;
+  margin: 78px 0 0 76px;
+  box-sizing: border-box;
+  column-width: 642px;
+  column-gap: 180px;
+  column-fill: auto;
+  padding: 0;
+  overflow: visible;
+}
+
+.page-map-measurement-mode .paper-sheet.has-paper-header .paper-editor::before {
+  display: block;
+  height: 134px;
+  break-inside: avoid;
+  content: "";
+}
+
+.page-map-measurement-mode .paper-page-break {
+  height: 1px;
+  margin: 0;
+  break-after: column;
+}
+
+.page-map-measurement-mode .paper-page-break::before,
+.page-map-measurement-mode .paper-page-break span {
+  display: none;
+}
+
+.page-map-measurement-mode .paper-editor > h1,
+.page-map-measurement-mode .paper-editor > h2,
+.page-map-measurement-mode .paper-editor > h3,
+.page-map-measurement-mode .paper-editor > h4,
+.page-map-measurement-mode .paper-editor > figure,
+.page-map-measurement-mode .paper-editor > .paper-block-math,
+.page-map-measurement-mode .paper-editor > [data-type="block-math"],
+.page-map-measurement-mode .paper-editor > .paper-mermaid,
+.page-map-measurement-mode .paper-editor > pre,
+.page-map-measurement-mode .paper-editor table tr {
+  break-inside: avoid;
+}
+
+.page-map-measurement-mode .paper-oversize-block,
+.page-map-measurement-mode .paper-oversize-row {
+  outline: 1px dashed rgba(184, 78, 56, 0.72);
+}
+
+.page-mode-stage .paper-editor > h1,
+.page-mode-stage .paper-editor > h2,
+.page-mode-stage .paper-editor > h3,
+.page-mode-stage .paper-editor > h4,
+.page-map-measurement-mode .paper-editor > h1,
+.page-map-measurement-mode .paper-editor > h2,
+.page-map-measurement-mode .paper-editor > h3,
+.page-map-measurement-mode .paper-editor > h4,
+.page-map-export-page .page-map-export-editor > h1,
+.page-map-export-page .page-map-export-editor > h2,
+.page-map-export-page .page-map-export-editor > h3,
+.page-map-export-page .page-map-export-editor > h4 {
+  break-after: avoid;
+  break-after: avoid-column;
+}
+
+.page-map-export-stage {
+  width: 794px;
+  display: grid;
+  grid-template-columns: 794px;
+  align-content: start;
+  gap: 0;
+  background: #ffffff;
+  pointer-events: none;
+}
+
+.page-map-export-page {
+  position: relative;
+  width: 794px;
+  min-width: 794px;
+  height: 1123px;
+  min-height: 1123px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.page-map-export-page::before,
+.page-map-export-page::after {
+  height: 310px;
+}
+
+.page-map-export-page .paper-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 794px;
+  box-sizing: border-box;
+  padding: 76px 76px 0;
+}
+
+.page-map-export-page .page-map-export-editor {
+  width: 642px;
+  height: 953px;
+  min-height: 0;
+  margin: 78px 0 0 76px;
+  box-sizing: border-box;
+  padding: 0;
+  overflow: hidden;
+  column-count: 1;
+  column-gap: normal;
+  column-width: auto;
+}
+
+.page-map-export-page.without-paper-header .page-map-export-editor {
+  padding-top: 0;
+}
+
+.page-map-export-page.has-paper-header .page-map-export-editor::before {
+  display: block;
+  height: 134px;
+  break-inside: avoid;
+  content: "";
+}
+
+.page-map-export-page.paper-page-map-continuation .page-map-export-editor::before {
+  display: none;
+}
+
+.page-map-export-page .paper-page-number {
+  z-index: 3;
+}
+
+.page-map-export-stage.image-export-stage {
+  grid-template-columns: 794px;
+}
+
+.page-map-export-image-body .page-map-export-stage .paper-oversize-block {
+  outline: 0;
+}
+
+.desktop-shell.print-mode .page-view-toolbar,
+.desktop-shell.image-export-mode .page-view-toolbar {
+  display: none;
+}
+
+@media print {
+  body.page-map-export-print-body {
+    width: 794px;
+    background: #ffffff;
+  }
+
+  body.page-map-export-print-body #root {
+    display: none !important;
+  }
+
+  body.page-map-export-print-body .page-map-export-stage {
+    display: block;
+  }
+
+  body.page-map-export-print-body .page-map-export-page {
+    break-after: page;
+    page-break-after: always;
+  }
+
+  body.page-map-export-print-body .page-map-export-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-mode-stage {
+    transition: none;
+  }
+}

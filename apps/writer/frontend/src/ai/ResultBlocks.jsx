@@ -110,7 +110,7 @@ export function AiResultBlock({ block, onCopy, onApply, applying, previewing, ma
     );
   }
   if (block.type === "heading") {
-    const HeadingTag = `h${Math.max(1, Math.min(3, block.level || 2))}`;
+    const HeadingTag = `h${Math.max(1, Math.min(4, block.level || 2))}`;
     return (
       <HeadingTag className="ai-result-block">
         <AiResultBlockActions block={block} onCopy={onCopy} onApply={onApply} applying={applying} previewing={previewing} manualFallback={manualFallback} resolverLabel={resolverLabel} />
@@ -176,7 +176,7 @@ export function AiChatAssistantContent({ text }) {
       );
     }
     if (block.type === "heading") {
-      const HeadingTag = `h${Math.max(1, Math.min(3, block.level || 2))}`;
+      const HeadingTag = `h${Math.max(1, Math.min(4, block.level || 2))}`;
       return (
         <HeadingTag className="ai-chat-md-heading" data-heading-numbered="false" key={`heading-${index}-${block.text}`}>
           <InlineAiText text={block.text} />

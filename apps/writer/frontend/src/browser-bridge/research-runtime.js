@@ -16,6 +16,7 @@ import {
   browserResearchFileUnsupported,
   browserResearchRevisionConflict,
   listBrowserCitations,
+  listBrowserPublicCitationState,
   listBrowserResearch,
   listBrowserResearchLibrarySources,
   listBrowserResearchWebTree,
@@ -29,8 +30,36 @@ import {
   normalizeBrowserResearchSource,
   sameBrowserLibraryRevision,
   saveBrowserResearchLibrarySources,
+  saveBrowserPublicCitationState,
   saveBrowserSources,
 } from "./research-store.js";
+
+function browserCitationIdentity(source = {}) {
+  const doi = String(source.doi || "").trim().toLocaleLowerCase("en-US");
+  if (doi) return `doi:${doi}`;
+  const isbn = String(source.isbn || "").replace(/[^0-9x]/gi, "").toLocaleLowerCase("en-US");
+  if (isbn) return `isbn:${isbn}`;
+  const compact = (value) => String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
+  const title = compact(source.title);
+  return title
+    ? `work:${title}|${compact(Array.isArray(source.authors) ? source.authors.join("|") : source.authors)}|${compact(source.year)}`
+    : "";
+}
+
+function mergeBrowserCitationMissingFields(existing = {}, incoming = {}) {
+  const next = { ...existing };
+  for (const [key, value] of Object.entries(incoming)) {
+    if (["id", "createdAt", "updatedAt"].includes(key)) continue;
+    const empty = Array.isArray(next[key])
+      ? next[key].length === 0
+      : !next[key] || (typeof next[key] === "object" && !Object.keys(next[key]).length);
+    if (empty && (Array.isArray(value) ? value.length : value)) next[key] = value;
+  }
+  return next;
+}
 
 function browserSearchPlainText(value) {
   return String(value || "")
@@ -692,6 +721,66 @@ function createBrowserResearchApi() {
       sources: listBrowserCitations(workspacePath),
       browserOnly: true,
     }),
+    listPublicCitations: async () => ({
+      sources: listBrowserPublicCitationState().sources,
+      browserOnly: true,
+    }),
+    upsertPublicCitation: async (source = {}) => {
+      const state = listBrowserPublicCitationState();
+      const requestedId = String(source?.id || "").trim().toLocaleLowerCase("en-US");
+      const previous = state.sources.find((item) => item.id === requestedId) || null;
+      if (!previous && state.sources.length >= BROWSER_SOURCE_LIMIT) throw new Error("公域文献数量已达上限");
+      const saved = normalizeBrowserCitationSource({
+        ...(previous || {}),
+        ...(source && typeof source === "object" ? source : {}),
+        id: previous?.id || requestedId || browserCitationId(),
+        createdAt: previous?.createdAt || source?.createdAt,
+        updatedAt: new Date().toISOString(),
+      });
+      if (!saved?.title && !saved?.url && !saved?.doi) throw new Error("参考文献来源至少需要标题、网址或 DOI");
+      const sources = previous
+        ? state.sources.map((item) => item.id === previous.id ? saved : item)
+        : [...state.sources, saved];
+      saveBrowserPublicCitationState({ ...state, sources });
+      return { source: saved, sources, browserOnly: true };
+    },
+    deletePublicCitation: async (sourceId = "") => {
+      const id = String(sourceId || "").trim().toLocaleLowerCase("en-US");
+      const state = listBrowserPublicCitationState();
+      if (!state.sources.some((source) => source.id === id)) throw new Error("公域文献不存在");
+      const sources = state.sources.filter((source) => source.id !== id);
+      saveBrowserPublicCitationState({ ...state, sources });
+      return { ok: true, id, sources, browserOnly: true };
+    },
+    migrateWorkspaceCitationsToPublic: async (workspacePath = "") => {
+      const key = String(workspacePath || "default").slice(0, 2048);
+      const state = listBrowserPublicCitationState();
+      if (state.migratedWorkspaces.includes(key)) {
+        return { migrated: false, alreadyMigrated: true, imported: 0, sources: state.sources, browserOnly: true };
+      }
+      const sources = [...state.sources];
+      let imported = 0;
+      for (const legacy of listBrowserCitations(workspacePath)) {
+        const identity = browserCitationIdentity(legacy);
+        const index = sources.findIndex((source) => source.id === legacy.id
+          || (identity && browserCitationIdentity(source) === identity));
+        if (index < 0) {
+          if (sources.length >= BROWSER_SOURCE_LIMIT) break;
+          sources.push(legacy);
+          imported += 1;
+        } else {
+          sources[index] = normalizeBrowserCitationSource(
+            mergeBrowserCitationMissingFields(sources[index], legacy),
+          );
+        }
+      }
+      saveBrowserPublicCitationState({
+        ...state,
+        sources,
+        migratedWorkspaces: [...state.migratedWorkspaces, key],
+      });
+      return { migrated: true, alreadyMigrated: false, imported, sources, browserOnly: true };
+    },
     getWorkspaceIdentity: async () => ({
       ok: false,
       unsupported: true,

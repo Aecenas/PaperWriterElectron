@@ -13,6 +13,8 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import { DocumentSearchExtension } from "../document-search-extension.js";
 import { createKnowledgeExtensions, KNOWLEDGE_TAIL_NODE_TYPES } from "../knowledge-extensions.js";
 import { createStructuredInlineExtensions } from "../structured-inline-extensions.js";
+import { createProfessionalContentExtensions } from "./professional-content-extensions.js";
+import { WritingAssistanceDecorations } from "../writing-assistance/extension.js";
 import { DEFAULT_UNDERLINE_STYLE, normalizeUnderlineStyle } from "./formatting.js";
 import {
   PaperFinalizedBreak,
@@ -62,6 +64,7 @@ export function createPaperEditorExtensions() {
   return [
     StarterKit.configure({
       underline: false,
+      codeBlock: false,
       trailingNode: { notAfter: ["paragraph", ...KNOWLEDGE_TAIL_NODE_TYPES] },
       link: false,
     }),
@@ -85,12 +88,14 @@ export function createPaperEditorExtensions() {
     PaperHorizontalRule,
     PaperFinalizedBreak,
     PaperTableOfContents,
+    ...createProfessionalContentExtensions(),
     ...createStructuredInlineExtensions(),
     ...createKnowledgeExtensions(),
     DocumentSearchExtension,
     AiChatSelectionDecorations,
     AiApplyPreviewDecorations,
     DocumentCommentDecorations,
+    WritingAssistanceDecorations,
     TextAlign.configure({ types: ["heading", "paragraph"] }),
     Placeholder.configure({ placeholder: "在这里开始写。" }),
   ];

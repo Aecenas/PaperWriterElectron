@@ -6,7 +6,9 @@ export function createEmptyWorkspaceRelationships() {
 
 export function useKnowledgeReferenceState() {
   const [workspaceCitationSources, setWorkspaceCitationSources] = useState([]);
+  const [publicCitationSources, setPublicCitationSources] = useState([]);
   const [citationLibraryLoading, setCitationLibraryLoading] = useState(false);
+  const [publicCitationLibraryLoading, setPublicCitationLibraryLoading] = useState(false);
   const [pendingCitationPage, setPendingCitationPage] = useState("");
   const [workspaceRelationships, setWorkspaceRelationships] = useState(createEmptyWorkspaceRelationships);
   const workspaceRelationshipRequestRef = useRef(0);
@@ -19,6 +21,7 @@ export function useKnowledgeReferenceState() {
     insertTarget: null,
     citationPage: "",
     returnToPicker: false,
+    scope: "private",
   });
   const [knowledgeReferencePopover, setKnowledgeReferencePopover] = useState(null);
 
@@ -30,6 +33,8 @@ export function useKnowledgeReferenceState() {
     internalLinkPicker,
     knowledgeReferencePopover,
     pendingCitationPage,
+    publicCitationLibraryLoading,
+    publicCitationSources,
     setCitationLibraryLoading,
     setCitationPicker,
     setCitationSourceDialog,
@@ -37,6 +42,8 @@ export function useKnowledgeReferenceState() {
     setInternalLinkPicker,
     setKnowledgeReferencePopover,
     setPendingCitationPage,
+    setPublicCitationLibraryLoading,
+    setPublicCitationSources,
     setWorkspaceCitationSources,
     setWorkspaceRelationships,
     workspaceCitationSources,
