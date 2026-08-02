@@ -64,15 +64,15 @@ export function buildDocumentCommentDecorationSet(doc, comments = []) {
 
 export function normalizeHeadingNumberingDefaults(value) {
   const source = value && typeof value === "object" ? value : {};
-  return { 1: source[1] !== false, 2: source[2] !== false, 3: source[3] !== false };
+  return { 1: source[1] !== false, 2: source[2] !== false, 3: source[3] !== false, 4: source[4] !== false };
 }
 
 export function numberHeadingItems(headingItems = [], numberingDefaults = DEFAULT_TEMPLATE_PRESENTATION.headingNumbering) {
   const normalizedDefaults = normalizeHeadingNumberingDefaults(numberingDefaults);
-  const counters = [0, 0, 0];
+  const counters = [0, 0, 0, 0];
   const items = [];
   headingItems.forEach((heading) => {
-    const level = Math.max(1, Math.min(3, Number(heading.level) || 1));
+    const level = Math.max(1, Math.min(4, Number(heading.level) || 1));
     const text = heading.text?.trim();
     if (!text || text === "目录") return;
     const numberingMode = ["inherit", "on", "off"].includes(heading.numberingMode) ? heading.numberingMode : "inherit";
@@ -97,6 +97,19 @@ export function numberHeadingItems(headingItems = [], numberingDefaults = DEFAUL
     });
   });
   return items;
+}
+
+export function numberOutlineItems(outlineItems = [], numberingDefaults = DEFAULT_TEMPLATE_PRESENTATION.headingNumbering) {
+  const numberedHeadings = numberHeadingItems(
+    outlineItems.filter((item) => item?.type === "heading"),
+    numberingDefaults,
+  );
+  const numberedByPosition = new Map(numberedHeadings.map((item) => [item.pos, item]));
+  return outlineItems.map((item) => (
+    item?.type === "heading"
+      ? { ...item, ...(numberedByPosition.get(item.pos) || { numbered: false, number: "" }) }
+      : item
+  ));
 }
 
 export function buildHeadingNumberDecorationSet(doc, headingItems, numberingDefaults = DEFAULT_TEMPLATE_PRESENTATION.headingNumbering) {
@@ -446,6 +459,12 @@ export function getDocumentComments(editor, fallback = []) {
 export function getPaperDerivedState(editor) {
   if (!editor?.state) return EMPTY_PAPER_DERIVED_STATE;
   return PAPER_DERIVED_STATE_PLUGIN_KEY.getState(editor.state) || EMPTY_PAPER_DERIVED_STATE;
+}
+
+export function getHeadingNumberingDefaults(editor) {
+  if (!editor?.state) return normalizeHeadingNumberingDefaults();
+  return HEADING_NUMBERING_PLUGIN_KEY.getState(editor.state)?.defaults
+    || normalizeHeadingNumberingDefaults();
 }
 
 export function syncHeadingNumberingDefaults(editor, headingNumbering) {

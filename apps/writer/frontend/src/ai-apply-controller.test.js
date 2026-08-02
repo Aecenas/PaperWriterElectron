@@ -216,7 +216,7 @@ test("automatic apply fingerprints resolution, preview, and one confirm transact
       statuses.push(args);
     },
   });
-  confirmActions.confirmAiApplyPreview();
+  await confirmActions.confirmAiApplyPreview();
 
   assert.equal(manifests.length, 3);
   assert.equal(preview, null);
@@ -234,6 +234,52 @@ test("automatic apply fingerprints resolution, preview, and one confirm transact
   assert.deepEqual(statuses.at(-1), [
     "已应用修改；按 Ctrl+Z 可完整撤销",
     "success",
+  ]);
+});
+
+test("AI apply fails closed when the pre-apply safety snapshot cannot be created", async () => {
+  const { editor, transactionCalls } = createEditor();
+  const statuses = [];
+  const preview = {
+    resolved: {
+      ok: true,
+      manifest: { documentFingerprint: "stable" },
+      operation: {
+        from: 1,
+        to: 2,
+        content: [{ type: "paragraph", content: [] }],
+      },
+    },
+    block: null,
+    blockIndex: -1,
+    blocks: [],
+  };
+  let previewState = preview;
+  const actions = createAiApplyPreviewActions({
+    aiApplyPreview: preview,
+    buildManifest: () => ({ documentFingerprint: "stable" }),
+    createSafetySnapshot: async () => {
+      throw new Error("disk full");
+    },
+    editor,
+    getActiveDocumentSnapshot: () => ({ document: { comments: [] } }),
+    setAiApplyPreview(value) {
+      previewState = value;
+    },
+    setManualAiApply() {},
+    setManualFallbackAiBlockIndexes() {},
+    showStatus(...args) {
+      statuses.push(args);
+    },
+  });
+
+  await actions.confirmAiApplyPreview();
+
+  assert.equal(previewState, preview);
+  assert.equal(transactionCalls.length, 0);
+  assert.deepEqual(statuses.at(-1), [
+    "无法创建应用前安全版本，正文未修改；请重试",
+    "warning",
   ]);
 });
 
@@ -484,7 +530,7 @@ test("preview staging reads live comments without mutating and rejects stale tar
   assert.equal(transactionCalls.length, 0);
 });
 
-test("cancel never commits and stale confirmation returns to manual targeting", () => {
+test("cancel never commits and stale confirmation returns to manual targeting", async () => {
   const { editor, transactionCalls } = createEditor();
   const preview = {
     block: { text: "proposal" },
@@ -542,7 +588,7 @@ test("cancel never commits and stale confirmation returns to manual targeting", 
       statuses.push(args);
     },
   });
-  staleActions.confirmAiApplyPreview();
+  await staleActions.confirmAiApplyPreview();
 
   assert.equal(typeof originalBegin, "function");
   assert.equal(transactionCalls.length, 0);

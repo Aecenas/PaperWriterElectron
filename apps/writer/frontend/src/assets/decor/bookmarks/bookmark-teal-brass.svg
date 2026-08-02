@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 160" fill="none">
+  <defs>
+    <linearGradient id="brass-edge" x1="15" y1="2" x2="70" y2="155" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C1A46B"/>
+      <stop offset="0.5" stop-color="#A3824D"/>
+      <stop offset="1" stop-color="#795C31"/>
+    </linearGradient>
+    <linearGradient id="brass-base" x1="8" y1="4" x2="68" y2="151" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#43857D"/>
+      <stop offset="1" stop-color="#2F706A"/>
+    </linearGradient>
+    <filter id="brass-shadow" x="-20%" y="-12%" width="150%" height="136%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="1" dy="2.5" stdDeviation="1.8" flood-color="#2D2B24" flood-opacity="0.24"/>
+    </filter>
+    <filter id="brass-grain" x="-12%" y="-8%" width="124%" height="116%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.57 0.13" numOctaves="2" seed="43" result="noise"/>
+      <feColorMatrix in="noise" type="saturate" values="0" result="mono"/>
+      <feComponentTransfer in="mono" result="soft-noise">
+        <feFuncA type="table" tableValues="0 0.25"/>
+      </feComponentTransfer>
+      <feComposite in="soft-noise" in2="SourceAlpha" operator="in" result="masked-noise"/>
+      <feBlend in="SourceGraphic" in2="masked-noise" mode="soft-light"/>
+    </filter>
+    <path id="brass-front" d="M3 3H74V149L39 127L3 149V3Z"/>
+  </defs>
+  <g filter="url(#brass-shadow)">
+    <path d="M6 4H78V153L42 130L6 153V4Z" fill="url(#brass-edge)"/>
+    <use href="#brass-front" fill="url(#brass-base)" filter="url(#brass-grain)"/>
+    <use href="#brass-front" stroke="#245F59" stroke-opacity="0.34" stroke-width="1"/>
+    <path d="M74.5 7V147.5L40.5 126" stroke="#D3BB85" stroke-opacity="0.5" stroke-width="0.8"/>
+  </g>
+</svg>

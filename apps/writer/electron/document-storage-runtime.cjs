@@ -22,6 +22,7 @@ function createDocumentStorageRuntime({
   readFileSnapshot,
   readDiskRevision,
   createDocumentInterchange,
+  formatCitations,
   mammoth,
   docx,
   iconvLite,
@@ -138,6 +139,7 @@ function createDocumentStorageRuntime({
         docx,
         iconvLite,
         resolveAsset: readProtocolAsset,
+        formatCitations,
       });
     }
     return documentInterchange;

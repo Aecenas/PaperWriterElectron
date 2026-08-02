@@ -213,6 +213,9 @@ test("relationship data is invalidated and reloaded when the active document con
 
 test("a second primary document can create the secondary group from the single-pane tab menu", () => {
   const singlePaneBranch = appSource.match(/\) : \(\s*<GroupTabStrip[\s\S]*?\n\s*<\/GroupTabStrip>|\) : \(\s*<GroupTabStrip[\s\S]*?\n\s*\/\>/)?.[0] || "";
-  assert.match(singlePaneBranch, /canMoveDocument=\{\(\) => workspaceGroups\.primary\.views\.length > 1\}/);
+  assert.match(singlePaneBranch, /canMoveDocument=\{\(view, targetGroupId\) => \(/);
+  assert.match(singlePaneBranch, /workspaceGroups\.primary\.views\.length > 1/);
+  assert.match(singlePaneBranch, /targetGroupId !== WORKSPACE_GROUP_ID\.SECONDARY/);
+  assert.match(singlePaneBranch, /getPageViewStateForTab\(view\.tabId\)\.mode !== PAGE_VIEW_MODES\.SPREAD/);
   assert.doesNotMatch(singlePaneBranch, /canMoveDocument=\{\(\) => false\}/);
 });

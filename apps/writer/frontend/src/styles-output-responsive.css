@@ -100,6 +100,16 @@
   page-break-after: always;
 }
 
+.desktop-shell.print-mode .paper-editor,
+.desktop-shell.print-mode .paged-page-body,
+.desktop-shell.image-export-mode .paper-editor,
+.desktop-shell.image-export-mode .paged-page-body,
+.image-export-stage .paper-editor,
+.image-export-stage .paged-page-body,
+.page-map-export-stage .page-map-export-editor {
+  font-family: var(--paper-font), "Segoe UI Emoji";
+}
+
 .desktop-shell.print-mode .paper-finalized-break {
   display: none;
 }
@@ -939,6 +949,7 @@
     height: auto;
     overflow: visible;
     background: var(--print-paper-repeat-bg, none) center top / 794px auto repeat-y, var(--print-paper-base, #ffffff);
+    font-family: "Segoe UI", "Segoe UI Emoji", system-ui, sans-serif;
   }
 
   .export-dialog-overlay {

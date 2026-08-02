@@ -1,4 +1,5 @@
 export const RELEASE_PHASE_DEFINITIONS = [
+  { id: "professional-creation", title: "专业创作与全稿工作流" },
   { id: "research-workspace", title: "研究写作与双编辑组" },
   { id: "intelligent-collaboration", title: "智能协作与安全底座" },
   { id: "writing-workbench", title: "写作工作台成型" },
@@ -6,6 +7,23 @@ export const RELEASE_PHASE_DEFINITIONS = [
 ];
 
 export const RELEASE_NOTES = [
+  {
+    version: "1.1.0",
+    phaseId: "professional-creation",
+    scale: "major",
+    date: "2026-08-02",
+    title: "AI 起稿、专业内容与本地安全工具",
+    changes: [
+      "新增 AI 起稿：可从主题、读者、篇幅和写作要求出发，明确勾选参考资料后依次完成结构设计、分节撰写、全文检查，并生成一封不覆盖原稿的新信笺；中断任务支持继续生成。",
+      "正文新增中英文 Emoji 选择器、段落书签、带语言与换行设置的代码块、TeX 行内与块公式、公式编号和交叉引用，以及带实时预览、图注与宽度控制的 Mermaid 图。",
+      "结构区新增本地写作检查，可同时检查中英文拼写与自定义用词规范，并支持定位、忽略、单次替换和全文替换；白名单与术语规则均只在当前设备运行。",
+      "文献能力升级为私域与公域双层文献库，支持 BibTeX、RIS、CSL-JSON 导入导出、冲突预览、GB/T 7714、APA、MLA、Chicago 样式，以及 DOI / ISBN 联网补全。",
+      "新增连续、单页和双页三种页面视图，提供页码跳转、前后翻页、适合窗口与缩放控制；四级标题、可折叠编号大纲和结构区书签共同加强长文导航。",
+      "新增信笺版本历史：保存时自动保留本地版本，可对照标题、作者、排版、引用、媒体和正文差异，支持命名、删除与安全恢复；AI 直接应用前也会创建保护版本。",
+      "新增 .jianprofile 配置备份与迁移，可选择合并普通设置、模板、模型配置和写作词典；导入前校验完整性并预览差异，API Key 仅在用户明确选择后使用口令加密携带。",
+      "完善 DOCX、Markdown、HTML 等可编辑格式对公式、代码、图表、Emoji、引用和分页内容的交换与降级呈现，并继续收紧文件、IPC、Mermaid 渲染和外部查询边界。",
+    ],
+  },
   {
     version: "1.0.0",
     phaseId: "research-workspace",

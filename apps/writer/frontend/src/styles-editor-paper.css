@@ -163,7 +163,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--title-font);
+  font-family: var(--title-font), "Segoe UI Emoji";
   font-size: var(--title-size);
   font-weight: var(--title-weight);
   font-synthesis: none;
@@ -196,7 +196,7 @@
   padding-bottom: 26px;
   border-bottom: 1px solid rgba(125, 111, 88, 0.22);
   color: rgba(83, 90, 92, 0.66);
-  font-family: var(--subtitle-font);
+  font-family: var(--subtitle-font), "Segoe UI Emoji";
   font-size: var(--subtitle-size);
   font-weight: 400;
   font-synthesis: weight style;
@@ -255,7 +255,7 @@
   min-height: 930px;
   padding: 28px clamp(56px, 9%, 96px) 128px;
   outline: none;
-  font-family: var(--paper-font);
+  font-family: var(--paper-font), "Segoe UI Emoji";
   font-size: var(--paper-font-size);
   font-weight: 400;
   font-synthesis: weight style;
@@ -475,7 +475,7 @@
   height: 100%;
   overflow: hidden;
   padding: 92px clamp(56px, 9%, 96px) 128px;
-  font-family: var(--paper-font);
+  font-family: var(--paper-font), "Segoe UI Emoji";
   font-size: var(--paper-font-size);
   font-weight: 400;
   font-synthesis: weight style;
@@ -513,11 +513,13 @@
 .paper-editor h1,
 .paper-editor h2,
 .paper-editor h3,
+.paper-editor h4,
 .paged-page-body h1,
 .paged-page-body h2,
-.paged-page-body h3 {
+.paged-page-body h3,
+.paged-page-body h4 {
   margin: 0 0 0.72em;
-  font-family: var(--heading-font);
+  font-family: var(--heading-font), "Segoe UI Emoji";
   font-weight: var(--heading-weight, 700);
   font-variation-settings: "wght" var(--heading-weight, 700);
   line-height: 1.45;
@@ -539,6 +541,11 @@
   color: var(--heading-color-3, #9a5635);
 }
 
+.paper-editor h4,
+.paged-page-body h4 {
+  color: var(--heading-color-4, #9a5635);
+}
+
 .paper-editor h1,
 .paged-page-body h1 {
   font-size: max(var(--heading-size), calc(var(--paper-font-size) + 10px));
@@ -554,15 +561,22 @@
   font-size: calc(var(--paper-font-size) + 2px);
 }
 
+.paper-editor h4,
+.paged-page-body h4 {
+  font-size: var(--paper-font-size);
+}
+
 .paper-editor h1[data-heading-number],
 .paper-editor h2[data-heading-number],
-.paper-editor h3[data-heading-number] {
+.paper-editor h3[data-heading-number],
+.paper-editor h4[data-heading-number] {
   display: block;
 }
 
 .paper-editor h1[data-heading-number]::before,
 .paper-editor h2[data-heading-number]::before,
-.paper-editor h3[data-heading-number]::before {
+.paper-editor h3[data-heading-number]::before,
+.paper-editor h4[data-heading-number]::before {
   display: inline-block;
   margin-right: 0.62em;
   color: inherit;
@@ -673,6 +687,15 @@
   --toc-item-weight: 620;
 }
 
+.paper-toc-list li.level-4 {
+  padding-left: 4.55em;
+  --toc-item-color: rgba(71, 82, 82, 0.64);
+  --toc-number-color: rgba(176, 111, 80, 0.7);
+  --toc-item-size: max(calc(var(--toc-size) - 2px), 12px);
+  --toc-number-size: 0.82em;
+  --toc-item-weight: 580;
+}
+
 .paper-toc-list button {
   width: 100%;
   min-height: 32px;
@@ -686,7 +709,7 @@
   color: var(--toc-item-color);
   background: transparent;
   text-align: left;
-  font-family: var(--toc-font);
+  font-family: var(--toc-font), "Segoe UI Emoji";
   font-size: var(--toc-item-size);
   font-weight: var(--toc-item-weight);
   line-height: 1.45;
@@ -707,6 +730,10 @@
   min-height: 29px;
 }
 
+.paper-toc-list li.level-4 button {
+  min-height: 27px;
+}
+
 .paper-toc-list button:hover {
   color: #8f4f31;
   background: rgba(244, 238, 228, 0.66);
@@ -714,7 +741,7 @@
 
 .paper-toc-number {
   color: var(--toc-number-color);
-  font-family: var(--subtitle-font);
+  font-family: var(--subtitle-font), "Segoe UI Emoji";
   font-size: var(--toc-number-size);
   font-weight: 760;
   text-align: right;
@@ -773,7 +800,7 @@
   border-radius: 5px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.34);
-  font-family: var(--body-font);
+  font-family: var(--body-font), "Segoe UI Emoji";
   font-size: 0.92em;
   line-height: 1.65;
   text-indent: 0;
@@ -838,7 +865,7 @@
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.34);
   color: rgba(74, 79, 79, 0.72);
-  font-family: var(--quote-font);
+  font-family: var(--quote-font), "Segoe UI Emoji";
   font-size: var(--quote-size);
   font-weight: 400;
   font-synthesis: weight style;
@@ -925,7 +952,7 @@
   gap: 0.2em;
   color: rgba(154, 86, 53, 0.76);
   background: transparent;
-  font-family: var(--image-caption-font);
+  font-family: var(--image-caption-font), "Segoe UI Emoji";
   font-size: var(--image-caption-size);
   font-weight: 650;
   line-height: 1.55;

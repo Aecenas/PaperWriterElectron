@@ -53,6 +53,7 @@ function createHarness(options = {}) {
     dialogSaves: [],
     ensureExtensions: [],
     folderLists: [],
+    historySnapshots: [],
     migrationBackups: [],
     mutableEntries: [],
     mutations: 0,
@@ -331,6 +332,28 @@ function createHarness(options = {}) {
         throw enoent();
       },
     },
+    historyFacade: options.historyFacade === false ? null : (
+      options.historyFacade || {
+        async prepareSnapshot(payload) {
+          if (options.historyPrepareError) throw options.historyPrepareError;
+          return {
+            document: options.historyDocument || {
+              version: 2,
+              documentId: payload.documentId,
+              title: "Previous saved version",
+            },
+            async commit() {
+              calls.historySnapshots.push(payload);
+              if (options.historyError) throw options.historyError;
+              return { entry: { id: "history-1" } };
+            },
+          };
+        },
+      }
+    ),
+    async writeDebugLog(...args) {
+      calls.debugSequence.push(["debug", ...args]);
+    },
   });
 
   return {
@@ -541,6 +564,7 @@ test("normal save keeps the editor snapshot identity and checks expected revisio
     isFile: () => true,
     dev: 10,
     ino: 20,
+    mtimeMs: 1234,
   };
   const harness = createHarness({
     statResults: [stableStat, stableStat],
@@ -576,6 +600,12 @@ test("normal save keeps the editor snapshot identity and checks expected revisio
   ]);
   assert.equal(harness.calls.saveDocuments[0][1], input);
   assert.equal(input.updatedAt, "2026-07-25T11:59:59.000Z");
+  assert.deepEqual(harness.calls.historySnapshots, [{
+    documentId: validUuid(200),
+    filePath: "C:\\workspace\\draft.letterpaper",
+    kind: "auto",
+    savedAt: 1234,
+  }]);
   assert.deepEqual(result, {
     canceled: false,
     path: "C:\\workspace\\draft.letterpaper",
@@ -587,6 +617,60 @@ test("normal save keeps the editor snapshot identity and checks expected revisio
     },
     migrationBackupPath: "C:\\migration\\draft-v1.letterpaper",
   });
+});
+
+test("saving without document changes does not add a current-state history entry", async () => {
+  const documentId = validUuid(204);
+  const input = {
+    version: 2,
+    documentId,
+    title: "Unchanged",
+    html: "<p>same</p>",
+    updatedAt: "2026-07-25T11:00:00.000Z",
+  };
+  const harness = createHarness({
+    historyDocument: { ...input },
+    migrationBackupPath: "",
+  });
+
+  const result = await harness.handlers.get("document:save")(
+    {},
+    input,
+    "C:\\workspace\\draft.letterpaper",
+    false,
+    [],
+    null,
+  );
+
+  assert.equal(result.canceled, false);
+  assert.deepEqual(harness.calls.historySnapshots, []);
+});
+
+test("history snapshot failure never turns a committed document save into a failure", async () => {
+  const harness = createHarness({
+    historyError: new Error("disk full"),
+  });
+  const result = await harness.handlers.get("document:save")(
+    {},
+    {
+      version: 2,
+      documentId: validUuid(205),
+      title: "Saved",
+    },
+    "C:\\workspace\\draft.letterpaper",
+    false,
+    [],
+    null,
+  );
+  assert.equal(result.canceled, false);
+  assert.equal(result.historyWarning, "文档已保存，但未能创建本地历史版本");
+  assert.ok(
+    harness.calls.debugSequence.some(
+      (entry) => Array.isArray(entry)
+        && entry[0] === "debug"
+        && entry[1] === "history:auto-snapshot:error",
+    ),
+  );
 });
 
 test("save rejects future-schema state and another open tab target before any write", async () => {

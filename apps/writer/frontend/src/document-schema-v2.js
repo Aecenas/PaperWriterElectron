@@ -1,9 +1,17 @@
-export const DOCUMENT_SCHEMA_VERSION = 2;
+export const DOCUMENT_SCHEMA_VERSION = 3;
+export const DEFAULT_CITATION_STYLE = Object.freeze({
+  styleId: "gb-t-7714-2015-numeric",
+  locale: "zh-CN",
+});
+export const MAX_CUSTOM_CSL_STYLE_BYTES = 512 * 1024;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CITATION_TYPES = new Set(["book", "article", "web", "pdf", "report", "thesis", "other"]);
 const MAX_FOOTNOTES = 5_000;
 const MAX_CITATION_SOURCES = 5_000;
+const MAX_CSL_SERIALIZED_CHARS = 64 * 1024;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+const CUSTOM_CITATION_STYLE_ID_PATTERN = /^custom-[0-9a-f]{24}$/;
 
 function boundedText(value, maximum, { trim = true } = {}) {
   if (typeof value !== "string") return "";
@@ -125,6 +133,82 @@ function normalizeHttpUrl(value) {
   }
 }
 
+function normalizeCitationKey(value) {
+  return boundedText(value, 200).replace(/[^a-zA-Z0-9_.:+/-]/g, "-");
+}
+
+function normalizeCslValue(value, depth = 0) {
+  if (depth > 8) return undefined;
+  if (typeof value === "string") return boundedText(value, 20_000, { trim: false });
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "boolean" || value === null) return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 500).map((item) => normalizeCslValue(item, depth + 1)).filter((item) => item !== undefined);
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const result = {};
+  for (const [key, item] of Object.entries(value).slice(0, 500)) {
+    const safeKey = boundedText(key, 100);
+    if (!safeKey || safeKey === "__proto__" || safeKey === "constructor" || safeKey === "prototype") continue;
+    const safeValue = normalizeCslValue(item, depth + 1);
+    if (safeValue !== undefined) result[safeKey] = safeValue;
+  }
+  return result;
+}
+
+export function normalizeCitationStyle(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const locale = boundedText(source.locale, 32);
+  const styleId = boundedText(source.styleId, 200) || DEFAULT_CITATION_STYLE.styleId;
+  const normalized = {
+    styleId,
+    locale: /^(?:zh-CN|en-US)$/i.test(locale)
+      ? (locale.toLowerCase() === "zh-cn" ? "zh-CN" : "en-US")
+      : DEFAULT_CITATION_STYLE.locale,
+  };
+  const customStyle = normalizeCustomCitationStyle(source.customStyle, styleId);
+  return customStyle ? { ...normalized, customStyle } : normalized;
+}
+
+function utf8ByteLength(value) {
+  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(value).byteLength;
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index);
+    if (codePoint > 0xffff) index += 1;
+    bytes += codePoint <= 0x7f ? 1 : (codePoint <= 0x7ff ? 2 : (codePoint <= 0xffff ? 3 : 4));
+  }
+  return bytes;
+}
+
+/**
+ * Carries a main-process-validated CSL style without turning the document into
+ * a generic XML container. The main process recomputes the SHA-256 hash before
+ * every use; this projection additionally binds the selected style id to that
+ * hash and rejects network-capable XML before it reaches formatting IPC.
+ */
+export function normalizeCustomCitationStyle(value, expectedStyleId = "") {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const xml = typeof source.xml === "string" ? source.xml.trim() : "";
+  const hash = boundedText(source.hash, 64).toLowerCase();
+  const styleId = boundedText(source.styleId, 200).toLowerCase();
+  if (!xml || utf8ByteLength(xml) > MAX_CUSTOM_CSL_STYLE_BYTES) return null;
+  if (!SHA256_PATTERN.test(hash) || !CUSTOM_CITATION_STYLE_ID_PATTERN.test(styleId)) return null;
+  if (styleId !== `custom-${hash.slice(0, 24)}`) return null;
+  if (expectedStyleId && styleId !== boundedText(expectedStyleId, 200).toLowerCase()) return null;
+  if (/<!DOCTYPE|<!ENTITY|\bSYSTEM\b|\bPUBLIC\b/i.test(xml)) return null;
+  if (/<link\b[^>]*\bhref\s*=\s*["'](?:https?:|file:|\/\/)/i.test(xml)) return null;
+  const root = /^<\?xml[^>]*>\s*<style\b([^>]*)>|^<style\b([^>]*)>/i.exec(xml);
+  const attributes = root?.[1] || root?.[2] || "";
+  if (!root || !/xmlns\s*=\s*["']http:\/\/purl\.org\/net\/xbiblio\/csl["']/i.test(attributes)) return null;
+  return {
+    styleId,
+    title: boundedText(source.title, 200) || "自定义 CSL 样式",
+    hash,
+    xml,
+  };
+}
+
 const LEGACY_RESEARCH_SOURCE_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
 
 /**
@@ -162,8 +246,13 @@ export function normalizeCitationSources(sources, options = {}) {
     seen.add(id);
     const createdAt = normalizeTimestamp(source.createdAt, now);
     const type = CITATION_TYPES.has(source.type) ? source.type : "other";
+    let csl = normalizeCslValue(source.csl);
+    if (!csl || typeof csl !== "object" || Array.isArray(csl)) csl = {};
+    if (JSON.stringify(csl).length > MAX_CSL_SERIALIZED_CHARS) csl = {};
     normalized.push({
       id,
+      citationKey: normalizeCitationKey(source.citationKey || csl.id),
+      csl,
       type,
       title,
       authors: normalizeAuthors(source.authors),
@@ -223,7 +312,7 @@ export function normalizeCitationReferenceMetadata(metadata) {
 }
 
 /**
- * Upgrades a supported document to canonical v2 metadata without mutating it.
+ * Upgrades a supported document to canonical v3 metadata without mutating it.
  * Unknown top-level fields remain intact for forward-compatible feature data.
  */
 export function normalizeDocumentSchemaV2(document, options = {}) {
@@ -233,15 +322,21 @@ export function normalizeDocumentSchemaV2(document, options = {}) {
   const idFactory = resolveIdFactory(options);
   const documentId = normalizeDocumentId(source.documentId) || safeGeneratedId(idFactory);
   const derivedFromCandidate = normalizeDocumentId(source.derivedFrom);
-  return {
+  const normalized = {
     ...source,
     version: DOCUMENT_SCHEMA_VERSION,
     documentId,
     derivedFrom: derivedFromCandidate && derivedFromCandidate !== documentId ? derivedFromCandidate : "",
     footnotes: normalizeDocumentFootnotes(source.footnotes, options),
     citationSources: normalizeCitationSources(source.citationSources, options),
+    citationStyle: normalizeCitationStyle(source.citationStyle),
   };
+  // Pagination belongs to the per-tab session, never the document payload.
+  delete normalized.layoutMode;
+  return normalized;
 }
+
+export const normalizeDocumentSchemaV3 = normalizeDocumentSchemaV2;
 
 /** Creates only the identity fields needed by Save As / Copy Backup. */
 export function createDerivedDocumentIdentity(sourceDocumentId, options = {}) {
@@ -256,7 +351,7 @@ export function createDerivedDocumentIdentity(sourceDocumentId, options = {}) {
 export function mergePersistedDocumentIdentity(liveDocument, persistedDocument) {
   const live = liveDocument && typeof liveDocument === "object" ? liveDocument : {};
   const persistedVersion = readDocumentSchemaVersion(persistedDocument);
-  if (persistedVersion < DOCUMENT_SCHEMA_VERSION) return { ...live };
+  if (persistedVersion < 2) return { ...live };
   if (persistedVersion > DOCUMENT_SCHEMA_VERSION) throw new UnsupportedDocumentSchemaVersionError(persistedVersion);
   const documentId = normalizeDocumentId(persistedDocument?.documentId);
   if (!documentId) throw new Error("保存结果缺少有效的 documentId");

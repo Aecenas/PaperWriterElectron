@@ -12,6 +12,26 @@ function safeNumber(value) {
   return Math.max(1, Math.min(5000, Number.parseInt(value, 10) || 1));
 }
 
+function safeCitationKind(value) {
+  return value === "author-date" ? "author-date" : "numeric";
+}
+
+function safeFormattedText(value, maximum) {
+  return String(value || "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maximum);
+}
+
+function safeCitationDisplayText(value) {
+  return safeFormattedText(value, 1_000);
+}
+
+function safeBibliographyText(value) {
+  return safeFormattedText(value, 20_000);
+}
+
 function safeFootnoteEntries(value) {
   return (Array.isArray(value) ? value : []).slice(0, 5000).flatMap((entry) => {
     const footnoteId = safeUuid(entry?.footnoteId || entry?.id);
@@ -21,6 +41,19 @@ function safeFootnoteEntries(value) {
       number: safeNumber(entry?.number),
       text: String(entry?.text || "脚注内容缺失").slice(0, 20000),
       missing: Boolean(entry?.missing),
+    }];
+  });
+}
+
+function safeBibliographyEntries(value) {
+  return (Array.isArray(value) ? value : []).slice(0, 5000).flatMap((entry) => {
+    const sourceId = safeUuid(entry?.sourceId || entry?.id);
+    if (!sourceId) return [];
+    return [{
+      sourceId,
+      text: safeBibliographyText(entry?.text || "来源信息缺失"),
+      missing: Boolean(entry?.missing),
+      citationKind: safeCitationKind(entry?.citationKind),
     }];
   });
 }
@@ -65,22 +98,43 @@ export const PaperCitationReference = Node.create({
     return {
       sourceId: { default: "", parseHTML: (element) => safeUuid(element.getAttribute("data-citation-source-id")) },
       pages: { default: "", parseHTML: (element) => String(element.getAttribute("data-citation-pages") || "").slice(0, 128) },
-      number: { default: 1, parseHTML: (element) => safeNumber(element.textContent) },
+      number: {
+        default: 1,
+        rendered: false,
+        parseHTML: (element) => safeNumber(element.getAttribute("data-citation-number") || element.textContent),
+      },
+      displayText: {
+        default: "",
+        rendered: false,
+        parseHTML: (element) => safeCitationDisplayText(element.getAttribute("data-citation-display") || element.textContent),
+      },
+      citationKind: {
+        default: "numeric",
+        rendered: false,
+        parseHTML: (element) => safeCitationKind(element.getAttribute("data-citation-kind")),
+      },
     };
   },
   parseHTML() { return [{ tag: "span[data-citation-source-id]" }]; },
-  renderHTML({ HTMLAttributes }) {
-    const number = safeNumber(HTMLAttributes.number);
-    const pages = String(HTMLAttributes.pages || "").slice(0, 128);
+  renderHTML({ HTMLAttributes, node }) {
+    const number = safeNumber(node.attrs.number);
+    const pages = String(node.attrs.pages || "").slice(0, 128);
+    const citationKind = safeCitationKind(node.attrs.citationKind);
+    const displayText = safeCitationDisplayText(node.attrs.displayText)
+      || (citationKind === "numeric" ? String(number) : "引用");
+    const accessibleLabel = citationKind === "numeric" ? String(number) : displayText;
     return ["span", mergeAttributes(HTMLAttributes, {
       class: "paper-citation-reference",
-      "data-citation-source-id": safeUuid(HTMLAttributes.sourceId),
+      "data-citation-source-id": safeUuid(node.attrs.sourceId),
       "data-citation-pages": pages,
+      "data-citation-number": String(number),
+      "data-citation-display": displayText,
+      "data-citation-kind": citationKind,
       role: "button",
       tabindex: "0",
-      title: pages ? `查看引用 ${number}，第 ${pages} 页` : `查看引用 ${number}`,
-      "aria-label": pages ? `查看引用 ${number}，第 ${pages} 页` : `查看引用 ${number}`,
-    }), String(number)];
+      title: pages ? `查看引用 ${accessibleLabel}，第 ${pages} 页` : `查看引用 ${accessibleLabel}`,
+      "aria-label": pages ? `查看引用 ${accessibleLabel}，第 ${pages} 页` : `查看引用 ${accessibleLabel}`,
+    }), displayText];
   },
 });
 
@@ -155,12 +209,12 @@ export const PaperBibliography = Node.create({
   selectable: false,
   addAttributes() {
     return { entries: { default: [], parseHTML: (element) => {
-      try { const value = JSON.parse(element.getAttribute("data-reference-list") || "[]"); return Array.isArray(value) ? value.slice(0, 5000) : []; } catch { return []; }
+      try { return safeBibliographyEntries(JSON.parse(element.getAttribute("data-reference-list") || "[]")); } catch { return []; }
     } } };
   },
   parseHTML() { return [{ tag: "section[data-reference-list]" }]; },
   renderHTML({ HTMLAttributes }) {
-    const entries = Array.isArray(HTMLAttributes.entries) ? HTMLAttributes.entries.slice(0, 5000) : [];
+    const entries = safeBibliographyEntries(HTMLAttributes.entries);
     return ["section", {
       class: "paper-bibliography",
       "data-reference-list": JSON.stringify(entries),
@@ -168,7 +222,10 @@ export const PaperBibliography = Node.create({
     },
     ["h2", {}, "参考文献"],
     ...(entries.length
-      ? entries.map((entry, index) => ["p", { "data-citation-source-id": safeUuid(entry?.sourceId) }, `[${index + 1}] ${String(entry?.text || "").slice(0, 5000)}`])
+      ? entries.map((entry) => ["p", {
+        "data-citation-source-id": entry.sourceId,
+        "data-citation-kind": entry.citationKind,
+      }, entry.text])
       : [["p", { class: "paper-bibliography-empty" }, "暂无正文引用"]])];
   },
 });
@@ -190,7 +247,11 @@ function dispatchKnowledgeReferenceOpen(view, position, event, element) {
     footnoteId: footnoteElement?.getAttribute("data-footnote-id") || "",
     sourceId: citationElement?.getAttribute("data-citation-source-id") || "",
     pages: citationElement?.getAttribute("data-citation-pages") || "",
-    number: safeNumber(referenceElement.getAttribute("data-footnote-number") || referenceElement.textContent),
+    number: safeNumber(
+      referenceElement.getAttribute("data-footnote-number")
+      || referenceElement.getAttribute("data-citation-number")
+      || referenceElement.textContent,
+    ),
     position: Number(position),
     editorDom: view.dom,
     anchorElement: referenceElement,
@@ -345,6 +406,9 @@ export function synchronizeKnowledgeReferences(editor, metadata = [], legacyFoot
   if (!editor?.state?.doc) return [];
   const citationSources = Array.isArray(metadata) ? metadata : (metadata?.citationSources || []);
   const footnotes = Array.isArray(metadata) ? legacyFootnotes : (metadata?.footnotes || []);
+  const entriesById = Array.isArray(metadata) ? {} : (metadata?.entriesById || {});
+  const citationsById = Array.isArray(metadata) ? {} : (metadata?.citationsById || {});
+  const citationKind = safeCitationKind(Array.isArray(metadata) ? "numeric" : metadata?.citationKind);
   const tailTransaction = createKnowledgeTailTransaction(editor.state);
   if (tailTransaction) editor.view.dispatch(tailTransaction);
 
@@ -369,9 +433,16 @@ export function synchronizeKnowledgeReferences(editor, metadata = [], legacyFoot
     else if (node.type.name === "paperFootnoteList") footnoteListNodes.push({ node, position });
   });
   const citationOrder = [...citationNumberById.keys()];
-  const bibliographyEntries = citationOrder.map((sourceId) => {
+  const bibliographyEntries = citationOrder.map((sourceId, index) => {
     const source = sourceById.get(sourceId);
-    return { sourceId, text: source ? formatCitationSource(source) : "来源信息缺失", missing: !source };
+    const formatted = safeBibliographyText(entriesById?.[sourceId]);
+    const fallback = source ? formatCitationSource(source) : "来源信息缺失";
+    return {
+      sourceId,
+      text: formatted || (citationKind === "numeric" ? `[${index + 1}] ${fallback}` : fallback),
+      missing: !source,
+      citationKind,
+    };
   });
   const footnoteEntries = [...footnoteNumberById.entries()].map(([footnoteId, number]) => {
     const footnote = footnoteById.get(footnoteId);
@@ -382,8 +453,19 @@ export function synchronizeKnowledgeReferences(editor, metadata = [], legacyFoot
   let changed = false;
   citationNodes.forEach(({ node, position, sourceId }) => {
     const number = citationNumberById.get(sourceId) || 1;
-    if (Number(node.attrs.number) !== number) {
-      transaction = transaction.setNodeMarkup(position, undefined, { ...node.attrs, number });
+    const displayText = safeCitationDisplayText(citationsById?.[sourceId])
+      || (citationKind === "numeric" ? String(number) : formatCitationSource(sourceById.get(sourceId)));
+    if (
+      Number(node.attrs.number) !== number
+      || node.attrs.displayText !== displayText
+      || node.attrs.citationKind !== citationKind
+    ) {
+      transaction = transaction.setNodeMarkup(position, undefined, {
+        ...node.attrs,
+        number,
+        displayText,
+        citationKind,
+      });
       changed = true;
     }
   });
@@ -434,7 +516,11 @@ export function stripDerivedKnowledgeDataFromHtml(html) {
   return String(html || "")
     .replace(/<section\b[^>]*\bdata-footnote-list\s*=\s*(?:"[^"]*"|'[^']*')[^>]*>[\s\S]*?<\/section\s*>/gi, "")
     .replace(/<sup\b([^>]*\bdata-footnote-(?:id|ref)\s*=\s*(?:"[^"]*"|'[^']*')[^>]*)>[\s\S]*?<\/sup\s*>/gi, "<sup$1></sup>")
-    .replace(/<span\b([^>]*\bdata-citation-source-id\s*=\s*(?:"[^"]*"|'[^']*')[^>]*)>[\s\S]*?<\/span\s*>/gi, "<span$1></span>")
+    .replace(/<span\b([^>]*\bdata-citation-source-id\s*=\s*(?:"[^"]*"|'[^']*')[^>]*)>[\s\S]*?<\/span\s*>/gi, (_full, attributes) => {
+      const normalizedAttributes = String(attributes)
+        .replace(/\s+(?:number|displaytext|citationkind|data-citation-(?:number|display|kind))\s*=\s*(?:"[^"]*"|'[^']*')/gi, "");
+      return `<span${normalizedAttributes}></span>`;
+    })
     .replace(/<section\b([^>]*\bdata-reference-list\s*=\s*(?:"[^"]*"|'[^']*')[^>]*)>[\s\S]*?<\/section\s*>/gi, (_full, attributes) => {
       const normalizedAttributes = String(attributes).replace(/\bdata-reference-list\s*=\s*(?:"[^"]*"|'[^']*')/i, 'data-reference-list="[]"');
       return `<section${normalizedAttributes}></section>`;

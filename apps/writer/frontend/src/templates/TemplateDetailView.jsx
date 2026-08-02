@@ -334,9 +334,9 @@ export function TemplateDetailView({
 
                 <fieldset className="template-heading-advanced-group">
                   <legend>章节标题</legend>
-                  {[1, 2, 3].map((level) => (
+                  {[1, 2, 3, 4].map((level) => (
                     <div key={level} className="template-heading-advanced-row">
-                      <span><strong>{["一", "二", "三"][level - 1]}级标题</strong></span>
+                      <span><strong>{["一", "二", "三", "四"][level - 1]}级标题</strong></span>
                       <TemplateHeadingColorPicker
                         value={detailPresentation.headingColors[level]}
                         label={`${level}级标题颜色`}
@@ -359,18 +359,18 @@ export function TemplateDetailView({
                 </fieldset>
 
                 <fieldset>
-                  <legend>图片标题</legend>
+                  <legend>图标题</legend>
                   <div className="template-advanced-control-row">
-                    <span><strong>显示图片标题</strong><small>关闭后保留文字，但页面、导出与 AI 均忽略</small></span>
+                    <span><strong>显示图标题</strong><small>统一控制图片与 Mermaid 图；关闭后页面、导出与 AI 均忽略</small></span>
                     <TemplateSettingSwitch
                       checked={detailPresentation.showImageCaptions}
-                      label="显示图片标题"
+                      label="显示图片与 Mermaid 图标题"
                       disabled={!detailEditable}
                       onChange={(showImageCaptions) => onUpdatePresentation({ showImageCaptions })}
                     />
                   </div>
                   <div className={`template-advanced-control-row${!detailPresentation.showImageCaptions ? " disabled" : ""}`}>
-                    <span><strong>显示图片编号</strong><small>在标题前显示“图N.”</small></span>
+                    <span><strong>显示图编号</strong><small>图片与 Mermaid 图按正文顺序统一编号</small></span>
                     <TemplateSettingSwitch
                       checked={detailPresentation.numberImageCaptions}
                       label="显示图片标题编号"

@@ -2,6 +2,11 @@ import { sanitizeBrowserHref, sanitizeBrowserImportedHtml } from "./document-imp
 import { escapeBrowserHtml, plainTextFromBrowserHtml } from "./shared.js";
 
 const BROWSER_EXPORT_FORMATS = new Set(["markdown", "html", "txt"]);
+const BROWSER_EXPORT_FONT_STYLE = [
+  "html,body{font-family:\"Segoe UI\",\"Segoe UI Emoji\",system-ui,sans-serif}",
+  "article{font-family:inherit}",
+  "pre,code{font-family:Consolas,\"Segoe UI Emoji\",monospace}",
+].join("");
 
 function canonicalizeBrowserExportPageBreaks(html) {
   const marker = '<div data-type="paper-page-break"></div>';
@@ -138,7 +143,7 @@ function createBrowserEditableExport(documentValue = {}, format = "html") {
   }
   const title = escapeBrowserHtml(documentValue.title || "未命名信笺");
   const author = escapeBrowserHtml(documentValue.author || "");
-  const content = `<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>${author ? `<meta name="author" content="${author}">` : ""}</head><body><article>${body}</article></body></html>\n`;
+  const content = `<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>${author ? `<meta name="author" content="${author}">` : ""}<style>${BROWSER_EXPORT_FONT_STYLE}</style></head><body><article>${body}</article></body></html>\n`;
   return { content, type: "text/html;charset=utf-8", extension: ".html", warnings };
 }
 

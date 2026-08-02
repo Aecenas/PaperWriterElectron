@@ -291,7 +291,7 @@ test("the citation fallback may tolerate only revision drift and still records a
   assert.equal(fixture.port.updateTarget(target, updater), null);
   const result = fixture.port.updateTarget(target, updater, { allowRevisionChange: true });
 
-  assert.equal(result.document.version, 2);
+  assert.equal(result.document.version, 3);
   assert.match(result.document.documentId, /^[0-9a-f-]{36}$/);
   assert.equal(result.document.citationSources[0].title, "保留的来源");
   assert.equal(fixture.documentStateRef.current, result.document);

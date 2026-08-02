@@ -1027,6 +1027,36 @@ test("workspace flush advances disk revision before stale recheck and retains di
   );
 });
 
+test("workspace flush can durably target one dirty history tab without writing its peers", async () => {
+  const harness = createPersistenceHarness({
+    activeTabId: "tab-a",
+    tabs: [
+      createTestTab("tab-a", {
+        document: createTestDocument("Unrelated draft"),
+      }),
+      createTestTab("tab-b", {
+        document: createTestDocument("History target"),
+      }),
+    ],
+  });
+
+  const result = await harness.controller.flushDirtyWorkspaceTabs({
+    idleOnly: false,
+    tabIds: ["tab-b"],
+  });
+  const writes = harness.events.filter(([kind]) => kind === "save-document");
+  const tabs = harness.read().documentState.tabs;
+
+  assert.deepEqual(result.writtenTabIds, ["tab-b"]);
+  assert.deepEqual(result.writtenRevisions["tab-b"], diskRevision("b", 200));
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][1].title, "History target");
+  assert.equal(tabs.find((tab) => tab.id === "tab-a").dirty, true);
+  assert.equal(tabs.find((tab) => tab.id === "tab-b").dirty, false);
+  assert.equal(harness.kernel.dirtyPort.isDirty("tab-a"), true);
+  assert.equal(harness.kernel.dirtyPort.isDirty("tab-b"), false);
+});
+
 test("workspace idle/blur lifecycle preserves both 30s schedules and conflict handling", async () => {
   const harness = createPersistenceHarness({
     lastEditAtByTab: {

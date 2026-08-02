@@ -1,3 +1,20 @@
+function historyDocumentFingerprint(document) {
+  const visit = (value, depth = 0) => {
+    if (value === null || typeof value !== "object") return value;
+    if (depth > 64) return "[depth-limit]";
+    if (Array.isArray(value)) {
+      return value.map((item) => visit(item, depth + 1));
+    }
+    return Object.fromEntries(
+      Object.keys(value)
+        .filter((key) => !(depth === 0 && key === "updatedAt"))
+        .sort()
+        .map((key) => [key, visit(value[key], depth + 1)]),
+    );
+  };
+  return JSON.stringify(visit(document || {}));
+}
+
 function registerDocumentSaveIpcHandlers({
   ipcMain,
   documentModel,
@@ -21,6 +38,8 @@ function registerDocumentSaveIpcHandlers({
   platform,
   assertAuthorizedDocumentTarget,
   fs,
+  historyFacade = null,
+  writeDebugLog = async () => {},
 }) {
   const {
     DOCUMENT_EXTENSION,
@@ -341,6 +360,31 @@ function registerDocumentSaveIpcHandlers({
           filePath,
         )
         : "";
+      let historyWarning = "";
+      let preparedHistory = null;
+      if (
+        historyFacade
+        && typeof historyFacade.prepareSnapshot === "function"
+        && !userSelectedTarget
+        && sourcePath
+        && targetStat?.isFile()
+        && normalizeDocumentId(documentToSave?.documentId)
+      ) {
+        try {
+          preparedHistory = await historyFacade.prepareSnapshot({
+            documentId: normalizeDocumentId(documentToSave.documentId),
+            filePath,
+            kind: "auto",
+            savedAt: targetStat.mtimeMs,
+          });
+        } catch (error) {
+          historyWarning = "文档已保存，但未能创建本地历史版本";
+          await writeDebugLog("history:auto-snapshot:error", {
+            message: error?.message,
+            documentId: normalizeDocumentId(documentToSave?.documentId),
+          });
+        }
+      }
       let saved;
       try {
         saved = await transaction.savePaperDocument(
@@ -419,11 +463,28 @@ function registerDocumentSaveIpcHandlers({
         }
         throw error;
       }
+      if (
+        preparedHistory
+        && typeof preparedHistory.commit === "function"
+        && historyDocumentFingerprint(preparedHistory.document)
+          !== historyDocumentFingerprint(saved.document)
+      ) {
+        try {
+          await preparedHistory.commit();
+        } catch (error) {
+          historyWarning = "文档已保存，但未能创建本地历史版本";
+          await writeDebugLog("history:auto-snapshot:error", {
+            message: error?.message,
+            documentId: normalizeDocumentId(saved.document?.documentId),
+          });
+        }
+      }
       return {
         canceled: false,
         path: filePath,
         document: saved.document,
         diskRevision: saved.diskRevision,
+        ...(historyWarning ? { historyWarning } : {}),
         ...(migrationBackupPath
           ? { migrationBackupPath }
           : {}),

@@ -6,9 +6,11 @@ import {
   FolderPlus,
   Focus,
   MessageSquare,
+  PackageOpen,
   Pencil,
   RefreshCw,
   Save,
+  SpellCheck2,
   Trash2,
   X,
 } from "lucide-react";
@@ -20,6 +22,40 @@ import "./workspace-features.css";
 import ReleaseNotesDialog from "./ReleaseNotesDialog.jsx";
 import { ExportDialog } from "./export/index.js";
 import { AiSettingsDialog } from "./ai-settings/index.js";
+import { AiCompositionWorkspace } from "./ai-composition/index.js";
+import {
+  DocumentHistoryDialog,
+  prepareDocumentHistoryOperation,
+} from "./history/index.js";
+import { ProfileMigrationPanel } from "./settings/ProfileMigrationPanel.jsx";
+import DocumentContextMenu, { positionDocumentContextMenu } from "./DocumentContextMenu.jsx";
+import {
+  PAPER_BOOKMARK_ACTIVATE_EVENT,
+  PAPER_MATH_EDIT_REQUEST_EVENT,
+  PAPER_MERMAID_EDIT_REQUEST_EVENT,
+  MathInsertDialog,
+  MermaidInsertDialog,
+  applyMermaidDraft,
+  insertBookmark,
+  insertCodeBlock,
+  insertMathDraft,
+  removeBookmark,
+  updateBookmark,
+  updateMathDraftAt,
+  updateMermaidDraftAt,
+} from "./professional-content/index.js";
+import {
+  EmojiPicker,
+  captureEmojiInsertionContext,
+  insertEmojiFromContext,
+} from "./emoji/index.js";
+import {
+  DEFAULT_WRITING_ASSISTANCE_CONFIG,
+  WritingAssistanceSettings,
+  createWritingAssistanceSession,
+  normalizeWritingAssistanceConfig,
+  serializeWritingAssistanceConfig,
+} from "./writing-assistance/index.js";
 import {
   AiChatPane,
   AiChatToolbar,
@@ -84,6 +120,7 @@ import {
   useKnowledgeResearchPort,
   usePendingCitationPageLifecycle,
   useFootnoteActions,
+  usePublicCitationLibrary,
   useNormalizeNewDocumentTemplateHistory,
   usePersistNewDocumentTemplateHistory,
   usePersistNewDocumentTemplateId,
@@ -201,6 +238,7 @@ import {
 } from "./safe-storage.js";
 import {
   isGlobalShortcutBlocked,
+  useModalFocusTrap,
 } from "./ui-interactions.js";
 import { readCanvasScrollState, restoreCanvasScrollState } from "./document-workspace/canvas-state.js";
 import {
@@ -208,6 +246,15 @@ import {
   createPaneEditorHydrator,
   serializePaneDocument,
 } from "./document-workspace/editor-runtime.js";
+import {
+  PAGE_VIEW_MODES,
+  PAGE_ZOOM_MODES,
+  createPageViewSessionStore,
+} from "./pagination/index.js";
+import {
+  createPortableProfilePreferences,
+  normalizeProfilePreferencesPatch,
+} from "./settings/profile-preferences.js";
 import { useDocumentRuntimeKernel } from "./document-workspace/document-runtime-kernel.js";
 import {
   createDocumentPersistenceController,
@@ -358,6 +405,8 @@ export default function App() {
     internalLinkPicker,
     knowledgeReferencePopover,
     pendingCitationPage,
+    publicCitationLibraryLoading,
+    publicCitationSources,
     setCitationLibraryLoading,
     setCitationPicker,
     setCitationSourceDialog,
@@ -365,6 +414,8 @@ export default function App() {
     setInternalLinkPicker,
     setKnowledgeReferencePopover,
     setPendingCitationPage,
+    setPublicCitationLibraryLoading,
+    setPublicCitationSources,
     setWorkspaceCitationSources,
     setWorkspaceRelationships,
     workspaceCitationSources,
@@ -388,6 +439,30 @@ export default function App() {
     targetTabId: "",
     aiInitialPanel: "provider",
     aiInitialTaskId: "",
+  });
+  const [compositionWorkspaceOpen, setCompositionWorkspaceOpen] = useState(false);
+  const [historyDialog, setHistoryDialog] = useState({ open: false, tabId: "" });
+  const [documentContextMenu, setDocumentContextMenu] = useState(null);
+  const [emojiPicker, setEmojiPicker] = useState({ open: false, context: null });
+  const [professionalUi, setProfessionalUi] = useState({
+    kind: "",
+    editor: null,
+    tabId: "",
+    documentId: "",
+    revision: "",
+    selection: null,
+    initialValue: null,
+    updatePosition: null,
+  });
+  const [writingAssistanceConfig, setWritingAssistanceConfig] = useState(
+    DEFAULT_WRITING_ASSISTANCE_CONFIG,
+  );
+  const [writingAssistanceDraft, setWritingAssistanceDraft] = useState(
+    DEFAULT_WRITING_ASSISTANCE_CONFIG,
+  );
+  const [writingIssuesByEditor, setWritingIssuesByEditor] = useState({
+    main: [],
+    right: [],
   });
   const [tabTemplateDialog, setTabTemplateDialog] = useTemplateTabDialogState();
   const {
@@ -475,6 +550,24 @@ export default function App() {
   const mainCanvasRef = useRef(null);
   const rightCanvasRef = useRef(null);
   const workSurfaceRef = useRef(null);
+  const [pageViewSessionStore] = useState(() => createPageViewSessionStore());
+  const [pageViewStatesByTab, setPageViewStatesByTab] = useState({});
+  const [writingAssistanceSessions] = useState(() => ({
+    main: createWritingAssistanceSession({
+      editorId: "main",
+      onIssuesChange: (issues) => setWritingIssuesByEditor((current) => ({
+        ...current,
+        main: issues,
+      })),
+    }),
+    right: createWritingAssistanceSession({
+      editorId: "right",
+      onIssuesChange: (issues) => setWritingIssuesByEditor((current) => ({
+        ...current,
+        right: issues,
+      })),
+    }),
+  }));
   const documentRuntimeKernel = useDocumentRuntimeKernel({
     deferCommit: () => new Promise((resolve) => window.setTimeout(resolve, 0)),
   });
@@ -563,8 +656,28 @@ export default function App() {
   const previousImmersiveModeRef = useRef(false);
   const aiModeTriggerRef = useRef(null);
   const settingsTriggerRef = useRef(null);
+  const writingSettingsTriggerRef = useRef(null);
+  const elementsTriggerRef = useRef(null);
   const exportTriggerRef = useRef(null);
+  const profileDialogRef = useRef(null);
+  const profileDialogCloseRef = useRef(null);
+  const writingSettingsDialogRef = useRef(null);
+  const writingSettingsInitialFocusRef = useRef(null);
+  const writingSettingsCloseRef = useRef(null);
   const tabTemplateReturnFocusRef = useTemplateTabDialogReturnFocusRef();
+  const historyReturnFocusRef = useRef(null);
+  useModalFocusTrap(
+    settingsDialog.section === "profile",
+    profileDialogRef,
+    profileDialogCloseRef,
+    exportTriggerRef,
+  );
+  useModalFocusTrap(
+    settingsDialog.section === "writing",
+    writingSettingsDialogRef,
+    writingSettingsInitialFocusRef,
+    writingSettingsTriggerRef,
+  );
   const aiStreamRegistry = useAiStreamRegistry();
   const aiPreviousSidebarsRef = useRef(null);
   const {
@@ -622,7 +735,13 @@ export default function App() {
 
   const releaseTabRuntimeState = useCallback((tabId) => {
     documentTabRuntimePort.release(tabId);
-  }, []);
+    pageViewSessionStore.delete(tabId);
+    setPageViewStatesByTab((states) => {
+      if (!Object.hasOwn(states, tabId)) return states;
+      const { [tabId]: _removed, ...remaining } = states;
+      return remaining;
+    });
+  }, [pageViewSessionStore]);
 
   const mainEditorExtensions = useMemo(() => createPaperEditorExtensions(), []);
   const rightEditorExtensions = useMemo(() => createPaperEditorExtensions(), []);
@@ -633,7 +752,7 @@ export default function App() {
     editorProps: {
       attributes: {
         class: "paper-editor",
-        spellcheck: "false",
+        spellcheck: "true",
       },
     },
     onCreate: () => {
@@ -659,7 +778,7 @@ export default function App() {
     editorProps: {
       attributes: {
         class: "paper-editor",
-        spellcheck: "false",
+        spellcheck: "true",
       },
     },
     onSelectionUpdate: ({ editor: activeEditor }) => {
@@ -692,6 +811,28 @@ export default function App() {
 
   const rightSplitEditor = useEditor(rightEditorOptions);
   rightSplitEditorRuntimeRef.current = rightSplitEditor;
+
+  useEffect(() => {
+    writingAssistanceSessions.main.attach(editor);
+    writingAssistanceSessions.right.attach(rightSplitEditor);
+    return () => {
+      writingAssistanceSessions.main.detach();
+      writingAssistanceSessions.right.detach();
+    };
+  }, [editor, rightSplitEditor, writingAssistanceSessions]);
+
+  useEffect(() => {
+    writingAssistanceSessions.main.setConfig(writingAssistanceConfig);
+    writingAssistanceSessions.right.setConfig(writingAssistanceConfig);
+  }, [writingAssistanceConfig, writingAssistanceSessions]);
+
+  useEffect(() => {
+    writingAssistanceSessions.main.resetDocument();
+  }, [activeTabId, writingAssistanceSessions]);
+
+  useEffect(() => {
+    writingAssistanceSessions.right.resetDocument();
+  }, [rightSplitTabId, writingAssistanceSessions]);
 
   const researchPaneFocused = !aiMode
     && activePane === "right"
@@ -729,11 +870,83 @@ export default function App() {
     documentState,
     editor,
     openTabs,
+    publicCitationSources,
     rightSplitTabId,
     splitPaneActive,
     workspaceCitationSources,
     writingWorkspaceRoot,
   });
+  const compositionSourceCandidates = useMemo(() => {
+    if (!compositionWorkspaceOpen) return [];
+    const candidates = [];
+    const seen = new Set();
+    const append = (candidate) => {
+      const sourceId = String(candidate?.sourceId || candidate?.id || "").slice(0, 128);
+      if (!sourceId || seen.has(sourceId)) return;
+      seen.add(sourceId);
+      candidates.push({ ...candidate, sourceId });
+    };
+    if (activeWorkDocument?.documentId && activeWorkEditor) {
+      append({
+        sourceId: `document-${activeWorkDocument.documentId}`,
+        title: `当前信笺：${activeWorkDocument.title || "未命名信笺"}`,
+        content: activeWorkEditor.getText?.({ blockSeparator: "\n" }) || "",
+        revision: documentRevisionPort.readLiveRevision(activeWorkTabId),
+      });
+    }
+    for (const source of librarySources) {
+      const sourceId = String(source?.id || "");
+      if (!sourceId) continue;
+      append({
+        sourceId: `research-${sourceId}`,
+        title: source.title || source.name || source.fileName || "未命名资料",
+        content: source.content
+          || source.text
+          || source.description
+          || source.notes
+          || source.url
+          || "",
+        revision: source.revision || source.updatedAt || "",
+      });
+    }
+    for (const source of citationSourcesForDock) {
+      const sourceId = String(source?.id || "");
+      if (!sourceId) continue;
+      append({
+        sourceId: `citation-${sourceId}`,
+        title: source.title || source.citationKey || "未命名文献",
+        content: [
+          source.title,
+          Array.isArray(source.authors) ? source.authors.join("、") : source.authors,
+          source.year,
+          source.doi ? `DOI: ${source.doi}` : "",
+          source.isbn ? `ISBN: ${source.isbn}` : "",
+          source.notes,
+        ].filter(Boolean).join("\n"),
+        citationSource: source,
+        revision: source.updatedAt || "",
+      });
+    }
+    return candidates;
+  }, [
+    activeWorkDocument,
+    activeWorkEditor,
+    activeWorkTabId,
+    citationSourcesForDock,
+    compositionWorkspaceOpen,
+    documentRevisionPort,
+    librarySources,
+  ]);
+  const compositionSourceDocument = useMemo(() => ({
+    ...activeWorkDocument,
+    path: activeWorkPath,
+    diskRevision: documentRevisionPort.readDiskRevision(activeWorkTabId),
+  }), [
+    activeWorkDocument,
+    activeWorkPath,
+    activeWorkTabId,
+    documentRevisionPort,
+  ]);
   const primaryGroupTabs = useMemo(() => deriveWorkspaceGroupItems({
     activeDocument: documentState,
     activeTabId,
@@ -786,6 +999,63 @@ export default function App() {
     rightSplitDocument?.templateId,
     rightSplitDocument?.title,
   ]);
+  const mainPageViewState = pageViewStatesByTab[activeTabId]
+    || pageViewSessionStore.get(activeTabId);
+  const rightPageViewState = pageViewStatesByTab[rightSplitTabId]
+    || pageViewSessionStore.get(rightSplitTabId);
+  const updatePageViewStateForTab = useCallback((tabId, nextState) => {
+    if (!tabId) return;
+    const normalized = pageViewSessionStore.set(tabId, nextState);
+    setPageViewStatesByTab((states) => {
+      const current = states[tabId];
+      if (
+        current
+        && current.mode === normalized.mode
+        && current.currentPage === normalized.currentPage
+        && current.zoomMode === normalized.zoomMode
+        && current.zoom === normalized.zoom
+      ) {
+        return states;
+      }
+      return { ...states, [tabId]: normalized };
+    });
+  }, [pageViewSessionStore]);
+  const getPageViewStateForTab = useCallback((tabId) => (
+    pageViewStatesByTab[tabId] || pageViewSessionStore.get(tabId)
+  ), [pageViewSessionStore, pageViewStatesByTab]);
+  const handleMainPageViewStateChange = useCallback((nextState) => {
+    updatePageViewStateForTab(activeTabIdRef.current, nextState);
+  }, [updatePageViewStateForTab]);
+  const handleRightPageViewStateChange = useCallback((nextState) => {
+    updatePageViewStateForTab(rightSplitTabIdRef.current, nextState);
+  }, [updatePageViewStateForTab]);
+  const prepareSecondaryPanePageView = useCallback(() => {
+    const tabId = activeTabIdRef.current;
+    const current = getPageViewStateForTab(tabId);
+    if (!tabId || current.mode !== PAGE_VIEW_MODES.SPREAD) return;
+    updatePageViewStateForTab(tabId, {
+      ...current,
+      mode: PAGE_VIEW_MODES.SINGLE,
+      zoomMode: PAGE_ZOOM_MODES.FIT,
+    });
+  }, [getPageViewStateForTab, updatePageViewStateForTab]);
+  useEffect(() => {
+    if (!aiMode || !activeTabId) return;
+    const current = getPageViewStateForTab(activeTabId);
+    if (current.mode !== PAGE_VIEW_MODES.CONTINUOUS) {
+      updatePageViewStateForTab(activeTabId, {
+        ...current,
+        mode: PAGE_VIEW_MODES.CONTINUOUS,
+        zoomMode: PAGE_ZOOM_MODES.FIT,
+      });
+    }
+    setDocumentContextMenu(null);
+  }, [
+    activeTabId,
+    aiMode,
+    getPageViewStateForTab,
+    updatePageViewStateForTab,
+  ]);
   const documentCacheSummary = useMemo(() => summarizeDocumentCache(openTabs), [openTabs]);
   const {
     aiApplyResolverLabel,
@@ -831,16 +1101,21 @@ export default function App() {
   }, [rightSplitTabId, splitPaneActive]);
 
   const openSettingsSection = useCallback((section) => {
+    if (section === "writing") {
+      setWritingAssistanceDraft(writingAssistanceConfig);
+    }
     setSettingsDialog((current) => ({
       ...current,
       open: false,
-      section: section === "template" ? "template" : "ai",
+      section: ["ai", "template", "writing", "profile"].includes(section)
+        ? section
+        : "ai",
       targetTabId: current.targetTabId
         || (splitPaneActive && rightSplitTabId ? rightSplitTabId : activeTabIdRef.current),
       aiInitialPanel: "provider",
       aiInitialTaskId: "",
     }));
-  }, [rightSplitTabId, splitPaneActive]);
+  }, [rightSplitTabId, splitPaneActive, writingAssistanceConfig]);
   const openAiSettings = useCallback((request = {}) => {
     setAiModeChooserOpen(false);
     setSettingsDialog({
@@ -1051,6 +1326,30 @@ export default function App() {
   }, [activeTabId, currentPath, dirty, documentState.title]);
 
   const { showStatus, dismissStatus } = useStatusActions(setStatus);
+
+  useEffect(() => {
+    let active = true;
+    const request = bridge.getWritingAssistance
+      ? bridge.getWritingAssistance()
+      : Promise.resolve(null);
+    request
+      .then((config) => {
+        if (active && config) {
+          const normalized = normalizeWritingAssistanceConfig(config);
+          setWritingAssistanceConfig(normalized);
+          setWritingAssistanceDraft(normalized);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          showStatus(`写作检查配置读取失败：${error?.message || error}`, "warning");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [showStatus]);
+
   const selectionAi = useSelectionAiController({
     aiConfig,
     onOpenSettings: openAiSettings,
@@ -2050,13 +2349,18 @@ export default function App() {
     reconcileWorkspaceTabs(openTabs);
   }, [openTabs]);
 
-  const handleToggleRightSplit = useCallback(
-    (tabId) => toggleWorkspaceRightSplit(tabId, {
+  const handleToggleRightSplit = useCallback((tabId) => {
+    prepareSecondaryPanePageView();
+    return toggleWorkspaceRightSplit(tabId, {
       applyDocument,
       snapshotTabs: snapshotLiveTabs,
-    }),
-    [applyDocument, snapshotLiveTabs, toggleWorkspaceRightSplit],
-  );
+    });
+  }, [
+    applyDocument,
+    prepareSecondaryPanePageView,
+    snapshotLiveTabs,
+    toggleWorkspaceRightSplit,
+  ]);
 
   const addOrActivateDocumentTab = useCallback(
     (
@@ -2064,23 +2368,29 @@ export default function App() {
       nextPath = "",
       nextDirty = false,
       options = {},
-    ) => addOrActivateWorkspaceDocumentTab(
-      nextDocument,
-      nextPath,
-      nextDirty,
-      options,
-      {
-        applyDocument,
-        initializeTabRuntime: (tabId, initialState) => (
-          documentTabRuntimePort.ensure(tabId, initialState)
-        ),
-        snapshotTabs: snapshotLiveTabs,
-      },
-    ),
+    ) => {
+      if (options.groupId === WORKSPACE_GROUP_ID.SECONDARY) {
+        prepareSecondaryPanePageView();
+      }
+      return addOrActivateWorkspaceDocumentTab(
+        nextDocument,
+        nextPath,
+        nextDirty,
+        options,
+        {
+          applyDocument,
+          initializeTabRuntime: (tabId, initialState) => (
+            documentTabRuntimePort.ensure(tabId, initialState)
+          ),
+          snapshotTabs: snapshotLiveTabs,
+        },
+      );
+    },
     [
       addOrActivateWorkspaceDocumentTab,
       applyDocument,
       documentTabRuntimePort,
+      prepareSecondaryPanePageView,
       snapshotLiveTabs,
     ],
   );
@@ -2462,15 +2772,21 @@ export default function App() {
   }, [applyDocument, commitWorkspaceGroups, editor, letterTemplates, persistSession]);
 
   const handleSelectGroupView = useCallback(
-    (groupId, viewId) => selectWorkspaceGroupView(
-      groupId,
-      viewId,
-      {
+    (groupId, viewId) => {
+      if (groupId === WORKSPACE_GROUP_ID.SECONDARY) {
+        prepareSecondaryPanePageView();
+      }
+      return selectWorkspaceGroupView(groupId, viewId, {
         applyDocument,
         snapshotTabs: snapshotLiveTabs,
-      },
-    ),
-    [applyDocument, selectWorkspaceGroupView, snapshotLiveTabs],
+      });
+    },
+    [
+      applyDocument,
+      prepareSecondaryPanePageView,
+      selectWorkspaceGroupView,
+      snapshotLiveTabs,
+    ],
   );
 
   const handleReorderGroupView = useCallback(
@@ -2483,8 +2799,11 @@ export default function App() {
   );
 
   const handleMoveGroupDocument = useCallback(
-    (viewId, targetGroupId, beforeViewId = null) => (
-      moveWorkspaceGroupDocument(
+    (viewId, targetGroupId, beforeViewId = null) => {
+      if (targetGroupId === WORKSPACE_GROUP_ID.SECONDARY) {
+        prepareSecondaryPanePageView();
+      }
+      return moveWorkspaceGroupDocument(
         viewId,
         targetGroupId,
         beforeViewId,
@@ -2492,9 +2811,14 @@ export default function App() {
           applyDocument,
           snapshotTabs: snapshotLiveTabs,
         },
-      )
-    ),
-    [applyDocument, moveWorkspaceGroupDocument, snapshotLiveTabs],
+      );
+    },
+    [
+      applyDocument,
+      moveWorkspaceGroupDocument,
+      prepareSecondaryPanePageView,
+      snapshotLiveTabs,
+    ],
   );
 
   const handleCloseTab = useCallback(async (tabId) => {
@@ -2549,6 +2873,559 @@ export default function App() {
   const handleOpenFolderPath = workspaceFileNavigationPort.navigateFolder;
   const refreshFolder = workspaceFileNavigationPort.refreshFolder;
   const handleOpenFolderFile = workspaceFileOpenPort.openDocumentPath;
+
+  const handleCompositionComplete = useCallback(async (output) => {
+    const outputPath = String(output?.path || "");
+    setCompositionWorkspaceOpen(false);
+    if (outputPath) {
+      await handleOpenFolderFile(outputPath);
+      showStatus("AI 起稿已生成新的派生信笺，原稿保持不变", "success");
+    }
+  }, [handleOpenFolderFile, showStatus]);
+
+  const handleSetDocumentPageViewMode = useCallback((view, mode, groupId) => {
+    const tabId = String(view?.tabId || "");
+    if (!tabId || !Object.values(PAGE_VIEW_MODES).includes(mode)) return;
+    if (mode === PAGE_VIEW_MODES.SPREAD) {
+      if (groupId === WORKSPACE_GROUP_ID.SECONDARY && view?.viewId) {
+        handleMoveGroupDocument(view.viewId, WORKSPACE_GROUP_ID.PRIMARY, null);
+      } else if (view?.viewId) {
+        handleSelectGroupView(WORKSPACE_GROUP_ID.PRIMARY, view.viewId);
+      }
+      setActivePane("main");
+    } else if (view?.viewId && groupId) {
+      handleSelectGroupView(groupId, view.viewId);
+    }
+    const current = getPageViewStateForTab(tabId);
+    updatePageViewStateForTab(tabId, {
+      ...current,
+      mode,
+      zoomMode: PAGE_ZOOM_MODES.FIT,
+    });
+  }, [
+    getPageViewStateForTab,
+    handleMoveGroupDocument,
+    handleSelectGroupView,
+    setActivePane,
+    updatePageViewStateForTab,
+  ]);
+
+  const handleOpenDocumentHistory = useCallback((
+    tabId = activeWorkTabId,
+    returnFocusElement = null,
+  ) => {
+    if (!tabId) return;
+    historyReturnFocusRef.current = returnFocusElement
+      || window.document.activeElement
+      || null;
+    setHistoryDialog({
+      open: true,
+      tabId,
+    });
+  }, [activeWorkTabId]);
+
+  const handlePrepareDocumentHistoryOperation = useCallback(
+    () => prepareDocumentHistoryOperation({
+      tabId: historyDialog.tabId,
+      persistenceController: documentPersistenceController,
+      documentStorePort,
+      dirtyPort: documentDirtyPort,
+      revisionPort: documentRevisionPort,
+      getDocumentRevision: (path) => bridge.getDocumentRevision?.(path),
+    }),
+    [
+      documentDirtyPort,
+      documentPersistenceController,
+      documentRevisionPort,
+      documentStorePort,
+      historyDialog.tabId,
+    ],
+  );
+
+  const handleOpenCanvasDocumentContext = useCallback((event, pane) => {
+    if (!event) return;
+    if (aiMode) {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      return;
+    }
+    const groupId = pane === "right"
+      ? WORKSPACE_GROUP_ID.SECONDARY
+      : WORKSPACE_GROUP_ID.PRIMARY;
+    const view = getActiveWorkspaceView(workspaceGroupsRef.current, groupId);
+    if (!view || view.kind !== WORKSPACE_VIEW_KIND.DOCUMENT) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setActivePane(pane === "right" ? "right" : "main");
+    const tab = openTabsRef.current.find((candidate) => candidate.id === view.tabId);
+    setDocumentContextMenu(positionDocumentContextMenu(event, {
+      groupId,
+      viewId: view.viewId,
+      tabId: view.tabId,
+      title: tab?.title || "当前信笺",
+    }));
+  }, [aiMode, setActivePane]);
+
+  const handleOpenEmojiPicker = useCallback(() => {
+    const editorId = splitPaneActive ? "right" : "main";
+    const context = captureEmojiInsertionContext({
+      tabId: activeWorkTabId,
+      documentId: activeWorkDocument?.documentId,
+      editorId,
+      editor: activeWorkEditor,
+      revision: documentRevisionPort.readLiveRevision(activeWorkTabId),
+    });
+    if (!context) {
+      showStatus("当前选区无法插入表情", "warning");
+      return;
+    }
+    setEmojiPicker({ open: true, context });
+  }, [
+    activeWorkDocument?.documentId,
+    activeWorkEditor,
+    activeWorkTabId,
+    documentRevisionPort,
+    showStatus,
+    splitPaneActive,
+  ]);
+
+  const handleSelectEmoji = useCallback((unicode) => {
+    const editorId = splitPaneActive ? "right" : "main";
+    return insertEmojiFromContext(emojiPicker.context, {
+      tabId: activeWorkTabId,
+      documentId: activeWorkDocument?.documentId,
+      editorId,
+      editor: activeWorkEditor,
+      revision: documentRevisionPort.readLiveRevision(activeWorkTabId),
+    }, unicode);
+  }, [
+    activeWorkDocument?.documentId,
+    activeWorkEditor,
+    activeWorkTabId,
+    documentRevisionPort,
+    emojiPicker.context,
+    splitPaneActive,
+  ]);
+
+  const closeProfessionalUi = useCallback(() => {
+    setProfessionalUi({
+      kind: "",
+      editor: null,
+      tabId: "",
+      documentId: "",
+      revision: "",
+      selection: null,
+      initialValue: null,
+      updatePosition: null,
+    });
+  }, []);
+
+  const handleInsertCodeBlock = useCallback(() => {
+    if (!activeWorkEditor || activeWorkReadOnly) {
+      showStatus("当前信笺不可编辑", "warning");
+      return false;
+    }
+    return insertCodeBlock(activeWorkEditor, {
+      language: "plaintext",
+      wrap: false,
+    });
+  }, [activeWorkEditor, activeWorkReadOnly, showStatus]);
+
+  const handleInsertBookmark = useCallback(() => {
+    if (!activeWorkEditor || activeWorkReadOnly) {
+      showStatus("当前信笺不可编辑", "warning");
+      return false;
+    }
+    const inserted = insertBookmark(activeWorkEditor);
+    if (inserted) {
+      setLeftSidebarCollapsed(false);
+      setLeftSidebarMode("structure");
+      setStructureMode("bookmarks");
+    }
+    return inserted;
+  }, [activeWorkEditor, activeWorkReadOnly, showStatus]);
+
+  const openProfessionalUi = useCallback((kind, initialValue = null) => {
+    if (!activeWorkEditor || activeWorkReadOnly) {
+      showStatus("当前信笺不可编辑", "warning");
+      return;
+    }
+    const { from, to } = activeWorkEditor.state.selection;
+    setProfessionalUi({
+      kind,
+      editor: activeWorkEditor,
+      tabId: activeWorkTabId,
+      documentId: String(activeWorkDocument?.documentId || ""),
+      revision: documentRevisionPort.readLiveRevision(activeWorkTabId),
+      selection: { from, to },
+      initialValue,
+      updatePosition: null,
+    });
+  }, [
+    activeWorkDocument?.documentId,
+    activeWorkEditor,
+    activeWorkReadOnly,
+    activeWorkTabId,
+    documentRevisionPort,
+    showStatus,
+  ]);
+
+  const resolveProfessionalTarget = useCallback(() => {
+    const stale = (
+      !professionalUi.kind
+      || !professionalUi.editor
+      || professionalUi.editor !== activeWorkEditor
+      || professionalUi.tabId !== activeWorkTabId
+      || professionalUi.documentId !== String(activeWorkDocument?.documentId || "")
+      || professionalUi.revision !== documentRevisionPort.readLiveRevision(activeWorkTabId)
+      || activeWorkReadOnly
+    );
+    if (stale) {
+      closeProfessionalUi();
+      showStatus("信笺或选区已变化，请重新打开元素面板", "warning");
+      return null;
+    }
+    const maximum = professionalUi.editor.state.doc.content.size;
+    const from = Math.max(0, Math.min(maximum, Number(professionalUi.selection?.from) || 0));
+    const to = Math.max(from, Math.min(maximum, Number(professionalUi.selection?.to) || from));
+    const restored = professionalUi.editor
+      .chain()
+      .focus()
+      .setTextSelection({ from, to })
+      .run();
+    return restored ? professionalUi.editor : null;
+  }, [
+    activeWorkDocument?.documentId,
+    activeWorkEditor,
+    activeWorkReadOnly,
+    activeWorkTabId,
+    closeProfessionalUi,
+    documentRevisionPort,
+    professionalUi,
+    showStatus,
+  ]);
+
+  const handleInsertMathDraft = useCallback((draft, operation = {}) => {
+    if (
+      operation.update
+      && Number.isFinite(Number(operation.position))
+      && professionalUi.editor
+      && professionalUi.editor === activeWorkEditor
+      && professionalUi.tabId === activeWorkTabId
+      && professionalUi.revision === documentRevisionPort.readLiveRevision(activeWorkTabId)
+    ) {
+      return updateMathDraftAt(
+        professionalUi.editor,
+        Number(operation.position),
+        draft,
+      );
+    }
+    const targetEditor = resolveProfessionalTarget();
+    return targetEditor ? insertMathDraft(targetEditor, draft) : false;
+  }, [
+    activeWorkEditor,
+    activeWorkTabId,
+    documentRevisionPort,
+    professionalUi.editor,
+    professionalUi.revision,
+    professionalUi.tabId,
+    resolveProfessionalTarget,
+  ]);
+
+  const handleInsertMermaidDraft = useCallback((draft, operation = {}) => {
+    if (
+      operation.update
+      && Number.isFinite(Number(operation.position))
+      && professionalUi.editor
+      && professionalUi.editor === activeWorkEditor
+      && professionalUi.tabId === activeWorkTabId
+      && professionalUi.revision === documentRevisionPort.readLiveRevision(activeWorkTabId)
+    ) {
+      return updateMermaidDraftAt(
+        professionalUi.editor,
+        Number(operation.position),
+        draft,
+      );
+    }
+    const targetEditor = resolveProfessionalTarget();
+    return targetEditor ? applyMermaidDraft(targetEditor, draft) : false;
+  }, [
+    activeWorkEditor,
+    activeWorkTabId,
+    documentRevisionPort,
+    professionalUi.editor,
+    professionalUi.revision,
+    professionalUi.tabId,
+    resolveProfessionalTarget,
+  ]);
+
+  useEffect(() => {
+    if (!professionalUi.kind) return;
+    if (
+      professionalUi.editor !== activeWorkEditor
+      || professionalUi.tabId !== activeWorkTabId
+      || professionalUi.documentId !== String(activeWorkDocument?.documentId || "")
+      || activeWorkReadOnly
+    ) {
+      closeProfessionalUi();
+    }
+  }, [
+    activeWorkDocument?.documentId,
+    activeWorkEditor,
+    activeWorkReadOnly,
+    activeWorkTabId,
+    closeProfessionalUi,
+    professionalUi.documentId,
+    professionalUi.editor,
+    professionalUi.kind,
+    professionalUi.tabId,
+  ]);
+
+  useEffect(() => {
+    const handleMathEditRequest = (event) => {
+      const detail = event?.detail || {};
+      const targetEditor = detail.editor;
+      const position = Number(detail.position);
+      if (!targetEditor || !Number.isFinite(position)) return;
+
+      const inMain = targetEditor === editor;
+      const inRight = targetEditor === rightSplitEditor;
+      if (!inMain && !inRight) return;
+      const tabId = inRight ? rightSplitTabIdRef.current : activeTabIdRef.current;
+      const targetDocument = inRight ? rightSplitDocument : documentStateRef.current;
+      const readOnly = inRight ? rightSplitReadOnly : activeTabReadOnly;
+      if (!tabId || readOnly) {
+        showStatus("当前信笺不可编辑", "warning");
+        return;
+      }
+      const node = targetEditor.state.doc.nodeAt(position);
+      setActivePane(inRight ? "right" : "main");
+      setProfessionalUi({
+        kind: "math",
+        editor: targetEditor,
+        tabId,
+        documentId: String(targetDocument?.documentId || ""),
+        revision: documentRevisionPort.readLiveRevision(tabId),
+        selection: {
+          from: position,
+          to: Math.min(targetEditor.state.doc.content.size, position + (node?.nodeSize || 1)),
+        },
+        initialValue: detail.initialValue || null,
+        updatePosition: position,
+      });
+    };
+    window.addEventListener(PAPER_MATH_EDIT_REQUEST_EVENT, handleMathEditRequest);
+    return () => window.removeEventListener(PAPER_MATH_EDIT_REQUEST_EVENT, handleMathEditRequest);
+  }, [
+    activeTabReadOnly,
+    documentRevisionPort,
+    editor,
+    rightSplitDocument,
+    rightSplitEditor,
+    rightSplitReadOnly,
+    setActivePane,
+    showStatus,
+  ]);
+
+  useEffect(() => {
+    const handleMermaidEditRequest = (event) => {
+      const detail = event?.detail || {};
+      const targetEditor = detail.editor;
+      const position = Number(detail.position);
+      if (!targetEditor || !Number.isFinite(position)) return;
+
+      const inMain = targetEditor === editor;
+      const inRight = targetEditor === rightSplitEditor;
+      if (!inMain && !inRight) return;
+      const tabId = inRight ? rightSplitTabIdRef.current : activeTabIdRef.current;
+      const targetDocument = inRight ? rightSplitDocument : documentStateRef.current;
+      const readOnly = inRight ? rightSplitReadOnly : activeTabReadOnly;
+      if (!tabId || readOnly) {
+        showStatus("当前信笺不可编辑", "warning");
+        return;
+      }
+      const node = targetEditor.state.doc.nodeAt(position);
+      if (!node || node.type.name !== "paperMermaid") return;
+      setActivePane(inRight ? "right" : "main");
+      setProfessionalUi({
+        kind: "mermaid",
+        editor: targetEditor,
+        tabId,
+        documentId: String(targetDocument?.documentId || ""),
+        revision: documentRevisionPort.readLiveRevision(tabId),
+        selection: {
+          from: position,
+          to: Math.min(targetEditor.state.doc.content.size, position + node.nodeSize),
+        },
+        initialValue: detail.initialValue || null,
+        updatePosition: position,
+      });
+    };
+    window.addEventListener(PAPER_MERMAID_EDIT_REQUEST_EVENT, handleMermaidEditRequest);
+    return () => window.removeEventListener(PAPER_MERMAID_EDIT_REQUEST_EVENT, handleMermaidEditRequest);
+  }, [
+    activeTabReadOnly,
+    documentRevisionPort,
+    editor,
+    rightSplitDocument,
+    rightSplitEditor,
+    rightSplitReadOnly,
+    setActivePane,
+    showStatus,
+  ]);
+
+  useEffect(() => {
+    const handleBookmarkActivate = (event) => {
+      const editorDom = event?.detail?.editorDom;
+      if (!editorDom) return;
+      if (editorDom === rightSplitEditor?.view?.dom) setActivePane("right");
+      else if (editorDom === editor?.view?.dom) setActivePane("main");
+      else return;
+      setLeftSidebarCollapsed(false);
+      setLeftSidebarMode("structure");
+      setStructureMode("bookmarks");
+    };
+    window.addEventListener(PAPER_BOOKMARK_ACTIVATE_EVENT, handleBookmarkActivate);
+    return () => window.removeEventListener(PAPER_BOOKMARK_ACTIVATE_EVENT, handleBookmarkActivate);
+  }, [editor, rightSplitEditor, setActivePane]);
+
+  const handleJumpBookmark = useCallback((bookmark) => {
+    const targetEditor = activeWorkEditor;
+    const maximum = targetEditor?.state?.doc?.content?.size || 0;
+    const position = Math.max(0, Math.min(maximum, Number(bookmark?.position) + 1 || 0));
+    if (!targetEditor || !targetEditor.chain().focus().setTextSelection(position).run()) return;
+    window.requestAnimationFrame(() => {
+      try {
+        const target = targetEditor.view.domAtPos(position).node;
+        const element = target.nodeType === (window.Node?.ELEMENT_NODE ?? 1)
+          ? target
+          : target.parentElement;
+        element?.scrollIntoView?.({ block: "center", inline: "nearest" });
+      } catch {
+        // The document may have switched while the frame was pending.
+      }
+    });
+  }, [activeWorkEditor]);
+
+  const handleRemoveBookmark = useCallback((bookmark) => {
+    if (!activeWorkEditor || activeWorkReadOnly) return false;
+    return removeBookmark(activeWorkEditor, bookmark?.bookmarkId);
+  }, [activeWorkEditor, activeWorkReadOnly]);
+
+  const handleRenameBookmark = useCallback(async (bookmark) => {
+    if (!activeWorkEditor || activeWorkReadOnly || !bookmark?.bookmarkId) return false;
+    const nextLabel = await showPromptDialog({
+      eyebrow: "正文书签",
+      title: "编辑书签名称",
+      message: "留空会恢复为正文摘要名称。",
+      label: "书签名称",
+      defaultValue: bookmark.label || "",
+      placeholder: bookmark.context || "例如：关键结论",
+      confirmLabel: "保存",
+      maxLength: 200,
+    });
+    if (nextLabel === null) return false;
+    const normalizedLabel = String(nextLabel).trim();
+    const updated = updateBookmark(activeWorkEditor, bookmark.bookmarkId, {
+      label: normalizedLabel,
+    });
+    if (updated) {
+      showStatus(normalizedLabel ? "书签名称已更新" : "书签名称已清除", "success");
+    }
+    return updated;
+  }, [activeWorkEditor, activeWorkReadOnly, showPromptDialog, showStatus]);
+
+  const handleHistoryRestored = useCallback(async () => {
+    const targetTabId = historyDialog.tabId;
+    const targetTab = openTabsRef.current.find((tab) => tab.id === targetTabId);
+    if (!targetTab?.path) return;
+    const loaded = await bridge.openDocumentPath(targetTab.path);
+    if (!loaded?.document) throw new Error("恢复已写入磁盘，但重新载入失败");
+    const normalized = normalizeDocument(loaded.document, letterTemplates);
+    const nextTabs = openTabsRef.current.map((tab) => (
+      tab.id === targetTabId
+        ? {
+          ...tab,
+          document: normalized,
+          dirty: false,
+          externalChanged: false,
+          diskRevision: loaded.diskRevision || tab.diskRevision,
+          recoveryRevision: null,
+        }
+        : tab
+    ));
+    documentStorePort.commitOpenTabs(nextTabs);
+    documentRevisionPort.commitDiskRevision(
+      targetTabId,
+      loaded.diskRevision || targetTab.diskRevision || null,
+    );
+    documentDirtyPort.markClean(targetTabId);
+    if (targetTabId === activeTabIdRef.current) {
+      applyDocument(normalized, targetTab.path, false);
+    } else if (targetTabId === rightSplitTabIdRef.current) {
+      await rightPaneEditorHydrator.hydrate({
+        comments: normalized.comments,
+        html: normalized.html || "<p></p>",
+      });
+    }
+    setHistoryDialog({ open: false, tabId: "" });
+    showStatus("已恢复所选版本；恢复前安全版本已固定保留", "success");
+  }, [
+    applyDocument,
+    documentDirtyPort,
+    documentRevisionPort,
+    documentStorePort,
+    historyDialog.tabId,
+    letterTemplates,
+    rightPaneEditorHydrator,
+    showStatus,
+  ]);
+
+  const handleSaveWritingAssistance = useCallback(async (nextConfig) => {
+    const serialized = serializeWritingAssistanceConfig(nextConfig);
+    const saved = bridge.saveWritingAssistance
+      ? await bridge.saveWritingAssistance(serialized)
+      : serialized;
+    const normalized = normalizeWritingAssistanceConfig(saved || serialized);
+    setWritingAssistanceConfig(normalized);
+    setWritingAssistanceDraft(normalized);
+    showStatus("写作检查设置已保存", "success");
+  }, [showStatus]);
+
+  const handleApplyImportedPreferences = useCallback((preferences) => {
+    const next = normalizeProfilePreferencesPatch(preferences);
+    if (Object.hasOwn(next, "newDocumentTemplateId")) {
+      setNewDocumentTemplateId(next.newDocumentTemplateId);
+    }
+    if (next.leftSidebarMode) setLeftSidebarMode(next.leftSidebarMode);
+    if (next.structureMode) setStructureMode(next.structureMode);
+    if (Object.hasOwn(next, "leftSidebarCollapsed")) {
+      setLeftSidebarCollapsed(next.leftSidebarCollapsed);
+    }
+    if (Object.hasOwn(next, "documentSplitRatio")) {
+      setDocumentPaneRatio(next.documentSplitRatio);
+    }
+  }, [
+    setDocumentPaneRatio,
+    setNewDocumentTemplateId,
+  ]);
+
+  const handleApplyImportedTemplates = useCallback((templates) => {
+    const value = templates && typeof templates === "object" ? templates : {};
+    const importedTemplates = Array.isArray(templates)
+      ? templates
+      : (Array.isArray(value.templates) ? value.templates : value.userLetterTemplates);
+    if (Array.isArray(importedTemplates)) setUserLetterTemplates(importedTemplates);
+    const importedGroups = value.groups || value.userTemplateGroups;
+    if (Array.isArray(importedGroups)) setUserTemplateGroups(importedGroups);
+    if (typeof value.newDocumentTemplateId === "string") {
+      setNewDocumentTemplateId(value.newDocumentTemplateId);
+    }
+  }, [
+    setNewDocumentTemplateId,
+    setUserLetterTemplates,
+    setUserTemplateGroups,
+  ]);
 
   const handleOpenWorkspaceSearchResult = useCallback(async (result) => {
     if (!result?.path) return;
@@ -3026,6 +3903,19 @@ export default function App() {
     updateActiveDocumentAiState,
   });
 
+  const handleSelectAiMode = useCallback(async (kind) => {
+    if (kind !== "compose") {
+      return requestAiModeChange(kind);
+    }
+    if (aiMode) {
+      const exited = await requestExitAiMode();
+      if (exited === false) return false;
+    }
+    setAiModeChooserOpen(false);
+    setCompositionWorkspaceOpen(true);
+    return true;
+  }, [aiMode, requestAiModeChange, requestExitAiMode, setAiModeChooserOpen]);
+
   const {
     handleCaptureAiChatSelection,
     handleJumpAiChatSelection,
@@ -3063,11 +3953,18 @@ export default function App() {
     writingWorkspaceRoot,
   });
   const openResearchPreviewView = useCallback(
-    (options) => workspaceResearchViewsPort.openResearchPreviewView(
-      options,
-      { snapshotTabs: snapshotLiveTabs },
-    ),
-    [snapshotLiveTabs, workspaceResearchViewsPort],
+    (options) => {
+      prepareSecondaryPanePageView();
+      return workspaceResearchViewsPort.openResearchPreviewView(
+        options,
+        { snapshotTabs: snapshotLiveTabs },
+      );
+    },
+    [
+      prepareSecondaryPanePageView,
+      snapshotLiveTabs,
+      workspaceResearchViewsPort,
+    ],
   );
   const researchViewsPort = {
     closeActiveResearchView: workspaceResearchViewsPort.closeActiveResearchView,
@@ -3270,8 +4167,16 @@ export default function App() {
     showStatus,
   });
 
+  const refreshPublicCitationSources = usePublicCitationLibrary({
+    documentPort: knowledgeDocumentPort,
+    setPublicCitationLibraryLoading,
+    setPublicCitationSources,
+    showStatus,
+  });
+
   useWorkspaceCitationLibraryLifecycle({
     leftSidebarMode,
+    refreshPublicCitationSources,
     refreshWorkspaceCitationSources,
     structureMode,
   });
@@ -3325,10 +4230,13 @@ export default function App() {
     handleAddCitationSource,
     handleChooseCitationSource,
     handleCloseCitationSourceDialog,
+    handleCopyCitationToPublic,
     handleCreateCitationFromIndependentResearch,
     handleCreateCitationFromResearch,
     handleDeleteCitationSource,
     handleEditCitationSource,
+    handleAttachPublicCitation,
+    handleImportCitationSources,
     handleJumpCitationSource,
     handleOpenCitationPicker,
     handleSaveCitationSourceDialog,
@@ -3339,12 +4247,15 @@ export default function App() {
     citationSourceDialog,
     documentPort: knowledgeDocumentPort,
     knowledgeReferences,
+    publicCitationSources,
+    refreshPublicCitationSources,
     refreshWorkspaceCitationSources,
     researchPort: knowledgeResearchPort,
     setCitationPicker,
     setCitationSourceDialog,
     setLeftSidebarMode,
     setPendingCitationPage,
+    setPublicCitationSources,
     setStructureMode,
     setWorkspaceCitationSources,
     showConfirmDialog,
@@ -3479,6 +4390,27 @@ export default function App() {
     updateChatState({ input: prompt });
   }, [aiChatSelections.length, showStatus, updateChatState]);
 
+  const createAiApplySafetySnapshot = useCallback(async () => {
+    if (typeof bridge.createDocumentHistory !== "function") {
+      throw new Error("当前版本不支持本地安全版本");
+    }
+    const document = getSaveDocument();
+    const documentId = String(document?.documentId || "").trim();
+    if (!documentId) {
+      throw new Error("当前信笺缺少文档身份");
+    }
+    const result = await bridge.createDocumentHistory({
+      documentId,
+      document,
+      name: "AI 应用前",
+      pinned: false,
+    });
+    if (!result?.ok || !result?.entry) {
+      throw new Error("本地安全版本创建失败");
+    }
+    return result;
+  }, [getSaveDocument]);
+
   const {
     beginManualAiApply,
     cancelAiApplyPreview,
@@ -3487,6 +4419,7 @@ export default function App() {
     stageAiApplyPreview,
   } = useAiApplyPreviewActions({
     aiApplyPreview,
+    createSafetySnapshot: createAiApplySafetySnapshot,
     editor,
     getActiveDocumentSnapshot,
     setAiApplyPreview,
@@ -3530,7 +4463,8 @@ export default function App() {
 
   const measuredWorkSurfaceWidth = workSurfaceWidth || Math.max(1, window.innerWidth - (leftSidebarCollapsed ? 0 : 330));
   const secondaryGroupOpen = workspaceGroups.secondary.views.length > 0;
-  const secondaryGroupVisible = secondaryGroupOpen && !immersiveMode;
+  const mainSpreadViewActive = mainPageViewState.mode === PAGE_VIEW_MODES.SPREAD;
+  const secondaryGroupVisible = secondaryGroupOpen && !immersiveMode && !mainSpreadViewActive;
   const minimumGroupRatio = Math.min(0.5, 320 / Math.max(640, measuredWorkSurfaceWidth));
   const secondaryPrimaryRatio = Math.min(1 - minimumGroupRatio, Math.max(minimumGroupRatio, workspaceGroups.splitRatio));
   const secondarySideRatio = 1 - secondaryPrimaryRatio;
@@ -3567,6 +4501,38 @@ export default function App() {
   const tabTemplateDocument = tabTemplateDialog.targetTabId === activeTabId
     ? documentState
     : (openTabs.find((tab) => tab.id === tabTemplateDialog.targetTabId)?.document || null);
+  const historyTargetTab = historyDialog.open
+    ? openTabs.find((tab) => tab.id === historyDialog.tabId) || null
+    : null;
+  const historyTargetDocument = historyTargetTab?.id === activeTabId
+    ? getSaveDocument()
+    : (historyTargetTab?.id === rightSplitTabId
+      ? getRightSplitSaveDocument()
+      : historyTargetTab?.document);
+  const historyTargetRevision = historyTargetTab
+    ? (documentRevisionPort.readDiskRevision(historyTargetTab.id)
+      || historyTargetTab.diskRevision
+      || null)
+    : null;
+  const documentContextTargetTab = documentContextMenu
+    ? openTabs.find((tab) => tab.id === documentContextMenu.tabId) || null
+    : null;
+  const documentContextTargetView = documentContextMenu
+    ? workspaceGroups[documentContextMenu.groupId]?.views?.find(
+      (view) => view.viewId === documentContextMenu.viewId,
+    ) || null
+    : null;
+  const documentContextMoveTarget = documentContextMenu?.groupId === WORKSPACE_GROUP_ID.SECONDARY
+    ? WORKSPACE_GROUP_ID.PRIMARY
+    : WORKSPACE_GROUP_ID.SECONDARY;
+  const documentContextMoveAllowed = documentContextMoveTarget === WORKSPACE_GROUP_ID.PRIMARY
+    || (
+      workspaceGroups.primary.views.length > 1
+      && (
+        !documentContextMenu?.tabId
+        || getPageViewStateForTab(documentContextMenu.tabId).mode !== PAGE_VIEW_MODES.SPREAD
+      )
+    );
   const researchWebViewSuspended = Boolean(
     webSourceDialog.open
     || webCopyDialog.open
@@ -3574,6 +4540,7 @@ export default function App() {
     || promptDialog
     || linkDialog
     || settingsDialog.open
+    || Boolean(settingsDialog.section)
     || tabTemplateDialog.open
     || helpOpen
     || releaseNotesOpen
@@ -3581,7 +4548,11 @@ export default function App() {
     || internalLinkPicker
     || citationPicker
     || footnoteDialog.open
-    || citationSourceDialog.open,
+    || citationSourceDialog.open
+    || historyDialog.open
+    || compositionWorkspaceOpen
+    || emojiPicker.open
+    || Boolean(professionalUi.kind),
   );
 
   return (
@@ -3596,16 +4567,23 @@ export default function App() {
         onImport={handleImportDocument}
         onSave={handleSave}
         onOpenExport={handleOpenExportDialog}
+        onOpenProfileMigration={() => openSettingsSection("profile")}
         onInsertImage={handleInsertImage}
         onInsertAudio={() => handleInsertMedia("audio")}
         onInsertVideo={() => handleInsertMedia("video")}
         onOpenLinkDialog={handleOpenLinkDialog}
         onInsertInternalLink={handleOpenInternalLinkPicker}
         onInsertFootnote={handleAddFootnote}
+        onInsertEmoji={handleOpenEmojiPicker}
+        onInsertCodeBlock={handleInsertCodeBlock}
+        onInsertMath={() => openProfessionalUi("math", { mode: "inline" })}
+        onInsertMermaid={() => openProfessionalUi("mermaid")}
+        onInsertBookmark={handleInsertBookmark}
         onOpenCitationPicker={handleOpenCitationPicker}
         onOpenHelp={openHelpCenter}
         onOpenSettings={openSettings}
         settingsTriggerRef={settingsTriggerRef}
+        elementsTriggerRef={elementsTriggerRef}
         exportTriggerRef={exportTriggerRef}
         onOpenSearch={openSearch}
         researchSearchAvailable={Boolean(researchRoot?.available && researchRoot?.libraryId)}
@@ -3699,18 +4677,10 @@ export default function App() {
                 onOutlineItemClick={handleOutlineItemClick}
                 referenceProps={{
                   footnotes: visibleFootnotes,
-                  sources: citationSourcesForDock,
-                  citationOrder,
-                  pendingPage: pendingCitationPage,
-                  loading: citationLibraryLoading,
                   readOnly: activeWorkReadOnly,
-                  onJumpFootnote: handleJumpFootnote,
-                  onEditFootnote: handleEditFootnote,
-                  onDeleteFootnote: handleDeleteFootnote,
-                  onAddCitationSource: handleAddCitationSource,
-                  onEditCitationSource: handleEditCitationSource,
-                  onDeleteCitationSource: handleDeleteCitationSource,
-                  onJumpCitationSource: handleJumpCitationSource,
+                   onJumpFootnote: handleJumpFootnote,
+                   onEditFootnote: handleEditFootnote,
+                   onDeleteFootnote: handleDeleteFootnote,
                 }}
                 relatedProps={{
                   links: workspaceRelationships.links || [],
@@ -3723,6 +4693,60 @@ export default function App() {
                   onJumpUsage: handleJumpInternalLinkUsage,
                   onGiveNewIdentity: handleRegenerateDuplicateIdentity,
                 }}
+                writingProps={{
+                  issues: splitPaneActive
+                    ? writingIssuesByEditor.right
+                    : writingIssuesByEditor.main,
+                  enabled: writingAssistanceConfig.enabled,
+                  editorLabel: splitPaneActive ? "右侧正文" : "当前正文",
+                  settingsButtonRef: writingSettingsTriggerRef,
+                  onOpenSettings: () => openSettingsSection("writing"),
+                  onIgnoreOnce: (issue) => (
+                    writingAssistanceSessions[splitPaneActive ? "right" : "main"]
+                      .ignoreOnce(issue.id)
+                  ),
+                  onReplaceOnce: (issue) => (
+                    writingAssistanceSessions[splitPaneActive ? "right" : "main"]
+                      .replaceOnce(issue.id)
+                  ),
+                  onReplaceAll: (issue) => (
+                    writingAssistanceSessions[splitPaneActive ? "right" : "main"]
+                      .replaceAll(issue.id)
+                  ),
+                  onJump: (issue) => (
+                    writingAssistanceSessions[splitPaneActive ? "right" : "main"]
+                      .jumpTo(issue.id)
+                  ),
+                }}
+                citationLibraryProps={{
+                  privateSources: structureWorkDocument?.citationSources || [],
+                  publicSources: publicCitationSources,
+                  citationOrder,
+                  citationStyle: structureWorkDocument?.citationStyle,
+                  loading: citationLibraryLoading || publicCitationLibraryLoading,
+                  privateReadOnly: activeWorkReadOnly,
+                  onStyleChange: (citationStyle) => {
+                    knowledgeDocumentPort.updateActive((document) => ({
+                      ...document,
+                      citationStyle,
+                    }));
+                   },
+                   onEditSource: handleEditCitationSource,
+                   onAddSource: handleAddCitationSource,
+                   onDeleteSource: handleDeleteCitationSource,
+                   onCopyToPublic: handleCopyCitationToPublic,
+                   onAttachPublic: handleAttachPublicCitation,
+                   onImportSources: handleImportCitationSources,
+                   onJumpCitationSource: handleJumpCitationSource,
+                   onOpenExternal: (url) => bridge.openExternal?.(url),
+                 }}
+                bookmarkProps={{
+                   editor: structureWorkEditor,
+                   readOnly: activeWorkReadOnly,
+                   onJump: handleJumpBookmark,
+                   onRename: handleRenameBookmark,
+                   onDelete: handleRemoveBookmark,
+                 }}
               />
             )}
           />
@@ -3786,7 +4810,16 @@ export default function App() {
                   onReorder={(viewId, beforeViewId) => handleReorderGroupView(WORKSPACE_GROUP_ID.PRIMARY, viewId, beforeViewId)}
                   onMoveDocument={handleMoveGroupDocument}
                   onOpenTemplatePicker={handleOpenGroupTabTemplate}
-                  canMoveDocument={() => workspaceGroups.primary.views.length > 1}
+                  onOpenHistory={handleOpenDocumentHistory}
+                  onSetPageViewMode={handleSetDocumentPageViewMode}
+                  getPageViewState={getPageViewStateForTab}
+                  canMoveDocument={(view, targetGroupId) => (
+                    workspaceGroups.primary.views.length > 1
+                    && (
+                      targetGroupId !== WORKSPACE_GROUP_ID.SECONDARY
+                      || getPageViewStateForTab(view.tabId).mode !== PAGE_VIEW_MODES.SPREAD
+                    )
+                  )}
                 />
                 <GroupTabStrip
                   groupId={WORKSPACE_GROUP_ID.SECONDARY}
@@ -3799,6 +4832,9 @@ export default function App() {
                   onReorder={(viewId, beforeViewId) => handleReorderGroupView(WORKSPACE_GROUP_ID.SECONDARY, viewId, beforeViewId)}
                   onMoveDocument={handleMoveGroupDocument}
                   onOpenTemplatePicker={handleOpenGroupTabTemplate}
+                  onOpenHistory={handleOpenDocumentHistory}
+                  onSetPageViewMode={handleSetDocumentPageViewMode}
+                  getPageViewState={getPageViewStateForTab}
                 />
               </div>
             ) : (
@@ -3813,7 +4849,16 @@ export default function App() {
                 onReorder={(viewId, beforeViewId) => handleReorderGroupView(WORKSPACE_GROUP_ID.PRIMARY, viewId, beforeViewId)}
                 onMoveDocument={handleMoveGroupDocument}
                 onOpenTemplatePicker={handleOpenGroupTabTemplate}
-                canMoveDocument={() => workspaceGroups.primary.views.length > 1}
+                onOpenHistory={handleOpenDocumentHistory}
+                onSetPageViewMode={handleSetDocumentPageViewMode}
+                getPageViewState={getPageViewStateForTab}
+                canMoveDocument={(view, targetGroupId) => (
+                  workspaceGroups.primary.views.length > 1
+                  && (
+                    targetGroupId !== WORKSPACE_GROUP_ID.SECONDARY
+                    || getPageViewStateForTab(view.tabId).mode !== PAGE_VIEW_MODES.SPREAD
+                  )
+                )}
               />
             )}
             {searchMode === "document" ? (
@@ -3886,6 +4931,11 @@ export default function App() {
                 onOpenComment={aiMode ? undefined : ((comment, position) => handleOpenComment("main", comment, position))}
                 onEditLink={aiMode ? undefined : handleEditLinkFromCanvas}
                 canvasRef={mainCanvasRef}
+                pageViewEnabled={!aiMode}
+                pageViewState={mainPageViewState}
+                onPageViewStateChange={handleMainPageViewStateChange}
+                contextMenuEnabled={!aiMode}
+                onDocumentContextMenu={(event) => handleOpenCanvasDocumentContext(event, "main")}
               />
               {!aiMode && secondaryGroupVisible ? (
                 <div className={activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH ? "right-split-pane research-view-active" : "right-split-pane"}>
@@ -3929,6 +4979,9 @@ export default function App() {
                       onOpenComment={(comment, position) => handleOpenComment("right", comment, position)}
                       onEditLink={handleEditLinkFromCanvas}
                       canvasRef={rightCanvasRef}
+                      pageViewState={rightPageViewState}
+                      onPageViewStateChange={handleRightPageViewStateChange}
+                      onDocumentContextMenu={(event) => handleOpenCanvasDocumentContext(event, "right")}
                     />
                   ) : activeSecondaryView?.kind === WORKSPACE_VIEW_KIND.RESEARCH ? (
                     <div className="secondary-research-slot" onPointerDown={() => setActivePane("right")}>
@@ -4093,13 +5146,105 @@ export default function App() {
         onAddAndSelect={handleAddAndInsertCitationSource}
         onClose={() => setCitationPicker(null)}
       />
+      <DocumentHistoryDialog
+        open={Boolean(historyDialog.open && historyTargetDocument)}
+        bridge={bridge}
+        document={historyTargetDocument}
+        filePath={historyTargetTab?.path || ""}
+        diskRevision={historyTargetRevision}
+        returnFocusRef={historyReturnFocusRef}
+        onClose={() => setHistoryDialog({ open: false, tabId: "" })}
+        onPrepareOperation={handlePrepareDocumentHistoryOperation}
+        onRestored={handleHistoryRestored}
+        showConfirmDialog={showConfirmDialog}
+        onError={(error) => showStatus(
+          `版本历史操作失败：${error?.message || error}`,
+          "warning",
+        )}
+      />
+      <DocumentContextMenu
+        menu={!aiMode && documentContextTargetTab && documentContextTargetView ? documentContextMenu : null}
+        title={documentContextTargetTab?.title || "当前信笺"}
+        pageViewMode={documentContextTargetTab
+          ? getPageViewStateForTab(documentContextTargetTab.id).mode
+          : PAGE_VIEW_MODES.CONTINUOUS}
+        moveTarget={documentContextMoveTarget}
+        moveAllowed={documentContextMoveAllowed}
+        onSetPageViewMode={(mode) => handleSetDocumentPageViewMode(
+          {
+            ...documentContextTargetView,
+            tabId: documentContextTargetTab?.id,
+          },
+          mode,
+          documentContextMenu?.groupId,
+        )}
+        onOpenHistory={() => handleOpenDocumentHistory(
+          documentContextTargetTab?.id,
+          documentContextMenu?.groupId === WORKSPACE_GROUP_ID.SECONDARY
+            ? rightSplitEditor?.view?.dom
+            : editor?.view?.dom,
+        )}
+        onOpenTemplate={() => handleOpenGroupTabTemplate(
+          {
+            ...documentContextTargetView,
+            tabId: documentContextTargetTab?.id,
+          },
+          documentContextMenu?.groupId === WORKSPACE_GROUP_ID.SECONDARY
+            ? rightCanvasRef.current
+            : mainCanvasRef.current,
+        )}
+        onMove={() => handleMoveGroupDocument(
+          documentContextTargetView?.viewId,
+          documentContextMoveTarget,
+          null,
+        )}
+        onCloseDocument={() => handleCloseGroupView(
+          documentContextMenu?.groupId,
+          documentContextTargetView?.viewId,
+        )}
+        onDismiss={() => setDocumentContextMenu(null)}
+      />
+      <EmojiPicker
+        open={emojiPicker.open}
+        onSelect={handleSelectEmoji}
+        onRequestClose={() => setEmojiPicker({ open: false, context: null })}
+        returnFocusRef={elementsTriggerRef}
+        editorFocusRef={{
+          current: emojiPicker.context?.editor?.view?.dom || null,
+        }}
+      />
+      <MathInsertDialog
+        open={professionalUi.kind === "math"}
+        editor={professionalUi.editor}
+        initialValue={professionalUi.initialValue}
+        update={
+          professionalUi.updatePosition !== null
+          && Number.isFinite(Number(professionalUi.updatePosition))
+        }
+        updatePosition={professionalUi.updatePosition}
+        onSubmit={handleInsertMathDraft}
+        onClose={closeProfessionalUi}
+      />
+      <MermaidInsertDialog
+        open={professionalUi.kind === "mermaid"}
+        editor={professionalUi.editor}
+        initialValue={professionalUi.initialValue}
+        update={
+          professionalUi.updatePosition !== null
+          && Number.isFinite(Number(professionalUi.updatePosition))
+        }
+        updatePosition={professionalUi.updatePosition}
+        onSubmit={handleInsertMermaidDraft}
+        onClose={closeProfessionalUi}
+      />
       <KnowledgeReferencePopover popover={knowledgeReferencePopover} onClose={closeKnowledgeReferencePopover} />
       <AiModeChooser
         open={aiModeChooserOpen}
         anchorRef={aiModeTriggerRef}
         activeMode={aiModeKind}
         configured={aiHasUsableProvider}
-        onSelectMode={requestAiModeChange}
+        compositionAvailable={Boolean(bridge.isElectron)}
+        onSelectMode={handleSelectAiMode}
         onExitMode={requestExitAiMode}
         onOpenSettings={openAiSettings}
         onClose={() => setAiModeChooserOpen(false)}
@@ -4125,6 +5270,119 @@ export default function App() {
         onRefreshCodex={handleRefreshCodexCli}
         onLoginCodex={handleLoginCodexCli}
       />
+      {settingsDialog.section === "writing" ? (
+        <div
+          className="settings-feature-overlay dialog-scrim"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeSettings();
+          }}
+        >
+          <section
+            ref={writingSettingsDialogRef}
+            className="settings-feature-dialog writing-settings-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="writing-settings-dialog-title"
+            aria-describedby="writing-settings-dialog-description"
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              closeSettings();
+            }}
+          >
+            <header className="settings-feature-dialog-header">
+              <div className="writing-settings-titlecopy">
+                <span className="writing-settings-title-icon" aria-hidden="true"><SpellCheck2 size={19} /></span>
+                <div>
+                  <h2 id="writing-settings-dialog-title">检查设置</h2>
+                  <p id="writing-settings-dialog-description">管理当前设备上的拼写、白名单与用词规范</p>
+                </div>
+              </div>
+              <button ref={writingSettingsCloseRef} type="button" onClick={closeSettings} aria-label="关闭检查设置">
+                <X size={18} />
+              </button>
+            </header>
+            <div className="writing-settings-dialog-body">
+              <WritingAssistanceSettings
+                initialFocusRef={writingSettingsInitialFocusRef}
+                value={writingAssistanceDraft}
+                onChange={setWritingAssistanceDraft}
+              />
+            </div>
+            <footer className="settings-feature-dialog-footer">
+              <button type="button" onClick={closeSettings}>取消</button>
+              <button
+                type="button"
+                className="settings-primary"
+                onClick={() => void handleSaveWritingAssistance(writingAssistanceDraft).then(closeSettings)}
+              >
+                <Save size={15} />保存设置
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+      {settingsDialog.section === "profile" ? (
+        <div
+          className="settings-feature-overlay dialog-scrim dialog-scrim--large"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeSettings();
+          }}
+        >
+          <section
+            ref={profileDialogRef}
+            className="settings-feature-dialog profile-settings-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="profile-settings-dialog-title"
+            aria-describedby="profile-settings-dialog-description"
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              closeSettings();
+            }}
+          >
+            <header className="settings-feature-dialog-header">
+              <div className="writing-settings-titlecopy">
+                <span className="writing-settings-title-icon" aria-hidden="true"><PackageOpen size={19} /></span>
+                <div>
+                  <h2 id="profile-settings-dialog-title">备份与迁移</h2>
+                  <p id="profile-settings-dialog-description">安全导入或导出当前设备的可移植配置</p>
+                </div>
+              </div>
+              <button ref={profileDialogCloseRef} type="button" onClick={closeSettings} aria-label="关闭备份与迁移">
+                <X size={18} />
+              </button>
+            </header>
+            <div className="profile-settings-dialog-body">
+              <ProfileMigrationPanel
+                bridge={bridge}
+                preferences={createPortableProfilePreferences({
+                  newDocumentTemplateId,
+                  leftSidebarMode,
+                  structureMode,
+                  leftSidebarCollapsed,
+                  documentSplitRatio: workspaceGroups.splitRatio,
+                })}
+                templates={{
+                  templates: userLetterTemplates,
+                  groups: userTemplateGroups,
+                  newDocumentTemplateId,
+                }}
+                onApplyPreferences={handleApplyImportedPreferences}
+                onApplyTemplates={handleApplyImportedTemplates}
+                onClose={closeSettings}
+                onError={(error) => showStatus(
+                  `配置迁移失败：${error?.message || error}`,
+                  "warning",
+                )}
+              />
+            </div>
+          </section>
+        </div>
+      ) : null}
       <SelectionAiPopover
         controller={selectionAi}
         onRequestCloseSession={requestCloseSelectionAiSession}
@@ -4210,6 +5468,31 @@ export default function App() {
         onExportImages={handleExportImages}
         onExportEditable={handleExportEditable}
       />
+      {compositionWorkspaceOpen ? (
+        <div
+          className="ai-composition-overlay"
+          onMouseDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) event.stopPropagation();
+          }}
+        >
+          <AiCompositionWorkspace
+            bridge={bridge}
+            sourceCandidates={compositionSourceCandidates}
+            sourceDocument={compositionSourceDocument}
+            onBack={() => setCompositionWorkspaceOpen(false)}
+            onComplete={handleCompositionComplete}
+            onError={(error) => showStatus(
+              `AI 起稿失败：${error?.message || error}`,
+              "warning",
+            )}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

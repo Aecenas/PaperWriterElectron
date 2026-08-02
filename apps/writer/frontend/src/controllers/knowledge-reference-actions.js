@@ -39,16 +39,50 @@ export function useWorkspaceCitationLibrary({
   ]);
 }
 
+export function usePublicCitationLibrary({
+  documentPort,
+  setPublicCitationLibraryLoading,
+  setPublicCitationSources,
+  showStatus,
+}) {
+  return useCallback(async () => {
+    setPublicCitationLibraryLoading(true);
+    try {
+      const workspaceRoot = documentPort.getWorkspaceRoot();
+      const result = workspaceRoot && typeof bridge.migrateWorkspaceCitationsToPublic === "function"
+        ? await bridge.migrateWorkspaceCitationsToPublic(workspaceRoot)
+        : await bridge.listPublicCitations?.();
+      const sources = normalizeWorkspaceCitationSources(result?.sources);
+      setPublicCitationSources(sources);
+      return sources;
+    } catch (error) {
+      showStatus(error?.message || "公域文献库读取失败", "warning");
+      return [];
+    } finally {
+      setPublicCitationLibraryLoading(false);
+    }
+  }, [
+    documentPort,
+    setPublicCitationLibraryLoading,
+    setPublicCitationSources,
+    showStatus,
+  ]);
+}
+
 export function useWorkspaceCitationLibraryLifecycle({
   leftSidebarMode,
+  refreshPublicCitationSources,
   refreshWorkspaceCitationSources,
   structureMode,
 }) {
   useEffect(() => {
-    if (leftSidebarMode === "structure" && structureMode === "references") {
-      refreshWorkspaceCitationSources();
+    if (leftSidebarMode === "structure" && structureMode === "bibliography") {
+      void Promise.all([
+        refreshWorkspaceCitationSources(),
+        refreshPublicCitationSources?.(),
+      ]);
     }
-  }, [leftSidebarMode, refreshWorkspaceCitationSources, structureMode]);
+  }, [leftSidebarMode, refreshPublicCitationSources, refreshWorkspaceCitationSources, structureMode]);
 }
 
 export function useFootnoteActions({
@@ -163,12 +197,15 @@ export function useCitationActions({
   citationSourceDialog,
   documentPort,
   knowledgeReferences,
+  publicCitationSources,
+  refreshPublicCitationSources,
   refreshWorkspaceCitationSources,
   researchPort,
   setCitationPicker,
   setCitationSourceDialog,
   setLeftSidebarMode,
   setPendingCitationPage,
+  setPublicCitationSources,
   setStructureMode,
   setWorkspaceCitationSources,
   showConfirmDialog,
@@ -176,8 +213,9 @@ export function useCitationActions({
   structureWorkEditor,
   workspaceCitationSources,
 }) {
-  const handleAddCitationSource = useCallback(() => {
-    if (activeWorkReadOnly) {
+  const handleAddCitationSource = useCallback((scope = "private") => {
+    const targetScope = scope === "public" ? "public" : "private";
+    if (targetScope === "private" && activeWorkReadOnly) {
       showStatus("当前信笺为只读，不能新增参考文献来源", "warning");
       return;
     }
@@ -187,12 +225,14 @@ export function useCitationActions({
       insertTarget: null,
       citationPage: "",
       returnToPicker: false,
+      scope: targetScope,
     });
   }, [activeWorkReadOnly, setCitationSourceDialog, showStatus]);
 
-  const handleEditCitationSource = useCallback((source) => {
+  const handleEditCitationSource = useCallback((source, scope = "private") => {
     if (!source?.id) return;
-    if (activeWorkReadOnly) {
+    const targetScope = scope === "public" ? "public" : "private";
+    if (targetScope === "private" && activeWorkReadOnly) {
       showStatus("当前信笺为只读，不能编辑参考文献来源", "warning");
       return;
     }
@@ -202,11 +242,14 @@ export function useCitationActions({
       insertTarget: null,
       citationPage: "",
       returnToPicker: false,
+      scope: targetScope,
     });
   }, [activeWorkReadOnly, setCitationSourceDialog, showStatus]);
 
-  const persistCitationSource = useCallback(async (input, { insertTarget = null } = {}) => {
-    const previous = input?.id ? input : null;
+  const persistCitationSource = useCallback(async (input, {
+    insertTarget = null,
+    scope = "private",
+  } = {}) => {
     const now = new Date().toISOString();
     const normalized = normalizeCitationSources([{
       ...input,
@@ -216,46 +259,34 @@ export function useCitationActions({
     }])[0];
     if (!normalized) throw new Error("题名、网址或 DOI 至少填写一项");
 
-    const workspaceRoot = documentPort.getWorkspaceRoot();
-    const inWorkspace = Boolean(
-      previous?.id && workspaceCitationSources.some((item) => item.id === previous.id),
-    );
-    const saveToWorkspace = Boolean(workspaceRoot && (!previous || inWorkspace || insertTarget));
-    let savedSource = normalized;
-    if (saveToWorkspace) {
-      const result = await bridge.upsertCitation?.(workspaceRoot, normalized);
-      savedSource = normalizeCitationSources([result?.source || normalized])[0];
-      if (!savedSource) throw new Error("参考文献来源返回格式无效");
-      setWorkspaceCitationSources(Array.isArray(result?.sources)
+    if (scope === "public") {
+      if (typeof bridge.upsertPublicCitation !== "function") throw new Error("当前环境不支持公域文献库");
+      const result = await bridge.upsertPublicCitation(normalized);
+      const savedSource = normalizeCitationSources([result?.source || normalized])[0];
+      if (!savedSource) throw new Error("公域文献返回格式无效");
+      setPublicCitationSources(Array.isArray(result?.sources)
         ? normalizeWorkspaceCitationSources(result.sources)
         : (current) => [
           ...current.filter((item) => item.id !== savedSource.id),
           savedSource,
         ]);
+      return { source: savedSource, scope: "public" };
     }
-    if (!saveToWorkspace && !insertTarget) {
+
+    if (!insertTarget) {
       const updated = documentPort.updateActive((document) => {
         const sources = new Map(
           (document.citationSources || []).map((item) => [item.id, item]),
         );
-        sources.set(savedSource.id, savedSource);
+        sources.set(normalized.id, normalized);
         return { ...document, citationSources: [...sources.values()] };
       });
       if (!updated) {
         throw new Error("当前信笺为只读或已经变化，参考文献来源未保存");
       }
-    } else if (previous?.id) {
-      const updated = documentPort.updateActive((document) => ({
-        ...document,
-        citationSources: (document.citationSources || [])
-          .map((item) => item.id === savedSource.id ? savedSource : item),
-      }));
-      if (!updated) {
-        throw new Error("当前信笺为只读或已经变化，参考文献来源快照未更新");
-      }
     }
-    return { source: savedSource, savedToWorkspace: saveToWorkspace };
-  }, [documentPort, setWorkspaceCitationSources, workspaceCitationSources]);
+    return { source: normalized, scope: "private" };
+  }, [documentPort, setPublicCitationSources]);
 
   const handleInsertCitationAtTarget = useCallback((target, source, page = "") => {
     if (!target || !source?.id) return false;
@@ -289,37 +320,32 @@ export function useCitationActions({
 
   const handleSaveCitationSourceDialog = useCallback(async (input, citationPage = "") => {
     const target = citationSourceDialog.insertTarget;
-    if (!target && activeWorkReadOnly) {
+    const scope = target ? "private" : (citationSourceDialog.scope === "public" ? "public" : "private");
+    if (scope === "private" && !target && activeWorkReadOnly) {
       return { ok: false, error: "当前信笺为只读，不能保存参考文献来源" };
     }
-    const result = await persistCitationSource(input, { insertTarget: target });
+    const result = await persistCitationSource(input, { insertTarget: target, scope });
     if (target) {
       if (handleInsertCitationAtTarget(target, result.source, citationPage)) {
         showStatus("新参考文献来源已保存并插入", "success");
       } else {
-        if (!result.savedToWorkspace) {
-          const retained = documentPort.updateTarget(target, (document) => {
-            const sources = new Map(
-              (document.citationSources || []).map((item) => [item.id, item]),
-            );
-            sources.set(result.source.id, result.source);
-            return { ...document, citationSources: [...sources.values()] };
-          }, { allowRevisionChange: true });
-          if (!retained) throw new Error("原插入信笺已经关闭，参考文献来源未能保留");
-        }
+        const retained = documentPort.updateTarget(target, (document) => {
+          const sources = new Map(
+            (document.citationSources || []).map((item) => [item.id, item]),
+          );
+          sources.set(result.source.id, result.source);
+          return { ...document, citationSources: [...sources.values()] };
+        }, { allowRevisionChange: true });
+        if (!retained) throw new Error("原插入信笺已经关闭，参考文献来源未能保留");
         showStatus("参考文献来源已保存，但原插入位置已经失效", "warning");
       }
     } else {
-      showStatus(
-        result.savedToWorkspace
-          ? "参考文献来源已保存到当前工作区"
-          : "参考文献来源已保存到当前信笺",
-        "success",
-      );
+      showStatus(scope === "public" ? "文献已保存到公域" : "文献已保存到当前信笺", "success");
     }
     return true;
   }, [
     activeWorkReadOnly,
+    citationSourceDialog.scope,
     citationSourceDialog.insertTarget,
     documentPort,
     handleInsertCitationAtTarget,
@@ -338,8 +364,11 @@ export function useCitationActions({
       requestId: `citation-${Date.now()}`,
       initialPage: "",
     });
-    void refreshWorkspaceCitationSources();
-  }, [documentPort, refreshWorkspaceCitationSources, setCitationPicker, showStatus]);
+    void Promise.all([
+      refreshWorkspaceCitationSources(),
+      refreshPublicCitationSources?.(),
+    ]);
+  }, [documentPort, refreshPublicCitationSources, refreshWorkspaceCitationSources, setCitationPicker, showStatus]);
 
   const handleChooseCitationSource = useCallback((source, page = "") => {
     if (!citationPicker) return;
@@ -364,6 +393,7 @@ export function useCitationActions({
       insertTarget: target,
       citationPage: String(page || ""),
       returnToPicker: true,
+      scope: "private",
     });
   }, [citationPicker, setCitationPicker, setCitationSourceDialog]);
 
@@ -375,6 +405,7 @@ export function useCitationActions({
       insertTarget: null,
       citationPage: "",
       returnToPicker: false,
+      scope: "private",
     });
     if (!result?.saved && previous.returnToPicker && previous.insertTarget) {
       setCitationPicker({
@@ -385,24 +416,22 @@ export function useCitationActions({
     }
   }, [citationSourceDialog, setCitationPicker, setCitationSourceDialog]);
 
-  const handleDeleteCitationSource = useCallback(async (source) => {
+  const handleDeleteCitationSource = useCallback(async (source, scope = "private") => {
     if (!source?.id) return;
-    if (activeWorkReadOnly) {
+    const targetScope = scope === "public" ? "public" : "private";
+    if (targetScope === "private" && activeWorkReadOnly) {
       showStatus("当前信笺为只读，不能移除参考文献来源", "warning");
       return;
     }
-    const inWorkspace = workspaceCitationSources.some((item) => item.id === source.id);
     const isCited = citationOrder.includes(source.id);
     const choice = await showConfirmDialog({
-      title: "移除参考文献来源",
-      message: inWorkspace
-        ? (isCited
-          ? "来源会从工作区资料库移除；当前信笺仍保留引用快照。"
-          : "来源会从工作区资料库移除。")
+      title: targetScope === "public" ? "删除公域文献" : "移除私域文献",
+      message: targetScope === "public"
+        ? "只会从公域删除；已经加入信笺的私域快照不会变化。"
         : (isCited
-          ? "该来源仍被正文引用，不能删除信笺内快照。"
-          : "来源会从当前信笺中移除。"),
-      actions: isCited && !inWorkspace
+          ? "该文献仍被正文引用，不能删除信笺内快照。"
+          : "文献会从当前信笺的私域文献库移除。"),
+      actions: isCited && targetScope === "private"
         ? [{ value: "cancel", label: "知道了" }]
         : [
           { value: "delete", label: "移除", tone: "danger" },
@@ -411,40 +440,94 @@ export function useCitationActions({
       cancelValue: "cancel",
     });
     if (choice !== "delete") return;
-    if (!inWorkspace) {
+    if (targetScope === "private") {
       documentPort.updateActive((document) => ({
         ...document,
         citationSources: (document.citationSources || [])
           .filter((item) => item.id !== source.id),
       }));
+      showStatus("私域文献已移除", "success");
       return;
     }
     try {
-      const result = await bridge.deleteCitation?.(
-        documentPort.getWorkspaceRoot(),
-        source.id,
-      );
-      setWorkspaceCitationSources(Array.isArray(result?.sources)
+      const result = await bridge.deletePublicCitation?.(source.id);
+      setPublicCitationSources(Array.isArray(result?.sources)
         ? normalizeWorkspaceCitationSources(result.sources)
         : (current) => current.filter((item) => item.id !== source.id));
-      showStatus(
-        isCited
-          ? "工作区来源已移除；信笺引用快照已保留"
-          : "参考文献来源已移除",
-        "success",
-      );
+      showStatus("公域文献已删除；已有信笺快照保持不变", "success");
     } catch (error) {
-      showStatus(error?.message || "参考文献来源移除失败", "warning");
+      showStatus(error?.message || "公域文献删除失败", "warning");
     }
   }, [
     activeWorkReadOnly,
     citationOrder,
     documentPort,
-    setWorkspaceCitationSources,
+    setPublicCitationSources,
     showConfirmDialog,
     showStatus,
-    workspaceCitationSources,
   ]);
+
+  const handleCopyCitationToPublic = useCallback(async (source) => {
+    if (!source?.id) return false;
+    try {
+      if (typeof bridge.upsertPublicCitation !== "function") throw new Error("当前环境不支持公域文献库");
+      const result = await bridge.upsertPublicCitation(source);
+      setPublicCitationSources(Array.isArray(result?.sources)
+        ? normalizeWorkspaceCitationSources(result.sources)
+        : (current) => [
+          ...current.filter((item) => item.id !== source.id),
+          normalizeCitationSources([result?.source || source])[0],
+        ].filter(Boolean));
+      showStatus("已复制到公域；当前信笺快照保持独立", "success");
+      return true;
+    } catch (error) {
+      showStatus(error?.message || "复制到公域失败", "warning");
+      return false;
+    }
+  }, [setPublicCitationSources, showStatus]);
+
+  const handleAttachPublicCitation = useCallback((source) => {
+    if (!source?.id) return false;
+    if (activeWorkReadOnly) {
+      showStatus("当前信笺为只读，不能加入文献", "warning");
+      return false;
+    }
+    const snapshot = normalizeCitationSources([source])[0];
+    if (!snapshot) return false;
+    const updated = documentPort.updateActive((document) => {
+      const sources = new Map((document.citationSources || []).map((item) => [item.id, item]));
+      sources.set(snapshot.id, snapshot);
+      return { ...document, citationSources: [...sources.values()] };
+    });
+    if (!updated) return false;
+    showStatus("已加入本文私域文献库", "success");
+    return true;
+  }, [activeWorkReadOnly, documentPort, showStatus]);
+
+  const handleImportCitationSources = useCallback(async (scope, sources) => {
+    const normalized = normalizeCitationSources(Array.isArray(sources) ? sources : []);
+    if (scope !== "public") {
+      if (activeWorkReadOnly) throw new Error("当前信笺为只读，不能导入私域文献");
+      const updated = documentPort.updateActive((document) => ({
+        ...document,
+        citationSources: normalized,
+      }));
+      if (!updated) throw new Error("私域文献导入期间信笺已经变化");
+      return normalized;
+    }
+    if (typeof bridge.upsertPublicCitation !== "function") {
+      throw new Error("当前环境不支持公域文献库");
+    }
+    let latest = publicCitationSources;
+    for (const source of normalized) {
+      const result = await bridge.upsertPublicCitation(source);
+      latest = Array.isArray(result?.sources)
+        ? normalizeWorkspaceCitationSources(result.sources)
+        : latest;
+    }
+    setPublicCitationSources(latest);
+    return latest;
+  }, [activeWorkReadOnly, documentPort, publicCitationSources, setPublicCitationSources]);
 
   const handleCreateCitationFromResearch = useCallback(async (researchSource) => {
     if (!researchSource) {
@@ -456,7 +539,7 @@ export function useCitationActions({
     const researchSourceId = researchSource.id || researchSource.researchSourceId || "";
     const bibliographic = researchSource.bibliographic || {};
     const identifier = String(bibliographic.identifier || "").trim();
-    const existing = workspaceCitationSources.find((source) => (
+    const existing = publicCitationSources.find((source) => (
       researchSourceId
       && source.researchSourceId === researchSourceId
       && (!source.researchLibraryId || source.researchLibraryId === researchLibraryId)
@@ -485,51 +568,33 @@ export function useCitationActions({
       researchSourceId,
     };
     try {
-      const workspaceRoot = documentPort.getWorkspaceRoot();
-      const result = workspaceRoot
-        ? await bridge.upsertCitation?.(workspaceRoot, input)
-        : null;
+      if (typeof bridge.upsertPublicCitation !== "function") throw new Error("当前环境不支持公域文献库");
+      const result = await bridge.upsertPublicCitation(input);
       const rawSource = result?.source || input;
       const normalized = normalizeCitationSources([rawSource])[0];
       if (!normalized) throw new Error("资料缺少可引用的题名或地址");
       const savedSource = { ...normalized, researchLibraryId, researchSourceId };
-      if (workspaceRoot) {
-        setWorkspaceCitationSources(Array.isArray(result?.sources)
-          ? normalizeWorkspaceCitationSources(result.sources)
-            .map((source) => source.id === savedSource.id ? savedSource : source)
-          : (current) => [
-            ...current.filter((source) => source.id !== savedSource.id),
-            savedSource,
-          ]);
-      } else {
-        documentPort.updateActive((document) => ({
-          ...document,
-          citationSources: [
-            ...(document.citationSources || [])
-              .filter((source) => source.id !== savedSource.id),
-            savedSource,
-          ],
-        }));
-      }
+      setPublicCitationSources(Array.isArray(result?.sources)
+        ? normalizeWorkspaceCitationSources(result.sources)
+          .map((source) => source.id === savedSource.id ? savedSource : source)
+        : (current) => [
+          ...current.filter((source) => source.id !== savedSource.id),
+          savedSource,
+        ]);
       setLeftSidebarMode("structure");
-      setStructureMode("references");
-      showStatus(
-        workspaceRoot
-          ? "已加入参考文献来源库；可从“元素 → 文献引用”插入"
-          : "未打开工作区；来源快照已保存在当前信笺",
-        workspaceRoot ? "success" : "warning",
-      );
+      setStructureMode("bibliography");
+      showStatus("已加入公域文献库；可从“元素 → 文献引用”插入", "success");
     } catch (error) {
       showStatus(error?.message || "无法从研究资料创建参考文献来源", "warning");
     }
   }, [
     documentPort,
+    publicCitationSources,
     researchPort,
     setLeftSidebarMode,
     setStructureMode,
-    setWorkspaceCitationSources,
+    setPublicCitationSources,
     showStatus,
-    workspaceCitationSources,
   ]);
 
   const handleCreateCitationFromIndependentResearch = useCallback(async (item, options = {}) => {
@@ -590,10 +655,13 @@ export function useCitationActions({
     handleAddCitationSource,
     handleChooseCitationSource,
     handleCloseCitationSourceDialog,
+    handleCopyCitationToPublic,
     handleCreateCitationFromIndependentResearch,
     handleCreateCitationFromResearch,
     handleDeleteCitationSource,
     handleEditCitationSource,
+    handleAttachPublicCitation,
+    handleImportCitationSources,
     handleJumpCitationSource,
     handleOpenCitationPicker,
     handleSaveCitationSourceDialog,

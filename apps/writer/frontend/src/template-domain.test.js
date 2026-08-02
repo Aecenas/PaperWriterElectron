@@ -82,13 +82,15 @@ test("template normalization retains legacy compatibility and bounds user data",
   const presentation = normalizeTemplatePresentation({
     paragraphAlign: "center",
     headingColors: { 1: "#4f6f8f", 2: "#invalid" },
-    headingNumbering: { 2: false },
+    headingNumbering: { 2: false, 4: false },
     numberImageCaptions: false,
   });
   assert.equal(presentation.paragraphAlign, "center");
   assert.equal(presentation.headingColors[1], "#4f6f8f");
   assert.equal(presentation.headingColors[2], DEFAULT_TEMPLATE_PRESENTATION.headingColors[2]);
   assert.equal(presentation.headingNumbering[2], false);
+  assert.equal(presentation.headingColors[4], DEFAULT_TEMPLATE_PRESENTATION.headingColors[4]);
+  assert.equal(presentation.headingNumbering[4], false);
   assert.equal(presentation.numberImageCaptions, false);
 
   const groups = normalizeUserTemplateGroups([

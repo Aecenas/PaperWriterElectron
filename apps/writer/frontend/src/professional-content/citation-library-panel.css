@@ -1,0 +1,2091 @@
+.citation-library-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: #40382f;
+}
+
+.citation-library-panel.is-embedded {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  display: flex;
+  gap: 0;
+  background: transparent;
+}
+
+.citation-sidebar-section {
+  padding: 12px 10px 14px;
+  border-bottom: 1px solid rgb(112 85 58 / 10%);
+}
+
+.citation-sidebar-section:last-of-type {
+  border-bottom: 0;
+}
+
+.citation-sidebar-heading {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.citation-sidebar-heading > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #443a31;
+}
+
+.citation-sidebar-heading > div > svg {
+  color: #9e613e;
+}
+
+.citation-sidebar-heading strong {
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.citation-sidebar-heading small {
+  min-width: 18px;
+  color: rgb(85 70 55 / 58%);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.citation-sidebar-heading > button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: rgb(92 72 54 / 72%);
+  background: transparent;
+}
+
+.citation-sidebar-heading > button:hover,
+.citation-sidebar-heading > button:focus-visible {
+  outline: 0;
+  border-color: rgb(164 100 61 / 16%);
+  color: #9d5e3b;
+  background: rgb(226 203 177 / 28%);
+}
+
+.citation-sidebar-description {
+  margin: 2px 0 8px 22px;
+  color: rgb(80 69 57 / 56%);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.citation-sidebar-list {
+  display: grid;
+  gap: 4px;
+}
+
+.citation-sidebar-row {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px 7px 6px;
+  color: #453c33;
+  text-align: left;
+  background: transparent;
+}
+
+.citation-sidebar-row:hover,
+.citation-sidebar-row:focus-visible {
+  outline: 0;
+  border-color: rgb(169 103 63 / 16%);
+  background: rgb(226 206 182 / 25%);
+}
+
+.citation-sidebar-row.is-cited {
+  background: rgb(255 252 247 / 52%);
+}
+
+.citation-sidebar-row.is-cited:hover,
+.citation-sidebar-row.is-cited:focus-visible {
+  box-shadow: inset 3px 0 rgb(164 95 55 / 54%);
+}
+
+.citation-sidebar-number {
+  color: #a1623e;
+  font-size: 10px;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.citation-sidebar-row > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.citation-sidebar-row > span > strong {
+  overflow: hidden;
+  color: #443b32;
+  font-size: 10px;
+  font-weight: 680;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-sidebar-row > span > small {
+  overflow: hidden;
+  color: rgb(79 68 57 / 55%);
+  font-size: 8.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-sidebar-row > svg {
+  color: rgb(113 86 63 / 48%);
+}
+
+.citation-sidebar-empty {
+  min-height: 54px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  color: rgb(84 72 59 / 48%);
+  font-size: 9px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.settings-feature-dialog.citation-library-dialog {
+  width: min(1060px, calc(100vw - 52px));
+  height: min(780px, calc(100dvh - var(--desktop-titlebar-height, 40px) - 36px));
+  max-height: calc(100dvh - var(--desktop-titlebar-height, 40px) - 36px);
+  border-color: rgb(150 100 64 / 15%);
+  border-radius: 22px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: 0;
+  overflow: hidden;
+  color: #42382f;
+  background:
+    radial-gradient(circle at 12% -8%, rgb(255 247 234 / 76%), transparent 32%),
+    #fffdf9;
+  box-shadow: 0 26px 74px rgb(69 51 34 / 24%);
+}
+
+.citation-library-dialog .settings-feature-dialog-header {
+  min-height: 76px;
+  margin: 0;
+  padding: 14px 20px;
+  border-bottom-color: rgb(108 83 58 / 11%);
+  background: rgb(255 252 247 / 88%);
+}
+
+.citation-library-dialog .writing-settings-titlecopy {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.citation-library-dialog .writing-settings-title-icon {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border: 1px solid rgb(180 111 69 / 18%);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: #a7613b;
+  background: rgb(248 232 213 / 48%);
+}
+
+.citation-library-dialog .writing-settings-titlecopy > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.citation-library-dialog .settings-feature-dialog-header h2 {
+  margin: 0;
+  color: #342c25;
+  font-size: 20px;
+  font-weight: 780;
+  letter-spacing: -0.02em;
+}
+
+.citation-library-dialog .settings-feature-dialog-header p {
+  margin: 0;
+  color: rgb(80 68 56 / 58%);
+  font-size: 10px;
+}
+
+.citation-library-dialog .settings-feature-dialog-header > button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: rgb(83 65 51 / 70%);
+  background: transparent;
+}
+
+.citation-library-dialog .settings-feature-dialog-header > button:hover,
+.citation-library-dialog .settings-feature-dialog-header > button:focus-visible {
+  outline: 0;
+  border-color: rgb(154 99 62 / 14%);
+  color: #9e5d38;
+  background: rgb(229 207 181 / 28%);
+}
+
+.citation-library-dialog-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 18px 16px;
+}
+
+.citation-scope-switch {
+  width: min(440px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgb(118 91 65 / 11%);
+  border-radius: 13px;
+  background: rgb(239 231 220 / 48%);
+}
+
+.citation-scope-switch > button {
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  color: rgb(74 62 51 / 64%);
+  text-align: left;
+  background: transparent;
+}
+
+.citation-scope-switch > button > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.citation-scope-switch strong {
+  font-size: 11px;
+  font-weight: 730;
+}
+
+.citation-scope-switch small {
+  font-size: 8.5px;
+  opacity: 0.68;
+}
+
+.citation-scope-switch b {
+  min-width: 20px;
+  font-size: 9px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.citation-scope-switch > button.is-active {
+  border-color: rgb(177 108 66 / 16%);
+  color: #8f5131;
+  background: #fffdf9;
+  box-shadow: 0 5px 14px rgb(78 55 35 / 7%);
+}
+
+.citation-scope-switch > button:hover,
+.citation-scope-switch > button:focus-visible {
+  outline: 0;
+  color: #915536;
+}
+
+.citation-library-primary-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) repeat(3, auto);
+  align-items: center;
+  gap: 8px;
+}
+
+.citation-library-dialog-search {
+  min-width: 0;
+  height: 40px;
+  border: 1px solid rgb(126 94 67 / 16%);
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  color: rgb(94 76 59 / 48%);
+  background: rgb(255 255 255 / 72%);
+}
+
+.citation-library-dialog-search:focus-within {
+  border-color: rgb(181 104 59 / 48%);
+  box-shadow: 0 0 0 3px rgb(201 124 75 / 10%);
+}
+
+.citation-library-dialog-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: 0;
+  color: #43382e;
+  background: transparent;
+  font: 500 10px/1.4 var(--body-font, "Segoe UI", sans-serif);
+}
+
+.citation-library-primary-toolbar > button,
+.citation-library-secondary-toolbar button,
+.citation-style-controls > button,
+.citation-lookup button {
+  min-height: 40px;
+  border: 1px solid rgb(164 99 60 / 15%);
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  color: #805038;
+  background: rgb(255 251 245 / 84%);
+  font: 650 10px/1 var(--body-font, "Segoe UI", sans-serif);
+  white-space: nowrap;
+}
+
+.citation-library-primary-toolbar > button:first-of-type {
+  color: #fff;
+  background: #a5613e;
+  box-shadow: 0 6px 15px rgb(143 79 45 / 14%);
+}
+
+.citation-library-primary-toolbar > button:hover:not(:disabled),
+.citation-library-primary-toolbar > button:focus-visible:not(:disabled),
+.citation-library-secondary-toolbar button:hover:not(:disabled),
+.citation-library-secondary-toolbar button:focus-visible:not(:disabled),
+.citation-style-controls > button:hover:not(:disabled),
+.citation-style-controls > button:focus-visible:not(:disabled),
+.citation-lookup button:hover:not(:disabled),
+.citation-lookup button:focus-visible:not(:disabled) {
+  outline: 0;
+  border-color: rgb(162 92 52 / 32%);
+  transform: translateY(-1px);
+}
+
+.citation-library-primary-toolbar > button:disabled,
+.citation-library-secondary-toolbar button:disabled,
+.citation-style-controls > button:disabled,
+.citation-lookup button:disabled {
+  cursor: default;
+  opacity: 0.42;
+  box-shadow: none;
+}
+
+.citation-library-dialog-notice {
+  min-height: 32px;
+  margin: 0;
+  border: 1px solid rgb(112 142 113 / 16%);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  color: #58705a;
+  background: rgb(235 244 235 / 70%);
+  font-size: 9px;
+}
+
+.citation-library-dialog-notice.is-error {
+  border-color: rgb(166 75 65 / 16%);
+  color: #a24e43;
+  background: rgb(250 237 233 / 72%);
+}
+
+.citation-library-dialog-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid rgb(119 91 66 / 11%);
+  border-radius: 13px;
+  padding: 5px;
+  background: rgb(255 255 255 / 46%);
+  scrollbar-color: rgb(142 115 88 / 48%) transparent;
+  scrollbar-width: thin;
+}
+
+.citation-library-dialog-list::-webkit-scrollbar,
+.citation-library-more-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.citation-library-dialog-list::-webkit-scrollbar-thumb,
+.citation-library-more-body::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgb(135 108 81 / 46%);
+  background-clip: padding-box;
+}
+
+.citation-library-dialog-source {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+
+.citation-library-dialog-source + .citation-library-dialog-source {
+  border-top-color: rgb(110 86 63 / 8%);
+}
+
+.citation-library-dialog-source:hover,
+.citation-library-dialog-source.is-selected {
+  border-color: rgb(173 104 62 / 14%);
+  background: rgb(244 235 223 / 54%);
+}
+
+.citation-library-dialog-source.is-selected {
+  box-shadow: inset 3px 0 #ac6944;
+}
+
+.citation-library-dialog-index {
+  color: rgb(151 91 55 / 76%);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.citation-library-dialog-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.citation-library-dialog-copy > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.citation-library-dialog-copy strong {
+  overflow: hidden;
+  color: #40362e;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-library-dialog-copy em {
+  flex: none;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #61745d;
+  background: rgb(224 236 221 / 72%);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.citation-library-dialog-copy small {
+  overflow: hidden;
+  color: rgb(79 68 56 / 55%);
+  font-size: 9px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-library-dialog-source nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.citation-library-dialog-source nav button {
+  min-width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  color: rgb(91 71 54 / 68%);
+  background: transparent;
+  font: 600 9px/1 var(--body-font, "Segoe UI", sans-serif);
+}
+
+.citation-library-dialog-source nav button:hover:not(:disabled),
+.citation-library-dialog-source nav button:focus-visible:not(:disabled) {
+  outline: 0;
+  color: #925433;
+  background: rgb(230 208 183 / 38%);
+}
+
+.citation-library-dialog-source nav button.is-danger:hover:not(:disabled),
+.citation-library-dialog-source nav button.is-danger:focus-visible:not(:disabled) {
+  color: #a14942;
+  background: rgb(244 221 216 / 60%);
+}
+
+.citation-library-dialog-source nav button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.citation-library-dialog-empty {
+  min-height: 150px;
+  margin: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 18px;
+  color: rgb(87 72 59 / 48%);
+  text-align: center;
+}
+
+.citation-library-dialog-empty strong {
+  color: rgb(67 56 47 / 72%);
+  font-size: 11px;
+}
+
+.citation-library-dialog-empty span {
+  font-size: 9px;
+}
+
+.citation-library-more {
+  flex: none;
+  border: 1px solid rgb(119 91 66 / 11%);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgb(247 240 231 / 42%);
+}
+
+.citation-library-more-trigger {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 11px;
+  color: #57483c;
+  text-align: left;
+  background: transparent;
+}
+
+.citation-library-more-trigger > span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.citation-library-more-trigger > span > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.citation-library-more-trigger strong {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.citation-library-more-trigger small {
+  color: rgb(79 67 55 / 52%);
+  font-size: 8.5px;
+}
+
+.citation-library-more-trigger > svg {
+  transition: transform 150ms ease;
+}
+
+.citation-library-more.is-open .citation-library-more-trigger > svg {
+  transform: rotate(180deg);
+}
+
+.citation-library-more-trigger:hover,
+.citation-library-more-trigger:focus-visible {
+  outline: 0;
+  background: rgb(230 213 192 / 24%);
+}
+
+.citation-library-more-body {
+  max-height: 235px;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(170px, 0.7fr) minmax(300px, 1.4fr) minmax(240px, 1fr);
+  border-top: 1px solid rgb(113 87 62 / 10%);
+  background: rgb(255 253 249 / 65%);
+}
+
+.citation-library-more-body > section {
+  min-width: 0;
+  padding: 11px;
+}
+
+.citation-library-more-body > section + section {
+  border-left: 1px solid rgb(113 87 62 / 9%);
+}
+
+.citation-library-more-body h3 {
+  margin: 0 0 8px;
+  color: #57483d;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.citation-library-secondary-toolbar,
+.citation-lookup > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+}
+
+.citation-library-secondary-toolbar select,
+.citation-style-controls select,
+.citation-lookup select,
+.citation-lookup input {
+  min-width: 0;
+  height: 36px;
+  border: 1px solid rgb(121 92 66 / 15%);
+  border-radius: 9px;
+  padding: 0 9px;
+  color: #4a3e34;
+  background: rgb(255 255 255 / 75%);
+  font: 500 9px/1 var(--body-font, "Segoe UI", sans-serif);
+}
+
+.citation-library-secondary-toolbar button,
+.citation-style-controls > button,
+.citation-lookup button {
+  min-height: 36px;
+  border-radius: 9px;
+  padding-inline: 9px;
+  font-size: 9px;
+}
+
+.citation-style-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 124px auto;
+  align-items: end;
+  gap: 7px;
+}
+
+.citation-style-controls h3 {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
+.citation-style-controls label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: rgb(77 65 53 / 63%);
+  font-size: 8px;
+}
+
+.citation-lookup > div {
+  grid-template-columns: 72px minmax(100px, 1fr) auto;
+}
+
+.citation-privacy-consent {
+  grid-column: 1 / -1;
+  border-top: 1px solid rgb(117 89 64 / 9%);
+  padding: 10px 11px;
+  background: rgb(248 239 227 / 70%);
+}
+
+.citation-library-dialog-footer {
+  min-height: 62px;
+  margin: 0;
+  padding: 10px 18px;
+  border-top-color: rgb(108 83 58 / 11%);
+  background: rgb(250 245 238 / 84%);
+}
+
+.citation-library-dialog-footer > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgb(80 68 56 / 58%);
+  font-size: 9px;
+}
+
+.citation-library-dialog-footer .settings-primary {
+  min-width: 92px;
+  min-height: 38px;
+  border: 1px solid #a7613e;
+  border-radius: 10px;
+  color: #fff;
+  background: #a7613e;
+  font: 700 10px/1 var(--body-font, "Segoe UI", sans-serif);
+}
+
+.citation-conflict-preview {
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 13px;
+}
+
+.citation-conflict-preview > header,
+.citation-conflict-preview > footer {
+  flex: none;
+}
+
+.citation-conflict-list {
+  min-height: 0;
+  overflow: auto;
+}
+
+@media (max-width: 900px) {
+  .settings-feature-dialog.citation-library-dialog {
+    width: calc(100vw - 24px);
+    height: calc(100dvh - var(--desktop-titlebar-height, 40px) - 24px);
+    max-height: calc(100dvh - var(--desktop-titlebar-height, 40px) - 24px);
+  }
+
+  .citation-library-primary-toolbar {
+    grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+  }
+
+  .citation-library-primary-toolbar > button {
+    padding-inline: 9px;
+  }
+
+  .citation-library-more-body {
+    grid-template-columns: 1fr;
+  }
+
+  .citation-library-more-body > section + section {
+    border-top: 1px solid rgb(113 87 62 / 9%);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .citation-library-dialog-body {
+    padding-inline: 12px;
+  }
+
+  .citation-library-primary-toolbar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .citation-library-dialog-search {
+    grid-column: 1 / -1;
+  }
+
+  .citation-library-primary-toolbar > button {
+    padding-inline: 6px;
+  }
+
+  .citation-library-dialog-source {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+
+  .citation-library-dialog-source nav {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .citation-library-primary-toolbar > button,
+  .citation-library-secondary-toolbar button,
+  .citation-style-controls > button,
+  .citation-lookup button,
+  .citation-library-more-trigger > svg {
+    transition: none;
+  }
+}
+
+/* The library manager follows the same warm, editorial dialog language as the
+   reference-source form: labelled controls, quiet surfaces and one clear CTA. */
+.settings-feature-overlay.citation-library-overlay {
+  padding: 18px 26px;
+}
+
+.settings-feature-dialog.citation-library-dialog {
+  width: min(1040px, calc(100vw - 52px));
+  height: min(760px, calc(100dvh - var(--desktop-titlebar-height, 40px) - 36px));
+  max-height: calc(100dvh - var(--desktop-titlebar-height, 40px) - 36px);
+  border: 1px solid rgb(154 98 62 / 18%);
+  border-radius: 20px;
+  color: #40372f;
+  background: #fffdf9;
+  box-shadow: 0 28px 78px rgb(66 47 30 / 22%);
+}
+
+.citation-library-dialog .settings-feature-dialog-header {
+  min-height: 96px;
+  padding: 17px 26px;
+  border-bottom: 1px solid rgb(112 83 58 / 11%);
+  background: #fffdf9;
+}
+
+.citation-library-dialog .writing-settings-titlecopy {
+  gap: 15px;
+}
+
+.citation-library-dialog .writing-settings-title-icon {
+  width: 54px;
+  height: 54px;
+  border-color: rgb(194 104 58 / 23%);
+  border-radius: 15px;
+  color: #aa603b;
+  background: #f8eadb;
+}
+
+.citation-library-dialog .writing-settings-titlecopy > div {
+  gap: 2px;
+}
+
+.citation-library-dialog .citation-library-eyebrow {
+  color: #b07150;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.citation-library-dialog .settings-feature-dialog-header h2 {
+  color: #352c25;
+  font-family: var(--heading-font, var(--body-font));
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.18;
+  letter-spacing: -0.025em;
+}
+
+.citation-library-dialog .settings-feature-dialog-header > button {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  color: rgb(84 70 58 / 64%);
+}
+
+.citation-library-dialog .settings-feature-dialog-header > button:hover,
+.citation-library-dialog .settings-feature-dialog-header > button:focus-visible {
+  border-color: rgb(176 101 60 / 18%);
+  color: #965333;
+  background: #f7eadc;
+}
+
+.citation-library-dialog-body {
+  gap: 14px;
+  padding: 18px 22px 16px;
+  background: #fffaf4;
+}
+
+.citation-library-command-panel {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(330px, 0.9fr) minmax(430px, 1.1fr);
+  gap: 14px 18px;
+  padding: 0 2px;
+}
+
+.citation-library-scope-field,
+.citation-library-action-field,
+.citation-library-search-field {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.citation-library-search-field {
+  grid-column: 1 / -1;
+}
+
+.citation-library-field-label {
+  color: #5c5148;
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
+.citation-scope-switch {
+  width: 100%;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.citation-scope-switch > button {
+  min-height: 50px;
+  border: 1px solid rgb(116 88 64 / 17%);
+  border-radius: 12px;
+  gap: 10px;
+  padding: 7px 12px;
+  color: rgb(74 62 51 / 67%);
+  background: #fffdfa;
+}
+
+.citation-scope-switch > button > svg {
+  color: rgb(151 91 55 / 72%);
+}
+
+.citation-scope-switch > button > span {
+  gap: 2px;
+}
+
+.citation-scope-switch strong {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.citation-scope-switch small {
+  font-size: 9.5px;
+}
+
+.citation-scope-switch b {
+  min-width: 22px;
+  border-radius: 999px;
+  padding: 3px 6px;
+  color: rgb(89 70 54 / 64%);
+  background: rgb(237 226 214 / 70%);
+  font-size: 9px;
+}
+
+.citation-scope-switch > button.is-active {
+  border-color: rgb(194 104 58 / 46%);
+  color: #8f4e2f;
+  background: #fffaf4;
+  box-shadow: 0 0 0 3px rgb(198 111 66 / 9%);
+}
+
+.citation-scope-switch > button.is-active b {
+  color: #8f4e2f;
+  background: #f5e2d0;
+}
+
+.citation-library-primary-toolbar {
+  height: 50px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.citation-library-primary-toolbar > button,
+.citation-library-secondary-toolbar button,
+.citation-style-controls > button,
+.citation-lookup button {
+  min-height: 40px;
+  border: 1px solid rgb(155 91 55 / 18%);
+  border-radius: 11px;
+  padding: 0 13px;
+  color: #76503b;
+  background: #fffdf9;
+  font: 700 11px/1 var(--body-font, "Segoe UI", sans-serif);
+  box-shadow: 0 5px 13px rgb(91 62 39 / 4%);
+}
+
+.citation-library-primary-toolbar > button {
+  height: 50px;
+}
+
+.citation-library-primary-toolbar > button:first-of-type {
+  border-color: #bd6841;
+  color: #fffaf5;
+  background: #c66f45;
+  box-shadow: 0 9px 20px rgb(177 87 43 / 18%);
+}
+
+.citation-library-primary-toolbar > button:first-of-type:hover:not(:disabled),
+.citation-library-primary-toolbar > button:first-of-type:focus-visible:not(:disabled) {
+  border-color: #ad5d39;
+  color: #fff;
+  background: #bc643f;
+}
+
+.citation-library-dialog-search {
+  height: 48px;
+  border: 1px solid rgb(116 88 64 / 18%);
+  border-radius: 12px;
+  gap: 10px;
+  padding: 0 14px;
+  color: rgb(106 88 72 / 46%);
+  background: #fffdfb;
+}
+
+.citation-library-dialog-search:focus-within {
+  border-color: rgb(198 111 66 / 56%);
+  box-shadow: 0 0 0 4px rgb(198 111 66 / 10%);
+}
+
+.citation-library-dialog-search input {
+  color: #41372f;
+  font: 500 12px/1.4 var(--body-font, "Segoe UI", sans-serif);
+}
+
+.citation-library-dialog-search input::placeholder {
+  color: rgb(88 78 68 / 48%);
+}
+
+.citation-library-dialog-notice {
+  min-height: 36px;
+  border-radius: 10px;
+  padding: 7px 12px;
+  font-size: 10.5px;
+}
+
+.citation-library-list-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgb(117 88 64 / 14%);
+  border-radius: 14px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #fffdf9;
+}
+
+.citation-library-list-shell > header {
+  min-height: 50px;
+  border-bottom: 1px solid rgb(117 88 64 / 10%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  background: #fbf3e9;
+}
+
+.citation-library-list-shell > header > div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.citation-library-list-shell > header small {
+  color: #ad6a47;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.citation-library-list-shell > header strong {
+  color: #4b4037;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.citation-library-list-shell > header > span {
+  flex: none;
+  border: 1px solid rgb(155 91 55 / 12%);
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: rgb(86 69 54 / 58%);
+  background: rgb(255 253 249 / 84%);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.citation-library-dialog-list {
+  min-height: 0;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding: 8px;
+  background: #fffdf9;
+}
+
+.citation-library-dialog-source {
+  min-height: 64px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 11px;
+  padding: 9px 10px;
+  border: 1px solid rgb(119 91 66 / 13%);
+  border-radius: 12px;
+  background: #fffefa;
+  box-shadow: 0 4px 12px rgb(76 54 35 / 3%);
+}
+
+.citation-library-dialog-source + .citation-library-dialog-source {
+  border-top-color: rgb(119 91 66 / 13%);
+}
+
+.citation-library-dialog-source:hover,
+.citation-library-dialog-source.is-selected {
+  border-color: rgb(190 105 61 / 32%);
+  background: #fff9f1;
+}
+
+.citation-library-dialog-source.is-selected {
+  box-shadow: inset 3px 0 #bc6842, 0 7px 18px rgb(101 63 38 / 7%);
+}
+
+.citation-library-dialog-index {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: #9b5938;
+  background: #f7eadc;
+  font-size: 10px;
+  font-weight: 780;
+}
+
+.citation-library-dialog-copy {
+  gap: 5px;
+}
+
+.citation-library-dialog-copy > div {
+  gap: 9px;
+}
+
+.citation-library-dialog-copy strong {
+  color: #40362e;
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.citation-library-dialog-copy em {
+  padding: 3px 8px;
+  color: #63725c;
+  background: #eaf0e5;
+  font-size: 8.5px;
+}
+
+.citation-library-dialog-copy small {
+  color: rgb(79 68 56 / 60%);
+  font-size: 10px;
+}
+
+.citation-library-dialog-source nav {
+  gap: 6px;
+}
+
+.citation-library-dialog-source nav button {
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid rgb(145 96 64 / 14%);
+  border-radius: 9px;
+  padding: 0 9px;
+  color: rgb(91 71 54 / 72%);
+  background: #fffdf9;
+  font: 680 9.5px/1 var(--body-font, "Segoe UI", sans-serif);
+}
+
+.citation-library-dialog-source nav button:hover:not(:disabled),
+.citation-library-dialog-source nav button:focus-visible:not(:disabled) {
+  border-color: rgb(181 102 60 / 24%);
+  color: #925433;
+  background: #f8eadc;
+}
+
+.citation-library-dialog-empty {
+  min-height: 120px;
+  gap: 8px;
+  padding: 22px;
+  color: rgb(87 72 59 / 54%);
+}
+
+.citation-library-empty-mark {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgb(188 105 62 / 18%);
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: #a35e3b;
+  background: #f8eadc;
+}
+
+.citation-library-dialog-empty strong {
+  color: #51453c;
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.citation-library-dialog-empty span:not(.citation-library-empty-mark) {
+  font-size: 10px;
+}
+
+.citation-library-more {
+  border: 0;
+  border-top: 1px solid rgb(116 87 62 / 10%);
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+}
+
+.citation-library-more-trigger {
+  min-height: 42px;
+  padding: 7px 4px 3px;
+  color: #754934;
+}
+
+.citation-library-more-trigger > span {
+  gap: 9px;
+}
+
+.citation-library-more-trigger strong {
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.citation-library-more-trigger small {
+  font-size: 9px;
+}
+
+.citation-library-more-trigger:hover,
+.citation-library-more-trigger:focus-visible {
+  color: #925433;
+  background: transparent;
+}
+
+.citation-library-more-body {
+  max-height: 245px;
+  margin-top: 6px;
+  overflow: auto;
+  border: 1px solid rgb(116 87 62 / 12%);
+  border-radius: 12px;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(310px, 1.35fr) minmax(250px, 1fr);
+  background: #fffdf9;
+}
+
+.citation-library-more-body > section {
+  padding: 13px;
+}
+
+.citation-library-more-body h3 {
+  margin-bottom: 9px;
+  color: #5a493d;
+  font-size: 10.5px;
+}
+
+.citation-library-secondary-toolbar select,
+.citation-style-controls select,
+.citation-lookup select,
+.citation-lookup input {
+  height: 38px;
+  border-color: rgb(121 92 66 / 17%);
+  border-radius: 9px;
+  color: #493d33;
+  background: #fffefa;
+  font-size: 9.5px;
+}
+
+.citation-library-dialog-footer {
+  min-height: 72px;
+  padding: 12px 24px;
+  border-top: 1px solid rgb(108 83 58 / 11%);
+  background: #fbf3e9;
+}
+
+.citation-library-dialog-footer > span {
+  gap: 8px;
+  color: rgb(80 68 56 / 64%);
+  font-size: 10px;
+}
+
+.citation-library-dialog-footer .settings-primary {
+  min-width: 112px;
+  min-height: 42px;
+  border-color: #b85f39;
+  border-radius: 11px;
+  gap: 7px;
+  color: #fffaf5;
+  background: #c66f45;
+  font: 760 12px/1 var(--body-font, "Segoe UI", sans-serif);
+  box-shadow: 0 10px 22px rgb(179 88 43 / 19%);
+}
+
+.citation-library-dialog-footer .settings-primary:hover,
+.citation-library-dialog-footer .settings-primary:focus-visible {
+  outline: 0;
+  border-color: #a85533;
+  background: #ba613d;
+}
+
+@media (max-width: 900px) {
+  .settings-feature-overlay.citation-library-overlay {
+    padding: 12px;
+  }
+
+  .settings-feature-dialog.citation-library-dialog {
+    width: calc(100vw - 24px);
+    height: calc(100dvh - var(--desktop-titlebar-height, 40px) - 24px);
+    max-height: calc(100dvh - var(--desktop-titlebar-height, 40px) - 24px);
+  }
+
+  .citation-library-dialog .settings-feature-dialog-header {
+    padding-inline: 18px;
+  }
+
+  .citation-library-dialog-body {
+    padding-inline: 16px;
+  }
+
+  .citation-library-command-panel {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .citation-library-search-field {
+    grid-column: auto;
+  }
+
+  .citation-library-more-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .citation-library-dialog .settings-feature-dialog-header {
+    min-height: 82px;
+    padding: 13px 14px;
+  }
+
+  .citation-library-dialog .writing-settings-title-icon {
+    width: 46px;
+    height: 46px;
+  }
+
+  .citation-library-dialog .settings-feature-dialog-header h2 {
+    font-size: 22px;
+  }
+
+  .citation-library-dialog-body {
+    padding: 13px 12px;
+  }
+
+  .citation-library-primary-toolbar {
+    height: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .citation-library-primary-toolbar > button {
+    height: 44px;
+  }
+
+  .citation-library-dialog-source {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .citation-library-dialog-source nav {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .citation-library-dialog-footer {
+    padding-inline: 14px;
+  }
+
+  .citation-library-dialog-footer > span {
+    display: none;
+  }
+}
+
+/* List-first library manager: frequent actions stay beside the active list,
+   while secondary tools use the same warm field-card language as source forms. */
+.citation-library-command-panel {
+  display: block;
+  padding: 0 2px;
+}
+
+.citation-library-scope-field {
+  max-width: 470px;
+}
+
+.citation-library-list-shell > header {
+  min-height: 58px;
+  justify-content: flex-start;
+  gap: 14px;
+  padding: 9px 12px 9px 15px;
+}
+
+.citation-library-list-shell > header > div:first-child {
+  flex: 1 1 auto;
+}
+
+.citation-library-list-tools {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px !important;
+}
+
+.citation-library-list-tools > button,
+.citation-library-header-search {
+  height: 32px;
+  border: 1px solid rgb(151 94 59 / 16%);
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: #7a503a;
+  background: #fffdf9;
+  font: 720 9.5px/1 var(--body-font, "Segoe UI", sans-serif);
+  box-shadow: 0 4px 10px rgb(91 62 39 / 4%);
+}
+
+.citation-library-list-tools > button:first-child {
+  border-color: rgb(190 103 60 / 28%);
+  color: #9b5636;
+  background: #f9eadc;
+}
+
+.citation-library-list-tools > button:hover:not(:disabled),
+.citation-library-list-tools > button:focus-visible:not(:disabled) {
+  outline: 0;
+  border-color: rgb(184 96 54 / 34%);
+  color: #934d2f;
+  background: #f8e7d8;
+}
+
+.citation-library-header-search {
+  width: 190px;
+  justify-content: flex-start;
+  padding: 0 5px 0 9px;
+  color: rgb(110 78 57 / 56%);
+}
+
+.citation-library-header-search:focus-within {
+  border-color: rgb(198 111 66 / 50%);
+  box-shadow: 0 0 0 3px rgb(198 111 66 / 9%);
+}
+
+.citation-library-header-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: 0;
+  color: #44382f;
+  background: transparent;
+  font: 500 9.5px/1.2 var(--body-font, "Segoe UI", sans-serif);
+}
+
+.citation-library-header-search input::placeholder {
+  color: rgb(91 76 63 / 42%);
+}
+
+.citation-library-header-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.citation-library-header-search button {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: rgb(89 67 50 / 56%);
+  background: transparent;
+}
+
+.citation-library-header-search button:hover,
+.citation-library-header-search button:focus-visible {
+  outline: 0;
+  color: #954f31;
+  background: #f7e6d7;
+}
+
+.citation-library-list-shell > header > span {
+  margin-left: 0;
+}
+
+.citation-library-more {
+  border: 1px solid rgb(116 87 62 / 13%);
+  border-radius: 13px;
+  overflow: hidden;
+  background: #fffdf9;
+}
+
+.citation-library-more-trigger {
+  min-height: 54px;
+  padding: 9px 13px;
+  color: #674637;
+  background: #fbf3e9;
+}
+
+.citation-library-more-trigger > span > svg {
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgb(187 102 61 / 18%);
+  border-radius: 9px;
+  padding: 7px;
+  color: #a25b38;
+  background: #f8eadc;
+}
+
+.citation-library-more-trigger strong {
+  color: #4b3d33;
+  font-size: 11.5px;
+  font-weight: 780;
+}
+
+.citation-library-more-trigger small {
+  color: rgb(77 65 54 / 54%);
+  font-size: 9.5px;
+}
+
+.citation-library-more-trigger:hover,
+.citation-library-more-trigger:focus-visible {
+  color: #8f4f31;
+  background: #f8ecdf;
+}
+
+.citation-library-more-body {
+  max-height: 230px;
+  margin: 0;
+  overflow: auto;
+  border: 0;
+  border-top: 1px solid rgb(116 87 62 / 10%);
+  border-radius: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(380px, 1.25fr) minmax(270px, 0.95fr);
+  gap: 10px;
+  padding: 12px;
+  background: #fffaf4;
+}
+
+.citation-library-more-body > section,
+.citation-library-more-body > section + section {
+  min-width: 0;
+  border: 1px solid rgb(118 89 64 / 13%);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fffdf9;
+  box-shadow: 0 5px 14px rgb(85 59 38 / 3%);
+}
+
+.citation-tool-card > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 11px;
+}
+
+.citation-tool-card > header > span {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 1px solid rgb(188 104 62 / 18%);
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: #a65d39;
+  background: #f8eadc;
+}
+
+.citation-tool-card > header > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.citation-library-more-body .citation-tool-card h3 {
+  margin: 0;
+  color: #493d34;
+  font-size: 11px;
+  font-weight: 780;
+  line-height: 1.25;
+}
+
+.citation-tool-card > header p {
+  margin: 0;
+  color: rgb(77 65 54 / 52%);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.citation-library-secondary-toolbar {
+  display: grid;
+  grid-template-columns: minmax(92px, 1fr) auto auto;
+  gap: 7px;
+}
+
+.citation-library-secondary-toolbar select,
+.citation-style-controls select,
+.citation-lookup select,
+.citation-lookup input {
+  height: 40px;
+  border: 1px solid rgb(121 92 66 / 16%);
+  border-radius: 9px;
+  padding: 0 10px;
+  color: #493d33;
+  background: #fffefa;
+  font-size: 9.5px;
+}
+
+.citation-library-secondary-toolbar button,
+.citation-style-controls > button,
+.citation-lookup button {
+  min-height: 40px;
+  border: 1px solid rgb(155 91 55 / 18%);
+  border-radius: 9px;
+  padding: 0 11px;
+  color: #76503b;
+  background: #fffdf9;
+  font: 720 9.5px/1 var(--body-font, "Segoe UI", sans-serif);
+  box-shadow: none;
+}
+
+.citation-style-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 9px;
+}
+
+.citation-style-controls > header {
+  grid-column: 1 / -1;
+  margin-bottom: 1px;
+}
+
+.citation-style-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(115px, 0.48fr);
+  gap: 8px;
+}
+
+.citation-style-fields label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.citation-style-fields label > span {
+  color: rgb(76 63 52 / 62%);
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
+.citation-style-fields select {
+  width: 100%;
+}
+
+.citation-lookup {
+  grid-column: auto;
+}
+
+.citation-lookup > div:last-child {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) 76px;
+  gap: 8px;
+}
+
+.citation-privacy-consent {
+  grid-column: 1 / -1;
+}
+
+.citation-library-dialog-footer {
+  min-height: 64px;
+  padding: 10px 22px;
+  background: #fffaf4;
+}
+
+.settings-feature-dialog-footer.citation-library-dialog-footer .settings-primary {
+  min-width: 92px;
+  min-height: 38px;
+  border-color: rgb(184 95 57 / 28%);
+  border-radius: 10px;
+  color: #8d4e30;
+  background: #f8e7d8;
+  font-size: 11px;
+  box-shadow: none;
+}
+
+.settings-feature-dialog-footer.citation-library-dialog-footer .settings-primary:hover,
+.settings-feature-dialog-footer.citation-library-dialog-footer .settings-primary:focus-visible {
+  border-color: rgb(177 88 50 / 46%);
+  color: #7f4329;
+  background: #f3dbc8;
+}
+
+.citation-library-dialog-body:has(.citation-library-more.is-open) .citation-library-list-shell {
+  min-height: 144px;
+}
+
+@media (max-width: 900px) {
+  .citation-library-list-shell > header {
+    flex-wrap: wrap;
+  }
+
+  .citation-library-list-shell > header > div:first-child {
+    flex-basis: calc(100% - 58px);
+  }
+
+  .citation-library-list-tools {
+    order: 3;
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .citation-library-more-body {
+    grid-template-columns: 1fr;
+  }
+
+  .citation-lookup,
+  .citation-privacy-consent {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .citation-library-scope-field {
+    max-width: none;
+  }
+
+  .citation-library-list-tools {
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .citation-library-list-tools > button {
+    flex: none;
+  }
+
+  .citation-library-header-search {
+    width: 175px;
+    flex: none;
+  }
+
+  .citation-style-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .citation-style-controls > header,
+  .citation-style-controls > button {
+    grid-column: auto;
+  }
+
+  .citation-style-fields,
+  .citation-lookup > div:last-child {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Unified select controls and aligned advanced-tool fields. */
+.citation-custom-select {
+  position: relative;
+  min-width: 0;
+}
+
+.citation-custom-select > button {
+  width: 100%;
+  height: 40px;
+  box-sizing: border-box;
+  border: 1px solid rgb(121 92 66 / 16%);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  color: #493d33;
+  background: #fffefa;
+  font: 650 9.5px/1.35 var(--body-font, "Segoe UI", sans-serif);
+  text-align: left;
+}
+
+.citation-custom-select > button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-custom-select > button > svg {
+  flex: none;
+  color: rgb(102 78 60 / 68%);
+  transition: transform 150ms ease;
+}
+
+.citation-custom-select > button:hover:not(:disabled),
+.citation-custom-select > button:focus-visible,
+.citation-custom-select.is-open > button {
+  outline: 0;
+  border-color: rgb(198 111 66 / 48%);
+  box-shadow: 0 0 0 3px rgb(198 111 66 / 10%);
+}
+
+.citation-custom-select.is-open {
+  z-index: 24;
+}
+
+.citation-custom-select.is-open > button > svg {
+  transform: rotate(180deg);
+}
+
+.citation-custom-select-menu {
+  position: absolute;
+  z-index: 25;
+  top: calc(100% + 5px);
+  right: 0;
+  left: 0;
+  max-height: 170px;
+  overflow-y: auto;
+  border: 1px solid rgb(101 81 63 / 16%);
+  border-radius: 10px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  background: rgb(255 252 247 / 99%);
+  box-shadow: 0 14px 30px rgb(52 43 33 / 18%);
+  scrollbar-width: thin;
+  scrollbar-color: rgb(154 86 53 / 24%) transparent;
+}
+
+.citation-library-more-body .citation-custom-select-menu {
+  top: auto;
+  bottom: calc(100% + 5px);
+}
+
+.citation-custom-select-menu button {
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px;
+  color: #4d463e;
+  background: transparent;
+  font: 600 9.5px/1.35 var(--body-font, "Segoe UI", sans-serif);
+  text-align: left;
+}
+
+.citation-custom-select-menu button:hover,
+.citation-custom-select-menu button:focus-visible,
+.citation-custom-select-menu button[aria-selected="true"] {
+  outline: 0;
+  color: #945133;
+  background: rgb(238 219 197 / 48%);
+}
+
+.citation-tool-control-label {
+  display: block;
+  margin: 0 0 5px;
+  color: rgb(76 63 52 / 62%);
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.citation-library-secondary-toolbar > .citation-custom-select,
+.citation-style-fields .citation-custom-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.citation-style-controls {
+  grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 8px;
+}
+
+.citation-style-fields {
+  grid-template-columns: minmax(145px, 1.25fr) minmax(86px, 0.65fr);
+  gap: 8px;
+}
+
+.citation-style-controls > button {
+  width: 82px;
+  padding-inline: 7px;
+}
+
+.citation-library-more,
+.citation-library-more-body,
+.citation-tool-card {
+  overflow: visible;
+}
+
+.settings-feature-dialog-footer.citation-library-dialog-footer .settings-primary {
+  min-width: 108px;
+  min-height: 42px;
+  border-color: #c8673d;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #fffaf5;
+  background: #cd7045;
+  font-size: 11.5px;
+  font-weight: 780;
+  box-shadow: 0 8px 18px rgb(177 84 42 / 18%), inset 0 1px rgb(255 255 255 / 38%);
+}
+
+.settings-feature-dialog-footer.citation-library-dialog-footer .settings-primary:hover,
+.settings-feature-dialog-footer.citation-library-dialog-footer .settings-primary:focus-visible {
+  border-color: #ad5734;
+  color: #fff;
+  background: #bd623c;
+}
+
+@media (max-width: 900px) {
+  .citation-library-more-body {
+    overflow: auto;
+  }
+}
+
+/* Keep the three advanced-tool cards on one shared vertical rhythm. */
+.citation-library-more-body > .citation-tool-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 54px 55px;
+  align-content: start;
+  align-items: start;
+  gap: 0;
+}
+
+.citation-library-more-body > .citation-tool-card > header {
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  grid-column: 1;
+  align-self: start;
+}
+
+.citation-tool-controls-row {
+  min-width: 0;
+  align-self: start;
+}
+
+.citation-tool-controls-row .citation-tool-control-label,
+.citation-tool-controls-row--style label > span {
+  min-height: 10px;
+  display: block;
+  line-height: 10px;
+}
+
+.citation-tool-controls-row .citation-tool-control-label {
+  margin: 0 0 5px;
+}
+
+.citation-tool-controls-row--style label > span {
+  margin: 0;
+}
+
+.citation-tool-controls-row--style {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px;
+  align-items: end;
+  gap: 8px;
+}
+
+.citation-tool-controls-row--style > button {
+  width: 90px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid rgba(155, 91, 55, 0.18);
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: #76503b;
+  background: rgba(255, 253, 249, 0.9);
+  box-shadow: none;
+  font-family: var(--body-font, inherit);
+  font-size: 9.5px;
+  font-weight: 720;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.citation-tool-controls-row--style > button:hover:not(:disabled) {
+  border-color: rgba(155, 91, 55, 0.34);
+  color: #a45431;
+  background: #fffaf4;
+}
+
+.citation-tool-controls-row--style > button:focus-visible {
+  outline: 2px solid rgba(198, 111, 69, 0.32);
+  outline-offset: 2px;
+}
+
+.citation-tool-controls-row--style > button:disabled {
+  color: rgba(118, 80, 59, 0.42);
+  background: rgba(248, 244, 237, 0.68);
+  cursor: not-allowed;
+}
+
+.citation-library-more-body > .citation-lookup > .citation-tool-controls-row--lookup {
+  display: block;
+}
+
+.citation-tool-controls-row--lookup > div:last-child {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) 76px;
+  gap: 8px;
+}
+
+@media (max-width: 620px) {
+  .citation-library-more-body > .citation-tool-card {
+    grid-template-rows: auto auto;
+    gap: 11px;
+  }
+
+  .citation-tool-controls-row--style,
+  .citation-style-fields,
+  .citation-tool-controls-row--lookup > div:last-child {
+    grid-template-columns: 1fr;
+  }
+
+  .citation-tool-controls-row--style > button {
+    width: 100%;
+  }
+}

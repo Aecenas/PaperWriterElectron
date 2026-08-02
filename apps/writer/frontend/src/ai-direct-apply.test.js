@@ -143,6 +143,10 @@ test("converts allowlisted AI blocks to TipTap JSON and escaped HTML", () => {
   const table = aiResultBlockToTiptapContent({ type: "table", headers: ["列"], rows: [["值"]] });
   assert.equal(table[0].content[0].content[0].type, "tableHeader");
   assert.equal(table[0].content[1].content[0].type, "tableCell");
+
+  const heading = aiResultBlockToTiptapContent({ type: "heading", level: 4, text: "第四级" });
+  assert.equal(heading[0].attrs.level, 4);
+  assert.equal(aiResultBlockToSafeHtml({ type: "heading", level: 4, text: "第四级" }), "<h4>第四级</h4>");
 });
 
 test("normalizes safe image sources and degrades unsafe images to text", () => {

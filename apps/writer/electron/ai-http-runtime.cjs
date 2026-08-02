@@ -299,10 +299,7 @@ function createAiHttpRuntime({
                     error?.message,
                     config,
                   ),
-                  data: redactProviderText(
-                    data.slice(0, 200),
-                    config,
-                  ),
+                  dataCharacters: data.length,
                 });
               }
               continue;

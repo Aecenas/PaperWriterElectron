@@ -1,15 +1,26 @@
 const { subscribeToIpc } = require("./subscriptions.cjs");
 
+const MAX_PROFESSIONAL_RENDERED_HTML_CHARS = 48 * 1024 * 1024;
+
 function createDocumentApi(ipcRenderer) {
   return {
     openDocument: () => ipcRenderer.invoke("document:open"),
     openDocumentPath: (filePath) => ipcRenderer.invoke("document:open-path", filePath || ""),
     importDocument: () => ipcRenderer.invoke("document:import"),
-    exportEditable: (document, format, targetPath = "") => ipcRenderer.invoke("document:export-editable", {
-      document: document || {},
-      format: format || "",
-      targetPath: targetPath || "",
-    }),
+    exportEditable: (document, format, targetPath = "", renderedHtml = "") => {
+      const transientHtml = ["docx", "html"].includes(format) && typeof renderedHtml === "string"
+        ? renderedHtml
+        : "";
+      if (transientHtml.length > MAX_PROFESSIONAL_RENDERED_HTML_CHARS) {
+        return Promise.reject(new Error("专业内容临时渲染结果超过 IPC 安全上限"));
+      }
+      return ipcRenderer.invoke("document:export-editable", {
+        document: document || {},
+        format: format || "",
+        targetPath: targetPath || "",
+        renderedHtml: transientHtml,
+      });
+    },
     getDocumentRevision: (filePath) => ipcRenderer.invoke("document:revision", filePath || ""),
     regenerateDocumentIdentity: (filePath, force = false) => (
       ipcRenderer.invoke("document:regenerate-identity", filePath || "", Boolean(force))

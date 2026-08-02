@@ -189,6 +189,148 @@ function createAiRuntime({
       return generationRuntime.facade.cancel(requestId);
     },
   });
+  const compositionTaskKeys = new Set([
+    "composeOutline",
+    "composeDraft",
+    "composeReview",
+  ]);
+  const compositionModelTaskKey = "composeDraft";
+
+  async function getCompositionModelAssignments() {
+    const storedConfig = await configRuntime.readConfig();
+    const selected = taskAiProviderConfig(
+      storedConfig,
+      storedConfig.taskModels?.[compositionModelTaskKey] || {},
+    );
+    return Object.fromEntries([...compositionTaskKeys].map((taskKey) => {
+      return [taskKey, {
+        providerId: selected?.provider || "",
+        modelId: selected?.modelId || "",
+      }];
+    }));
+  }
+
+  function normalizeTaskUsage(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const inputTokens = Math.max(
+      0,
+      Number(source.inputTokens ?? source.prompt_tokens ?? source.input_tokens) || 0,
+    );
+    const outputTokens = Math.max(
+      0,
+      Number(source.outputTokens ?? source.completion_tokens ?? source.output_tokens) || 0,
+    );
+    return {
+      inputTokens,
+      outputTokens,
+      totalTokens: Math.max(
+        inputTokens + outputTokens,
+        Number(source.totalTokens ?? source.total_tokens) || 0,
+      ),
+      estimatedCost: Math.max(0, Number(source.estimatedCost) || 0),
+    };
+  }
+
+  async function completeCompositionTask({
+    taskKey,
+    messages,
+    modelAssignment,
+    signal,
+    onDelta,
+  } = {}) {
+    if (!compositionTaskKeys.has(taskKey)) {
+      throw new Error("不支持的 AI 起稿模型任务");
+    }
+    throwIfAborted(signal);
+    const storedConfig = await configRuntime.readConfig();
+    const requestedAssignment = modelAssignment
+      && typeof modelAssignment === "object"
+      && (modelAssignment.providerId || modelAssignment.modelId)
+      ? modelAssignment
+      : storedConfig.taskModels?.[compositionModelTaskKey] || {};
+    const assignment = {
+      ...requestedAssignment,
+      requestParams: storedConfig.taskModels?.[compositionModelTaskKey]?.requestParams || {},
+    };
+    const selected = taskAiProviderConfig(storedConfig, assignment);
+    if (!selected) {
+      throw new Error("AI 起稿任务模型已失效，请在 AI 配置中重新选择");
+    }
+    const config = {
+      ...selected,
+      requestParams: selected.transport === "codex-cli"
+        ? {}
+        : mergeAiRequestParams(
+          selected.requestParams,
+          assignment.requestParams,
+        ),
+    };
+    if (config.transport === "codex-cli") {
+      const status = configRuntime.getCodexRuntimeStatus();
+      if (!status.ready || !status.executablePath || !config.model) {
+        throw new Error(status.message || "AI 起稿所选 Codex CLI 当前不可用");
+      }
+    } else if (!config.apiKey || !config.testedOk) {
+      throw new Error("AI 起稿请选择已测试可用的模型");
+    }
+    const safeMessages = (Array.isArray(messages) ? messages : [])
+      .slice(-100)
+      .map((message) => ({
+        role: ["system", "user", "assistant"].includes(message?.role)
+          ? message.role
+          : "user",
+        content: String(message?.content || "").slice(0, 2 * 1024 * 1024),
+      }))
+      .filter((message) => message.content.trim());
+    if (!safeMessages.length) throw new Error("AI 起稿请求缺少内容");
+    let output = "";
+    const append = (value) => {
+      throwIfAborted(signal);
+      const delta = String(value || "");
+      if (!delta) return;
+      output += delta;
+      if (output.length > 8 * 1024 * 1024) {
+        throw new Error("AI 起稿输出超过安全上限");
+      }
+      onDelta?.(delta);
+    };
+    let usage;
+    if (config.transport === "codex-cli") {
+      usage = await streamCodexCompletion({
+        executable: configRuntime.getCodexRuntimeStatus().executablePath,
+        config,
+        messages: safeMessages,
+        cwd: getTempPath(),
+        scope: { mode: "document-only", relativePath: "" },
+        signal,
+        onDelta: append,
+      });
+    } else {
+      const collector = {
+        isDestroyed: () => false,
+        send(channel, payload) {
+          if (channel === "ai:chunk") append(payload?.delta);
+        },
+      };
+      usage = await httpRuntime.streamCompletion(
+        collector,
+        `composition-${taskKey}-${randomUUID()}`,
+        config,
+        safeMessages,
+        signal,
+      );
+    }
+    throwIfAborted(signal);
+    return {
+      text: output,
+      usage: normalizeTaskUsage(usage),
+      model: {
+        providerId: config.provider,
+        modelId: config.modelId,
+        modelName: config.modelName,
+      },
+    };
+  }
 
   return {
     abortAll: () => {
@@ -198,6 +340,9 @@ function createAiRuntime({
     configFacade: configRuntime.facade,
     generationFacade,
     initialize: configRuntime.initialize,
+    profileFacade: configRuntime.profileFacade,
+    completeCompositionTask,
+    getCompositionModelAssignments,
   };
 }
 

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 160" fill="none">
+  <defs>
+    <linearGradient id="woven-base" x1="12" y1="5" x2="69" y2="151" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4D8C84"/>
+      <stop offset="0.48" stop-color="#3F7F77"/>
+      <stop offset="1" stop-color="#34736D"/>
+    </linearGradient>
+    <filter id="woven-shadow" x="-20%" y="-12%" width="145%" height="135%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0.8" dy="2.3" stdDeviation="1.8" flood-color="#173B38" flood-opacity="0.24"/>
+    </filter>
+    <filter id="woven-grain" x="-12%" y="-8%" width="124%" height="116%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.58 0.13" numOctaves="2" seed="19" result="noise"/>
+      <feColorMatrix in="noise" type="saturate" values="0" result="mono"/>
+      <feComponentTransfer in="mono" result="soft-noise">
+        <feFuncR type="linear" slope="1.15" intercept="-0.08"/>
+        <feFuncG type="linear" slope="1.15" intercept="-0.08"/>
+        <feFuncB type="linear" slope="1.15" intercept="-0.08"/>
+        <feFuncA type="table" tableValues="0 0.34"/>
+      </feComponentTransfer>
+      <feComposite in="soft-noise" in2="SourceAlpha" operator="in" result="masked-noise"/>
+      <feBlend in="SourceGraphic" in2="masked-noise" mode="soft-light"/>
+    </filter>
+    <path id="woven-shape" d="M4 3H76V151L40 128L4 151V3Z"/>
+  </defs>
+  <g filter="url(#woven-shadow)">
+    <use href="#woven-shape" fill="url(#woven-base)" filter="url(#woven-grain)"/>
+    <use href="#woven-shape" stroke="#225D58" stroke-opacity="0.28" stroke-width="1"/>
+    <path d="M7.5 7H72.5" stroke="#A5C0B7" stroke-opacity="0.18" stroke-width="0.8"/>
+  </g>
+</svg>

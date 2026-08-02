@@ -9,6 +9,8 @@ import {
   getDocumentSchemaCompatibility,
   isDocumentId,
   mergePersistedDocumentIdentity,
+  normalizeCitationStyle,
+  normalizeCustomCitationStyle,
   normalizeCitationResearchIdentity,
   normalizeCitationReferenceMetadata,
   normalizeCitationSources,
@@ -47,23 +49,36 @@ test("creates and canonicalizes UUID document identities", () => {
 test("reports compatibility and rejects unknown future versions", () => {
   assert.equal(readDocumentSchemaVersion({}), 1);
   assert.deepEqual(getDocumentSchemaCompatibility({ version: 1 }), { version: 1, supported: true, readOnly: false, needsUpgrade: true });
-  assert.deepEqual(getDocumentSchemaCompatibility({ version: 3 }), { version: 3, supported: false, readOnly: true, needsUpgrade: false });
+  assert.deepEqual(getDocumentSchemaCompatibility({ version: 4 }), { version: 4, supported: false, readOnly: true, needsUpgrade: false });
   assert.throws(
-    () => normalizeDocumentSchemaV2({ version: 3 }),
-    (error) => error instanceof UnsupportedDocumentSchemaVersionError && error.version === 3,
+    () => normalizeDocumentSchemaV2({ version: 4 }),
+    (error) => error instanceof UnsupportedDocumentSchemaVersionError && error.version === 4,
   );
 });
 
-test("upgrades v1 to v2 while preserving content and leaving the input untouched", () => {
-  const input = { version: 1, title: "原文", html: "<p>正文</p>", extensionData: { keep: true } };
+test("upgrades v1 to v3, strips document layout state, and leaves input untouched", () => {
+  const input = {
+    version: 1,
+    title: "原文",
+    html: "<p>正文</p>",
+    layoutMode: "flow",
+    extensionData: { keep: true },
+  };
   const normalized = normalizeDocumentSchemaV2(input, { idFactory: idFactorySequence(), now: NOW });
   assert.equal(normalized.version, DOCUMENT_SCHEMA_VERSION);
   assert.equal(normalized.documentId, IDS[0]);
   assert.equal(normalized.derivedFrom, "");
   assert.deepEqual(normalized.footnotes, []);
   assert.deepEqual(normalized.citationSources, []);
+  assert.equal(Object.hasOwn(normalized, "layoutMode"), false);
   assert.deepEqual(normalized.extensionData, { keep: true });
-  assert.deepEqual(input, { version: 1, title: "原文", html: "<p>正文</p>", extensionData: { keep: true } });
+  assert.deepEqual(input, {
+    version: 1,
+    title: "原文",
+    html: "<p>正文</p>",
+    layoutMode: "flow",
+    extensionData: { keep: true },
+  });
 });
 
 test("normalizes footnotes, generates missing IDs and drops duplicate references", () => {
@@ -100,6 +115,76 @@ test("normalizes citation sources into a bounded portable snapshot", () => {
   assert.equal(normalized[0].doi, "10.1000/example");
   assert.equal(normalized[1].id, IDS[1]);
   assert.equal(normalized[1].url, "");
+});
+
+test("v3 preserves bounded CSL projections and normalizes the citation style", () => {
+  const document = normalizeDocumentSchemaV2({
+    version: 2,
+    documentId: IDS[0],
+    citationSources: [{
+      id: IDS[1],
+      title: "CSL 来源",
+      citationKey: "Doe 2026",
+      csl: {
+        id: "doe2026",
+        type: "article-journal",
+        title: "CSL 来源",
+        author: [{ family: "Doe", given: "Jane" }],
+        __proto__: { polluted: true },
+      },
+    }],
+    citationStyle: { styleId: "apa-7", locale: "en-US" },
+  }, { now: NOW });
+  assert.equal(document.version, 3);
+  assert.equal(document.citationSources[0].citationKey, "Doe-2026");
+  assert.equal(document.citationSources[0].csl.author[0].family, "Doe");
+  assert.equal(Object.hasOwn(document.citationSources[0].csl, "__proto__"), false);
+  assert.deepEqual(document.citationStyle, { styleId: "apa-7", locale: "en-US" });
+});
+
+test("carries only bounded custom CSL styles whose selected id matches the declared hash", () => {
+  const hash = "a".repeat(64);
+  const styleId = `custom-${hash.slice(0, 24)}`;
+  const customStyle = {
+    styleId,
+    title: "机构作者-年份",
+    hash,
+    xml: '<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0"><info><title>机构作者-年份</title></info></style>',
+  };
+  assert.deepEqual(normalizeCitationStyle({
+    styleId,
+    locale: "zh-CN",
+    customStyle,
+  }), {
+    styleId,
+    locale: "zh-CN",
+    customStyle,
+  });
+  assert.equal(normalizeCustomCitationStyle({ ...customStyle, styleId: "custom-bad" }, styleId), null);
+  assert.equal(normalizeCustomCitationStyle({
+    ...customStyle,
+    xml: '<!DOCTYPE style SYSTEM "https://example.com/style.dtd"><style xmlns="http://purl.org/net/xbiblio/csl"></style>',
+  }, styleId), null);
+  assert.deepEqual(normalizeCitationStyle({
+    styleId: "apa-7",
+    locale: "en-US",
+    customStyle,
+  }), {
+    styleId: "apa-7",
+    locale: "en-US",
+  });
+});
+
+test("drops custom CSL XML above the 512 KiB UTF-8 boundary", () => {
+  const hash = "b".repeat(64);
+  const styleId = `custom-${hash.slice(0, 24)}`;
+  const oversized = `<style xmlns="http://purl.org/net/xbiblio/csl">${"汉".repeat(180_000)}</style>`;
+  assert.equal(normalizeCustomCitationStyle({
+    styleId,
+    title: "过大样式",
+    hash,
+    xml: oversized,
+  }, styleId), null);
 });
 
 test("round-trips independent research identity pairs while keeping citation snapshots offline", () => {

@@ -85,7 +85,8 @@ export function runEditorCommand(editor, savedSelectionRef, buildCommand) {
 }
 
 export function setHeadingLevel(editor, savedSelectionRef, level) {
-  runEditorCommand(editor, savedSelectionRef, (chain) => chain.toggleHeading({ level, numberingMode: "inherit" }));
+  const normalizedLevel = Math.max(1, Math.min(4, Math.floor(Number(level) || 1)));
+  runEditorCommand(editor, savedSelectionRef, (chain) => chain.toggleHeading({ level: normalizedLevel, numberingMode: "inherit" }));
 }
 
 export function getSelectedHeadingNode(editor, savedSelectionRef) {
@@ -113,7 +114,7 @@ export function toggleSelectedHeadingNumbering(editor, savedSelectionRef) {
   if (!heading) {
     return;
   }
-  const level = Math.max(1, Math.min(3, Number(heading.node.attrs.level) || 1));
+  const level = Math.max(1, Math.min(4, Number(heading.node.attrs.level) || 1));
   const pluginState = HEADING_NUMBERING_PLUGIN_KEY.getState(editor.state);
   const inheritedNumbering = pluginState?.defaults?.[level] !== false;
   const mode = ["inherit", "on", "off"].includes(heading.node.attrs.numberingMode)

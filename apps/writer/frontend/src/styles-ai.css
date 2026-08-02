@@ -3679,6 +3679,7 @@
 .ai-chat-message.assistant .ai-chat-message-body h1:last-child,
 .ai-chat-message.assistant .ai-chat-message-body h2:last-child,
 .ai-chat-message.assistant .ai-chat-message-body h3:last-child,
+.ai-chat-message.assistant .ai-chat-message-body h4:last-child,
 .ai-chat-message.assistant .ai-chat-message-body blockquote:last-child,
 .ai-chat-message.assistant .ai-chat-message-body .ai-chat-md-table-wrap:last-child {
   margin-bottom: 0;
@@ -3707,6 +3708,10 @@
 
 .ai-chat-message-body h3.ai-chat-md-heading {
   font-size: 1.04em;
+}
+
+.ai-chat-message-body h4.ai-chat-md-heading {
+  font-size: 1em;
 }
 
 .ai-chat-md-quote {

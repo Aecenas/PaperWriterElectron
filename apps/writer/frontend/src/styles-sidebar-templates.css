@@ -641,6 +641,10 @@
   padding-left: 42px;
 }
 
+.outline-row.level-4 {
+  padding-left: 58px;
+}
+
 .outline-marker {
   width: 7px;
   height: 7px;
@@ -660,6 +664,13 @@
   height: 5px;
   border: 1px solid rgba(198, 111, 69, 0.82);
   background: transparent;
+}
+
+.outline-row.level-4 .outline-marker {
+  width: 5px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(198, 111, 69, 0.58);
 }
 
 .outline-empty {

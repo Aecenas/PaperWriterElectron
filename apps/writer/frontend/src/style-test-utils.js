@@ -4,8 +4,12 @@ export const APP_STYLE_FRAGMENT_NAMES = Object.freeze([
   "styles-foundation.css",
   "styles-sidebar-templates.css",
   "styles-workspace-dialogs.css",
+  "styles-data-safety.css",
   "styles-editor-paper.css",
+  "styles-pagination.css",
+  "styles-professional-content.css",
   "styles-ai.css",
+  "styles-ai-composition.css",
   "styles-status-export-help.css",
   "styles-output-responsive.css",
 ]);

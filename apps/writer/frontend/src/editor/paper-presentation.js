@@ -39,6 +39,7 @@ export function getPaperPresentation(document, letterTemplates) {
       "--heading-color-1": presentation.headingColors[1],
       "--heading-color-2": presentation.headingColors[2],
       "--heading-color-3": presentation.headingColors[3],
+      "--heading-color-4": presentation.headingColors[4],
       "--paper-repeat-bg": customBackgroundCss || `url("${selectedTemplate.slices.repeat}")`,
       "--paper-top-bg": customBackground ? "none" : `url("${selectedTemplate.slices.top}")`,
       "--paper-bottom-bg": customBackground ? "none" : `url("${selectedTemplate.slices.bottom}")`,

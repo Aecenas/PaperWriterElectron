@@ -18,13 +18,20 @@ const aiSettingsSource = [
 const aiRequestParamsSource = fs.readFileSync(fileURLToPath(new URL("./ai-settings/AiRequestParamsEditor.jsx", import.meta.url)), "utf8");
 const aiSettingsModelSource = fs.readFileSync(fileURLToPath(new URL("./ai-settings/model.js", import.meta.url)), "utf8");
 const uiInteractionsSource = fs.readFileSync(fileURLToPath(new URL("./ui-interactions.js", import.meta.url)), "utf8");
+const topNavSource = fs.readFileSync(fileURLToPath(new URL("./app-shell/TopNav.jsx", import.meta.url)), "utf8");
 
-test("settings center is a first-level launcher with two destinations", () => {
+test("settings center only launches settings while migration lives in Export", () => {
   assert.match(source, /AI 配置/);
   assert.match(source, /模板配置/);
+  assert.doesNotMatch(source, /写作检查/);
+  assert.doesNotMatch(source, /备份与迁移/);
   assert.match(source, /onSelectSection\?\.\(destination\.id\)/);
   assert.match(source, /id: "ai"/);
   assert.match(source, /id: "template"/);
+  assert.doesNotMatch(source, /id: "writing"/);
+  assert.doesNotMatch(source, /id: "profile"/);
+  assert.match(topNavSource, /label="备份与迁移"/);
+  assert.match(topNavSource, /runMenuAction\(onOpenProfileMigration\)/);
   assert.doesNotMatch(source, /aiContent|templateContent|onSectionChange|activeSection/);
   assert.doesNotMatch(source, /settings-center-sidebar|settings-center-content/);
 });
@@ -56,7 +63,7 @@ test("settings launcher uses responsive cards without compact-dialog backdrop bl
 test("the launcher exits before opening a standalone second-level panel", () => {
   assert.match(appSource, /const \[settingsDialog, setSettingsDialog\] = useState\(\{[\s\S]*?open: false,[\s\S]*?section: "",[\s\S]*?targetTabId: "",[\s\S]*?aiInitialPanel: "provider"/);
   assert.match(appSource, /const openSettings = useCallback\(\(\) => \{[\s\S]*?open: true,[\s\S]*?section: ""/);
-  assert.match(appSource, /const openSettingsSection = useCallback\(\(section\) => \{[\s\S]*?open: false,[\s\S]*?section: section === "template" \? "template" : "ai"/);
+  assert.match(appSource, /const openSettingsSection = useCallback\(\(section\) => \{[\s\S]*?open: false,[\s\S]*?section: \["ai", "template", "writing", "profile"\]\.includes\(section\)[\s\S]*?\? section[\s\S]*?: "ai"/);
   assert.match(appSource, /onSelectSection=\{openSettingsSection\}/);
   assert.match(appSource, /<AiSettingsDialog[\s\S]*?open=\{settingsDialog\.section === "ai"\}[\s\S]*?returnFocusRef=\{settingsTriggerRef\}/);
   assert.match(appSource, /settingsDialog\.section === "template"[\s\S]*?<LetterTemplateDialog[\s\S]*?mode="manage"[\s\S]*?returnFocusRef=\{settingsTriggerRef\}/);
@@ -68,6 +75,16 @@ test("the launcher exits before opening a standalone second-level panel", () => 
   assert.match(appSource, /document=\{\{ letterTemplateId: newDocumentTemplateId \}\}/);
   assert.doesNotMatch(appSource, /const settingsTemplateDocument/);
   assert.match(appSource, /\{ \.\.\.current, open: false, section: "" \}/);
+});
+
+test("writing check settings open from the structure check pane instead of the settings launcher", () => {
+  const paneSource = fs.readFileSync(fileURLToPath(new URL("./writing-assistance/WritingAssistancePane.jsx", import.meta.url)), "utf8");
+  assert.match(paneSource, /aria-label="检查设置"/);
+  assert.match(paneSource, /onClick=\{onOpenSettings\}/);
+  assert.match(appSource, /settingsButtonRef: writingSettingsTriggerRef/);
+  assert.match(appSource, /onOpenSettings: \(\) => openSettingsSection\("writing"\)/);
+  assert.match(appSource, /useModalFocusTrap\([\s\S]*settingsDialog\.section === "writing"[\s\S]*writingSettingsTriggerRef/);
+  assert.match(appSource, /id="writing-settings-dialog-title">检查设置/);
 });
 
 test("standalone second-level panels trap focus and return to the settings trigger", () => {
@@ -83,6 +100,10 @@ test("AI settings separates base models from a data-driven task-model page", () 
   assert.match(aiSettingsModelSource, /export const AI_TASK_MODEL_DEFINITIONS = \[/);
   assert.match(aiSettingsModelSource, /id: "applyResolver"[\s\S]*?label: "直接应用定位"/);
   assert.match(aiSettingsModelSource, /id: "selectionChat"[\s\S]*?label: "选区问答"/);
+  assert.match(aiSettingsModelSource, /id: "composeDraft"[\s\S]*?label: "AI 起稿"/);
+  assert.equal([...aiSettingsModelSource.matchAll(/label: "AI 起稿"/g)].length, 1);
+  assert.doesNotMatch(aiSettingsModelSource, /AI 起稿 · (?:大纲|正文|审阅)/);
+  assert.match(aiSettingsModelSource, /整个起稿流程统一使用这一模型/);
   assert.match(aiSettingsModelSource, /只判断优化块在正文中的替换或插入位置，不参与内容优化与改写/);
   assert.match(aiSettingsSource, /<strong>基础模型<\/strong>/);
   assert.match(aiSettingsSource, /className=\{activePanel === "tasks" \? "ai-task-model-nav selected"/);

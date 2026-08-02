@@ -53,6 +53,12 @@ export const AI_TASK_MODEL_DEFINITIONS = [
     description: "只判断优化块在正文中的替换或插入位置，不参与内容优化与改写。内置 Gemini、DeepSeek 固定使用 JSON 输出，并使用各自模型允许的最大输出上限。",
     selectLabel: "直接应用定位模型",
   },
+  {
+    id: "composeDraft",
+    label: "AI 起稿",
+    description: "用于结构设计、正文生成和全文检查，整个起稿流程统一使用这一模型。未单独指定时跟随默认模型。",
+    selectLabel: "AI 起稿模型",
+  },
 ];
 export const AI_MODEL_REQUIRED_MESSAGE = "必须配置好至少一个可用模型，才能进入 AI 模式。配置完成后，再次点击“AI模式”即可。";
 export const DEFAULT_AI_CONFIG = {
@@ -71,6 +77,7 @@ export const DEFAULT_AI_CONFIG = {
   taskModels: {
     selectionChat: { providerId: "", modelId: "", requestParams: {} },
     applyResolver: { providerId: "", modelId: "", requestParams: {} },
+    composeDraft: { providerId: "", modelId: "", requestParams: {} },
   },
 };
 
@@ -117,6 +124,16 @@ export function normalizePublicAiTaskModelAssignment(value = {}) {
   return providerId && modelId
     ? { providerId, modelId, requestParams: normalizeUiAiRequestParams(value?.requestParams) }
     : { providerId: "", modelId: "", requestParams: {} };
+}
+
+function normalizeCompositionTaskModelAssignment(taskModels = {}) {
+  const assignments = [
+    taskModels?.composeDraft,
+    taskModels?.composeOutline,
+    taskModels?.composeReview,
+  ].map((assignment) => normalizePublicAiTaskModelAssignment(assignment));
+  return assignments.find((assignment) => assignment.providerId && assignment.modelId)
+    || assignments[0];
 }
 
 export function formatAiReasoningEffort(value = "") {
@@ -220,6 +237,7 @@ export function normalizePublicAiConfig(config) {
   const activeModelId = activeModel.id || "";
   const selectionChat = normalizePublicAiTaskModelAssignment(config?.taskModels?.selectionChat);
   const applyResolver = normalizePublicAiTaskModelAssignment(config?.taskModels?.applyResolver);
+  const composeDraft = normalizeCompositionTaskModelAssignment(config?.taskModels);
   return {
     ...DEFAULT_AI_CONFIG,
     activeProvider,
@@ -242,6 +260,7 @@ export function normalizePublicAiConfig(config) {
     taskModels: {
       selectionChat,
       applyResolver,
+      composeDraft,
     },
   };
 }

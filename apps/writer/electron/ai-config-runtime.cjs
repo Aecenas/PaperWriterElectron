@@ -2,6 +2,7 @@ const AI_CONFIG_FILE = "ai-config.json";
 const AI_TASK_MODEL_KEYS = Object.freeze([
   "selectionChat",
   "applyResolver",
+  "composeDraft",
 ]);
 const AI_TASK_MODEL_KEY_SET = new Set(AI_TASK_MODEL_KEYS);
 const AI_TASK_MODEL_ASSIGNMENT_KEYS = new Set([
@@ -892,11 +893,20 @@ function createAiConfigRuntime({
     startLogin,
     testConfig,
   });
+  const profileFacade = Object.freeze({
+    readConfig: readAiConfig,
+    replaceConfig: (config) => queueAiConfigMutation(async () => {
+      const normalized = normalizeAiConfig(config);
+      await persistAiConfig(normalized);
+      return normalized;
+    }),
+  });
 
   return {
     facade,
     getCodexRuntimeStatus,
     initialize: migratePlaintextAiSecrets,
+    profileFacade,
     readConfig: readAiConfig,
   };
 }

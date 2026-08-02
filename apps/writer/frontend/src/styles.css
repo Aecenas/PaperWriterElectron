@@ -1,7 +1,11 @@
 @import "./styles-foundation.css";
 @import "./styles-sidebar-templates.css";
 @import "./styles-workspace-dialogs.css";
+@import "./styles-data-safety.css";
 @import "./styles-editor-paper.css";
+@import "./styles-pagination.css";
+@import "./styles-professional-content.css";
 @import "./styles-ai.css";
+@import "./styles-ai-composition.css";
 @import "./styles-status-export-help.css";
 @import "./styles-output-responsive.css";

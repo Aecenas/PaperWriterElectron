@@ -1,4 +1,4 @@
-const { randomUUID } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 const path = require("node:path");
 
 const {
@@ -18,7 +18,11 @@ const DOCUMENT_FILTERS = [
   { name: "旧版 PaperWriter 文档", extensions: ["paperdoc"] },
   { name: "All Files", extensions: ["*"] },
 ];
-const DOCUMENT_SCHEMA_VERSION = 2;
+const DOCUMENT_SCHEMA_VERSION = 3;
+const DEFAULT_CITATION_STYLE = Object.freeze({
+  styleId: "gb-t-7714-2015-numeric",
+  locale: "zh-CN",
+});
 const SAVED_AI_IMAGE_LIMIT = 2048;
 const SAVED_AI_QUOTE_LIMIT = 1000;
 const SAVED_AI_MESSAGE_LIMIT = 200;
@@ -394,6 +398,10 @@ function normalizeCitationSources(value) {
       .filter(Boolean);
     return [{
       id,
+      citationKey: typeof source.citationKey === "string"
+        ? source.citationKey.trim().replace(/[^a-zA-Z0-9_.:+/-]/g, "-").slice(0, 200)
+        : "",
+      csl: normalizeCslObject(source.csl),
       type: [
         "book",
         "article",
@@ -433,6 +441,91 @@ function normalizeCitationSources(value) {
   });
 }
 
+function normalizeCslObject(value) {
+  const visit = (input, depth = 0) => {
+    if (depth > 8) return undefined;
+    if (typeof input === "string") return input.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").slice(0, 20000);
+    if (typeof input === "number") return Number.isFinite(input) ? input : undefined;
+    if (typeof input === "boolean" || input === null) return input;
+    if (Array.isArray(input)) return input.slice(0, 500).map((item) => visit(item, depth + 1)).filter((item) => item !== undefined);
+    if (!input || typeof input !== "object") return undefined;
+    const result = {};
+    for (const [rawKey, rawValue] of Object.entries(input).slice(0, 500)) {
+      const key = String(rawKey).trim().slice(0, 100);
+      if (!key || ["__proto__", "prototype", "constructor"].includes(key)) continue;
+      const normalized = visit(rawValue, depth + 1);
+      if (normalized !== undefined) result[key] = normalized;
+    }
+    return result;
+  };
+  const result = visit(value);
+  if (!result || typeof result !== "object" || Array.isArray(result)) return {};
+  try {
+    return JSON.stringify(result).length <= 64 * 1024 ? result : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeCitationStyle(value) {
+  const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const locale = typeof input.locale === "string" ? input.locale.trim().slice(0, 32) : "";
+  const styleId = typeof input.styleId === "string" && input.styleId.trim()
+    ? input.styleId.trim().slice(0, 200)
+    : DEFAULT_CITATION_STYLE.styleId;
+  const normalized = {
+    styleId,
+    locale: /^(?:zh-CN|en-US)$/i.test(locale) ? locale : DEFAULT_CITATION_STYLE.locale,
+  };
+  const custom = input.customStyle
+    && typeof input.customStyle === "object"
+    && !Array.isArray(input.customStyle)
+    ? input.customStyle
+    : null;
+  const xml = typeof custom?.xml === "string"
+    ? custom.xml.trim().slice(0, (512 * 1024) + 1)
+    : "";
+  if (
+    !xml
+    || xml.length > 512 * 1024
+    || /<!DOCTYPE|<!ENTITY|\bSYSTEM\b|\bPUBLIC\b/i.test(xml)
+    || /<link\b[^>]*\bhref\s*=\s*["'](?:https?:|file:|\/\/)/i.test(xml)
+    || !/^(?:<\?xml[^>]*>\s*)?<style\b[^>]*\bxmlns\s*=\s*["']http:\/\/purl\.org\/net\/xbiblio\/csl["']/i.test(xml)
+  ) {
+    return normalized;
+  }
+  const hash = createHash("sha256").update(xml, "utf8").digest("hex");
+  const customStyleId = `custom-${hash.slice(0, 24)}`;
+  if (
+    styleId !== customStyleId
+    || (
+      typeof custom.hash === "string"
+      && custom.hash.trim()
+      && custom.hash.trim().toLowerCase() !== hash
+    )
+    || (
+      typeof custom.styleId === "string"
+      && custom.styleId.trim()
+      && custom.styleId.trim() !== customStyleId
+    )
+  ) {
+    return normalized;
+  }
+  return {
+    ...normalized,
+    customStyle: {
+      styleId: customStyleId,
+      title: (
+        typeof custom.title === "string"
+          ? custom.title.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 200)
+          : ""
+      ) || "自定义 CSL 样式",
+      hash,
+      xml,
+    },
+  };
+}
+
 function normalizeDocument(document = {}) {
   const now = new Date().toISOString();
   const sourceVersion = Number.isInteger(Number(document.version))
@@ -440,10 +533,6 @@ function normalizeDocument(document = {}) {
     ? Number(document.version)
     : 1;
   const futureSchema = sourceVersion > DOCUMENT_SCHEMA_VERSION;
-  const usesV2 = sourceVersion >= DOCUMENT_SCHEMA_VERSION
-    || Boolean(document.documentId)
-    || Array.isArray(document.footnotes)
-    || Array.isArray(document.citationSources);
   const createdAt = typeof document.createdAt === "string"
     && document.createdAt
     ? document.createdAt
@@ -453,22 +542,19 @@ function normalizeDocument(document = {}) {
         ? document.updatedAt
         : now
     );
-  return {
-    ...(sourceVersion >= DOCUMENT_SCHEMA_VERSION ? document : {}),
+  const normalized = {
+    ...(sourceVersion >= 2 ? document : {}),
     version: futureSchema
       ? sourceVersion
-      : (usesV2 ? DOCUMENT_SCHEMA_VERSION : 1),
-    ...(usesV2 || futureSchema
-      ? {
-        documentId: normalizeDocumentId(document.documentId)
-          || randomUUID(),
-        derivedFrom: normalizeDocumentId(document.derivedFrom),
-        footnotes: normalizeDocumentFootnotes(document.footnotes),
-        citationSources: normalizeCitationSources(
-          document.citationSources,
-        ),
-      }
-      : {}),
+      : DOCUMENT_SCHEMA_VERSION,
+    documentId: normalizeDocumentId(document.documentId)
+      || randomUUID(),
+    derivedFrom: normalizeDocumentId(document.derivedFrom),
+    footnotes: normalizeDocumentFootnotes(document.footnotes),
+    citationSources: normalizeCitationSources(
+      document.citationSources,
+    ),
+    citationStyle: normalizeCitationStyle(document.citationStyle),
     title: typeof document.title === "string"
       && document.title.trim()
       ? document.title.trim().slice(0, 200)
@@ -495,7 +581,6 @@ function normalizeDocument(document = {}) {
     fontSize: Number.isFinite(Number(document.fontSize))
       ? Math.min(32, Math.max(12, Number(document.fontSize)))
       : 18,
-    layoutMode: "flow",
     customBackground: typeof document.customBackground === "string"
       && document.customBackground
       ? document.customBackground
@@ -513,6 +598,10 @@ function normalizeDocument(document = {}) {
     aiState: normalizeSavedAiState(document.aiState),
     ...(futureSchema ? { _readOnlyFutureSchema: true } : {}),
   };
+  // Page presentation is device/session state. Strip the legacy document
+  // field so opening and saving an older file cannot keep persisting it.
+  delete normalized.layoutMode;
+  return normalized;
 }
 
 function normalizeDocumentComments(comments = []) {
@@ -574,12 +663,14 @@ module.exports = {
   DOCUMENT_EXTENSION,
   DOCUMENT_FILTERS,
   DOCUMENT_SCHEMA_VERSION,
+  DEFAULT_CITATION_STYLE,
   LEGACY_DOCUMENT_EXTENSION,
   createEmptyAiState,
   formatPaperDate,
   isSupportedDocument,
   normalizeCitationResearchIdentity,
   normalizeCitationSources,
+  normalizeCitationStyle,
   normalizeDocument,
   normalizeDocumentComments,
   normalizeDocumentFootnotes,

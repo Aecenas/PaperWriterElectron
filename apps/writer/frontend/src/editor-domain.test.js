@@ -14,7 +14,7 @@ import {
   normalizeBackgroundColorValue,
   normalizeUnderlineStyle,
 } from "./editor/formatting.js";
-import { numberHeadingItems } from "./editor/decorations.js";
+import { numberHeadingItems, numberOutlineItems } from "./editor/decorations.js";
 
 test("editor formatting normalizers preserve the existing allowlists", () => {
   assert.equal(normalizeUnderlineStyle("wavy"), "wavy");
@@ -80,14 +80,40 @@ test("comment tracks and heading numbers remain deterministic", () => {
   const headings = numberHeadingItems([
     { id: "h1", level: 1, text: "第一章", pos: 0, numberingMode: "inherit" },
     { id: "h2", level: 2, text: "第一节", pos: 5, numberingMode: "inherit" },
-    { id: "off", level: 2, text: "不编号", pos: 10, numberingMode: "off" },
-    { id: "h3", level: 1, text: "第二章", pos: 15, numberingMode: "inherit" },
-  ], { 1: true, 2: true, 3: true });
+    { id: "h3", level: 3, text: "第一目", pos: 10, numberingMode: "inherit" },
+    { id: "h4", level: 4, text: "第一细目", pos: 15, numberingMode: "inherit" },
+    { id: "off", level: 2, text: "不编号", pos: 20, numberingMode: "off" },
+    { id: "next", level: 1, text: "第二章", pos: 25, numberingMode: "inherit" },
+  ], { 1: true, 2: true, 3: true, 4: true });
   assert.deepEqual(headings.map(({ id, number, numbered }) => ({ id, number, numbered })), [
     { id: "h1", number: "1", numbered: true },
     { id: "h2", number: "1.1", numbered: true },
+    { id: "h3", number: "1.1.1", numbered: true },
+    { id: "h4", number: "1.1.1.1", numbered: true },
     { id: "off", number: "", numbered: false },
-    { id: "h3", number: "2", numbered: true },
+    { id: "next", number: "2", numbered: true },
+  ]);
+
+  const outline = numberOutlineItems([
+    { id: "toc", type: "toc", level: 1, text: "目录", pos: 0 },
+    { id: "h1", type: "heading", level: 1, text: "第一章", pos: 5, numberingMode: "inherit" },
+    { id: "h2", type: "heading", level: 2, text: "第一节", pos: 10, numberingMode: "off" },
+    { id: "h4", type: "heading", level: 4, text: "第四级", pos: 15, numberingMode: "inherit" },
+  ], { 1: true, 2: true, 3: true, 4: true });
+  assert.deepEqual(outline.map(({ id, number }) => ({ id, number })), [
+    { id: "toc", number: undefined },
+    { id: "h1", number: "1" },
+    { id: "h2", number: "" },
+    { id: "h4", number: "1.1" },
+  ]);
+
+  const unnumberedTemplateOutline = numberOutlineItems([
+    { id: "plain", type: "heading", level: 1, text: "无编号模板", pos: 15, numberingMode: "inherit" },
+    { id: "forced", type: "heading", level: 2, text: "单独开启", pos: 20, numberingMode: "on" },
+  ], { 1: false, 2: false, 3: false, 4: false });
+  assert.deepEqual(unnumberedTemplateOutline.map(({ id, number }) => ({ id, number })), [
+    { id: "plain", number: "" },
+    { id: "forced", number: "1" },
   ]);
 });
 

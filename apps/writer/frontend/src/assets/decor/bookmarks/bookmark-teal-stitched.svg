@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 160" fill="none">
+  <defs>
+    <linearGradient id="stitched-base" x1="10" y1="4" x2="70" y2="151" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#43857D"/>
+      <stop offset="1" stop-color="#2F706A"/>
+    </linearGradient>
+    <filter id="stitched-shadow" x="-20%" y="-12%" width="145%" height="135%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0.8" dy="2.5" stdDeviation="1.9" flood-color="#153834" flood-opacity="0.26"/>
+    </filter>
+    <filter id="stitched-grain" x="-12%" y="-8%" width="124%" height="116%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.62 0.14" numOctaves="2" seed="31" result="noise"/>
+      <feColorMatrix in="noise" type="saturate" values="0" result="mono"/>
+      <feComponentTransfer in="mono" result="soft-noise">
+        <feFuncA type="table" tableValues="0 0.28"/>
+      </feComponentTransfer>
+      <feComposite in="soft-noise" in2="SourceAlpha" operator="in" result="masked-noise"/>
+      <feBlend in="SourceGraphic" in2="masked-noise" mode="soft-light"/>
+    </filter>
+    <path id="stitched-shape" d="M4 3H76V151L40 128L4 151V3Z"/>
+  </defs>
+  <g filter="url(#stitched-shadow)">
+    <use href="#stitched-shape" fill="url(#stitched-base)" filter="url(#stitched-grain)"/>
+    <use href="#stitched-shape" stroke="#1E5A55" stroke-opacity="0.3" stroke-width="1"/>
+    <path
+      d="M11 10V140L40 121.5L69 140V10"
+      stroke="#EFE1C7"
+      stroke-opacity="0.9"
+      stroke-width="1.45"
+      stroke-linecap="round"
+      stroke-dasharray="4.2 4.2"
+    />
+  </g>
+</svg>

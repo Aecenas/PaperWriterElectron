@@ -11,11 +11,12 @@ const stylesSource = await readAppStyles();
 const workspaceStylesSource = await readFile(new URL("./workspace-features.css", import.meta.url), "utf8");
 
 function sourceBetween(start, end, source = appSource) {
-  const from = source.indexOf(start);
-  const to = source.indexOf(end, from + start.length);
+  const normalizedSource = source.replace(/\r\n/g, "\n");
+  const from = normalizedSource.indexOf(start);
+  const to = normalizedSource.indexOf(end, from + start.length);
   assert.notEqual(from, -1, `missing start marker: ${start}`);
   assert.notEqual(to, -1, `missing end marker: ${end}`);
-  return source.slice(from, to);
+  return normalizedSource.slice(from, to);
 }
 
 test("direct apply stages a non-mutating inline comparison before confirmation", () => {

@@ -104,7 +104,7 @@ function SelectionAiMarkdownBlock({ block, index }) {
     );
   }
   if (block.type === "heading") {
-    const HeadingTag = `h${Math.max(1, Math.min(3, block.level || 2))}`;
+    const HeadingTag = `h${Math.max(1, Math.min(4, block.level || 2))}`;
     return (
       <HeadingTag>
         <SelectionAiInlineMarkdown text={block.text} />

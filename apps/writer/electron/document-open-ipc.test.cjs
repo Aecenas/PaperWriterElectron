@@ -587,6 +587,57 @@ test("editable export consumes a target capability and commits sidecars before t
   );
 });
 
+test("DOCX editable export forwards only its bounded renderer-produced visual HTML", async () => {
+  const consumedTarget = "C:\\authorized\\draft.docx";
+  const harness = createHarness({ consumedTarget });
+  const renderedHtml = '<p><img src="data:image/png;base64,iVBORw0KGgo=" alt="TeX：x"></p>';
+  await harness.handlers.get("document:export-editable")({}, {
+    format: "docx",
+    targetPath: "C:\\selected\\draft",
+    renderedHtml,
+    document: { title: "Draft", html: '<p><span data-type="inline-math" data-latex="x"></span></p>' },
+  });
+
+  assert.deepEqual(harness.calls.exportDocuments[0], {
+    format: "docx",
+    document: {
+      title: "Draft",
+      html: '<p><span data-type="inline-math" data-latex="x"></span></p>',
+      normalized: true,
+    },
+    targetPath: consumedTarget,
+    baseName: "draft",
+    renderedHtml,
+  });
+});
+
+test("HTML editable export forwards only its bounded renderer-produced static previews", async () => {
+  const consumedTarget = "C:\\authorized\\draft.html";
+  const harness = createHarness({ consumedTarget });
+  const renderedHtml = '<p><img src="data:image/png;base64,iVBORw0KGgo=" alt="TeX：x"></p>';
+  await harness.handlers.get("document:export-editable")({}, {
+    format: "html",
+    targetPath: "C:\\selected\\draft",
+    renderedHtml,
+    document: {
+      title: "Draft",
+      html: '<p><span data-type="inline-math" data-latex="x"></span></p>',
+    },
+  });
+
+  assert.deepEqual(harness.calls.exportDocuments[0], {
+    format: "html",
+    document: {
+      title: "Draft",
+      html: '<p><span data-type="inline-math" data-latex="x"></span></p>',
+      normalized: true,
+    },
+    targetPath: consumedTarget,
+    baseName: "draft",
+    renderedHtml,
+  });
+});
+
 test("editable export preserves picker cancellation, format allowlist, and asset containment", async () => {
   const invalid = createHarness();
   await assert.rejects(

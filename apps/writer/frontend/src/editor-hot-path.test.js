@@ -28,12 +28,14 @@ test("editor update handlers do not serialize or publish the complete document",
 });
 
 test("knowledge synchronization cannot re-enter through its own derived transactions", () => {
-  const start = knowledgeLifecycleSource.indexOf("const synchronize = createKnowledgeUpdateGuard(");
-  const end = knowledgeLifecycleSource.indexOf('activeWorkEditor.on("update", synchronize)', start);
+  const start = knowledgeLifecycleSource.indexOf("const synchronizer = createKnowledgeCitationSynchronizer(");
+  const end = knowledgeLifecycleSource.indexOf('activeWorkEditor.on("update", handleUpdate)', start);
   const synchronizationSource = knowledgeLifecycleSource.slice(start, end);
   assert.ok(start > 0 && end > start);
-  assert.match(synchronizationSource, /createKnowledgeUpdateGuard/);
-  assert.match(synchronizationSource, /synchronizeKnowledgeReferences/);
+  assert.match(synchronizationSource, /paperKnowledgeDerived/);
+  assert.match(synchronizationSource, /paperStructuredDerived/);
+  assert.match(synchronizationSource, /synchronizer\.schedule/);
+  assert.match(knowledgeLifecycleSource, /requestedGeneration !== generation/);
 });
 
 test("document switches rebuild editor state so undo cannot cross tab boundaries", () => {
@@ -156,6 +158,11 @@ test("selection and table overlays coalesce duplicate key and transaction events
     assert.match(overlaySource, /cancelAnimationFrame\(toolbarFrameRef\.current\)/);
     assert.doesNotMatch(overlaySource, /const updateSoon = \(\) => window\.requestAnimationFrame/);
   }
+});
+
+test("selection toolbar ignores bookmark node activation", () => {
+  assert.match(selectionToolbarSource, /selectionTouchesNodeType\(editor,\s*"paperBookmark"\)/);
+  assert.match(selectionToolbarSource, /\[data-type='paper-bookmark'\]/);
 });
 
 test("comment decorations map through ordinary typing instead of rebuilding all ranges", () => {

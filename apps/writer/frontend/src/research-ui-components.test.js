@@ -360,13 +360,16 @@ test("Elements opens the association picker without requiring typed brackets", a
   assert.doesNotMatch(`${app}\n${relationships}`, /paper-internal-link-trigger/);
 });
 
-test("Elements menu groups writing blocks, separators, then knowledge references", async () => {
+test("Elements menu leads with emoji and bookmark, then keeps writing blocks and references grouped", async () => {
   const topNav = await source("./app-shell/TopNav.jsx");
   const start = topNav.indexOf('menuId="elements"');
   const end = topNav.indexOf("</MenuButton>", start);
   const menu = topNav.slice(start, end);
 
   assert.ok(start >= 0 && end > start);
+  assert.ok(menu.indexOf('label="表情"') < menu.indexOf('label="书签"'));
+  assert.ok(menu.indexOf('label="书签"') < menu.indexOf('label={editor?.isActive("blockquote") ? "取消引文" : "引文"}'));
+  assert.match(menu, /label="书签"[\s\S]*?<MenuDivider \/>[\s\S]*?label=\{editor\?\.isActive\("blockquote"\)/);
   assert.ok(menu.indexOf('label={editor?.isActive("blockquote") ? "取消引文" : "引文"}') < menu.indexOf('label="表格"'));
   assert.ok(menu.indexOf('label="表格"') < menu.indexOf('label="分割线"'));
   assert.ok(menu.indexOf('label="分页符"') < menu.indexOf('label="关联信笺"'));
@@ -394,11 +397,20 @@ test("association picker mirrors workspace search placement and keyboard navigat
 
 test("structure inspector implements the complete tab pattern", async () => {
   const jsx = await source("./StructureInspector.jsx");
+  const css = await source("./research-workspace.css");
   assert.match(jsx, /role="tablist"/);
   assert.match(jsx, /role="tab"/);
   assert.match(jsx, /role="tabpanel"/);
   assert.match(jsx, /aria-controls=/);
   assert.match(jsx, /event\.key === "ArrowLeft" \|\| event\.key === "ArrowRight"/);
+  assert.match(cssRuleBody(css, ".structure-tabs"), /grid-template-rows:\s*repeat\(2, 38px\)/);
+  assert.match(cssRuleBody(css, ".structure-tabs"), /gap:\s*0/);
+  assert.match(cssRuleBody(css, ".structure-tabs"), /border:\s*0/);
+  assert.match(cssRuleBody(css, ".structure-tabs"), /background:\s*transparent/);
+  assert.doesNotMatch(css, /\.structure-tabs button:nth-child\(3n \+ 2\),[\s\S]*?border-left:\s*1px solid/);
+  assert.match(css, /\.structure-tabs button:nth-child\(n \+ 4\)\s*\{[^}]*border-top:\s*1px solid/s);
+  assert.match(cssRuleBody(css, ".structure-tabs button.is-active"), /box-shadow:\s*none/);
+  assert.match(cssRuleBody(css, ".structure-tabs button.is-active::before"), /width:\s*3px/);
 });
 
 test("new research surfaces do not inherit the retired cold-green palette", async () => {
@@ -420,7 +432,6 @@ test("left research and structure surfaces expose the parent sidebar texture", a
     ".research-local-boundary",
     ".research-root-empty",
     ".structure-inspector",
-    ".structure-tabs",
     ".structure-panel",
     ".structure-outline",
     ".structure-related",
@@ -433,7 +444,7 @@ test("left research and structure surfaces expose the parent sidebar texture", a
   }
   assert.match(cssRuleBody(css, ".research-local-boundary"), /color:\s*rgba\([^;]+0\.42\)/);
   assert.match(cssRuleBody(css, ".research-tree-row:focus-within"), /background:\s*rgba\(/);
-  assert.match(cssRuleBody(css, ".structure-tabs button.is-active"), /background:\s*var\(--research-selected\)/);
+  assert.match(cssRuleBody(css, ".structure-tabs button.is-active"), /background:\s*rgba\(198, 111, 69, 0\.08\)/);
   assert.match(cssRuleBody(css, ".structure-related-item:focus-within"), /background:\s*rgba\(/);
 });
 
@@ -454,4 +465,23 @@ test("outline navigation targets the currently active writing canvas", async () 
   assert.match(handler, /structureWorkEditor\.view\.nodeDOM/);
   assert.match(handler, /setActivePane\(structureWorkEditor === rightSplitEditor/);
   assert.doesNotMatch(handler, /\beditor\.(?:state|chain|view)\b/);
+});
+
+test("four-level headings are exposed in the toolbar and styled in the outline", async () => {
+  const topNav = await source("./app-shell/TopNav.jsx");
+  const structure = await source("./StructureInspector.jsx");
+  const outlineCss = await source("./research-workspace.css");
+  const paperCss = await source("./styles-editor-paper.css");
+  const templateDetail = await source("./templates/TemplateDetailView.jsx");
+
+  assert.match(topNav, /Heading4/);
+  assert.match(topNav, /label="四级标题"/);
+  assert.match(topNav, /activeHeadingLevel === 4/);
+  assert.match(structure, /Math\.min\(4, item\.level\)/);
+  assert.match(outlineCss, /\.structure-outline-row\.level-4\s*\{/);
+  assert.match(outlineCss, /\.structure-outline-row:not\(\.is-numbered\)\s*\{[^}]*grid-template-columns:\s*18px/s);
+  assert.match(outlineCss, /\.structure-outline-row:not\(\.is-numbered\) \.structure-outline-marker\s*\{[^}]*justify-self:\s*center/s);
+  assert.match(paperCss, /\.paper-editor h4/);
+  assert.match(paperCss, /\.paper-toc-list li\.level-4/);
+  assert.match(templateDetail, /\{\[1, 2, 3, 4\]\.map/);
 });

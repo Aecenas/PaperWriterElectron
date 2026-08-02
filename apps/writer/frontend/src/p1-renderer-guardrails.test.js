@@ -9,6 +9,10 @@ import { readAppStyles } from "./style-test-utils.js";
 
 const appSource = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
 const exportControllerSource = await readFile(new URL("./controllers/export.js", import.meta.url), "utf8");
+const professionalDocxRendererSource = await readFile(
+  new URL("./export/professional-docx-renders.js", import.meta.url),
+  "utf8",
+);
 const topNavSource = await readFile(new URL("./app-shell/TopNav.jsx", import.meta.url), "utf8");
 const helpCenterSource = await readFile(new URL("./app-shell/HelpCenter.jsx", import.meta.url), "utf8");
 const appDialogsSource = await readFile(new URL("./app-shell/AppDialogs.jsx", import.meta.url), "utf8");
@@ -21,11 +25,12 @@ const structureInspectorSource = await readFile(new URL("./StructureInspector.js
 const uiInteractionsSource = await readFile(new URL("./ui-interactions.js", import.meta.url), "utf8");
 
 function between(startMarker, endMarker, fromIndex = 0) {
-  const start = appSource.indexOf(startMarker, fromIndex);
-  const end = appSource.indexOf(endMarker, start + startMarker.length);
+  const normalizedSource = appSource.replace(/\r\n/g, "\n");
+  const start = normalizedSource.indexOf(startMarker, fromIndex);
+  const end = normalizedSource.indexOf(endMarker, start + startMarker.length);
   assert.notEqual(start, -1, `missing marker: ${startMarker}`);
   assert.notEqual(end, -1, `missing marker: ${endMarker}`);
-  return appSource.slice(start, end);
+  return normalizedSource.slice(start, end);
 }
 
 test("exports freeze an explicit pane and use that pane for every output format", () => {
@@ -57,7 +62,9 @@ test("exports freeze an explicit pane and use that pane for every output format"
 
   assert.equal((exportControllerSource.match(/resolveExportTarget\(\)/g) || []).length, 3);
   assert.match(exportControllerSource, /target\.canvas\?\.querySelector\("\.paper-sheet"\)/);
-  assert.match(exportControllerSource, /prepareImageRects\(targetCanvas\.querySelector\("\.paper-sheet"\)\)/);
+  assert.match(exportControllerSource, /capturePageMapSnapshot = capturePageMapExportSnapshot/);
+  assert.match(exportControllerSource, /capturePageMap\(targetCanvas\)/);
+  assert.match(exportControllerSource, /pageMapSnapshot[\s\S]*?preparePageMapRects\(pageMapSnapshot\)[\s\S]*?: await prepareImageRects\(targetCanvas\.querySelector\("\.paper-sheet"\)\)/);
   assert.doesNotMatch(exportControllerSource, /setDocumentState\(nextDocument\)/);
 
   assert.match(cssSource, /\.desktop-shell\.print-mode\.export-main-pane \.right-split-pane/);
@@ -79,10 +86,12 @@ test("export executions retain live snapshots, render staging, and finally clean
   };
   const sourceDocument = {
     title: "实时文档",
+    html: '<p>公式 <span data-type="inline-math" data-latex="x^2"></span></p>',
     comments: [{ id: "comment-1" }],
     aiState: { optimize: { output: "private" } },
   };
   const editablePayloads = [];
+  const professionalRenderCalls = [];
   let resolveCount = 0;
   const actions = createExportExecutionActions({
     applyPrintBackground: (targetSheet) => {
@@ -90,6 +99,7 @@ test("export executions retain live snapshots, render staging, and finally clean
       return () => calls.push(["print-background-restore"]);
     },
     cleanupImageStage: () => calls.push(["image-stage-cleanup"]),
+    capturePageMapSnapshot: () => null,
     exportBridge: {
       exportPdf: async (...args) => {
         calls.push(["pdf", ...args]);
@@ -100,10 +110,16 @@ test("export executions retain live snapshots, render staging, and finally clean
         return { canceled: false, count: 2 };
       },
       exportEditable: async (document, ...args) => {
-        editablePayloads.push(document);
+        editablePayloads.push([document, ...args]);
         calls.push(["editable", ...args]);
         return { canceled: false, warnings: [] };
       },
+    },
+    prepareProfessionalDocxHtml: async (input) => {
+      professionalRenderCalls.push(input);
+      return {
+        renderedHtml: '<p>公式 <img src="data:image/png;base64,AA==" alt="TeX：x^2"></p>',
+      };
     },
     prepareImageRects: async (targetSheet) => {
       calls.push(["prepare-images", targetSheet]);
@@ -151,11 +167,68 @@ test("export executions retain live snapshots, render staging, and finally clean
   assert.deepEqual(calls.filter(([kind]) => kind === "image-mode").map(([, value]) => value), [true, false]);
 
   await actions.handleExportEditable("docx", "letter.docx");
-  assert.equal(resolveCount, 3);
-  assert.equal(editablePayloads[0].title, sourceDocument.title);
-  assert.deepEqual(editablePayloads[0].comments, []);
-  assert.notDeepEqual(editablePayloads[0].aiState, sourceDocument.aiState);
+  await actions.handleExportEditable("html", "letter.html");
+  assert.equal(resolveCount, 4);
+  assert.equal(professionalRenderCalls.length, 2);
+  assert.equal(professionalRenderCalls[0].canvas, canvas);
+  assert.equal(professionalRenderCalls[0].html, sourceDocument.html);
+  assert.equal(editablePayloads[0][0].title, sourceDocument.title);
+  assert.equal(editablePayloads[0][0].html, sourceDocument.html);
+  assert.deepEqual(editablePayloads[0][0].comments, []);
+  assert.notDeepEqual(editablePayloads[0][0].aiState, sourceDocument.aiState);
+  assert.deepEqual(editablePayloads[0].slice(1, 3), ["docx", "letter.docx"]);
+  assert.equal(
+    editablePayloads[0][3],
+    '<p>公式 <img src="data:image/png;base64,AA==" alt="TeX：x^2"></p>',
+  );
+  assert.deepEqual(editablePayloads[1].slice(1, 3), ["html", "letter.html"]);
+  assert.equal(
+    editablePayloads[1][3],
+    '<p>公式 <img src="data:image/png;base64,AA==" alt="TeX：x^2"></p>',
+  );
   assert.deepEqual(sourceDocument.comments, [{ id: "comment-1" }]);
+});
+
+test("DOCX formula rasterization is lazy, untainted, bounded, and aborts before IPC on failure", async () => {
+  assert.match(professionalDocxRendererSource, /await import\("html2canvas"\)/);
+  assert.match(professionalDocxRendererSource, /allowTaint: false/);
+  assert.match(professionalDocxRendererSource, /foreignObjectRendering: false/);
+  assert.match(professionalDocxRendererSource, /useCORS: false/);
+  assert.match(professionalDocxRendererSource, /logging: false/);
+  assert.match(professionalDocxRendererSource, /removeContainer: true/);
+  assert.match(professionalDocxRendererSource, /maxCanvasPixels/);
+  assert.match(professionalDocxRendererSource, /公式栅格化结果为空或完全透明/);
+  assert.match(professionalDocxRendererSource, /return expectedIdentity \? null : fallback/);
+
+  const sourceDocument = {
+    html: '<div data-type="block-math" data-latex="x"></div>',
+    comments: [{ id: "keep" }],
+  };
+  const before = structuredClone(sourceDocument);
+  let bridgeCalls = 0;
+  const actions = createExportExecutionActions({
+    exportBridge: {
+      exportEditable: async () => {
+        bridgeCalls += 1;
+        return { canceled: false };
+      },
+    },
+    prepareProfessionalDocxHtml: async () => {
+      throw new Error("公式栅格化失败");
+    },
+    resolveExportTarget: () => ({
+      canvas: {},
+      document: sourceDocument,
+      pane: "main",
+    }),
+    showStatus: () => {},
+  });
+  await assert.rejects(
+    actions.handleExportEditable("docx", "letter.docx"),
+    /公式栅格化失败/,
+  );
+  assert.equal(bridgeCalls, 0);
+  assert.deepEqual(sourceDocument, before);
 });
 
 test("read-only documents lock both editors, metadata and top-level mutation controls", () => {
@@ -180,9 +253,9 @@ test("read-only documents lock both editors, metadata and top-level mutation con
 
   assert.match(appSource, /referenceProps=\{\{[\s\S]*readOnly: activeWorkReadOnly/);
   assert.match(structureInspectorSource, /readOnly = false/);
-  assert.match(structureInspectorSource, /\{!readOnly && onAddCitationSource \?/);
   assert.match(structureInspectorSource, /\{!readOnly && onDeleteFootnote \?/);
-  assert.match(structureInspectorSource, /\{!readOnly && onDeleteCitationSource \?/);
+  assert.match(structureInspectorSource, /\{!readOnly && onDelete \?/);
+  assert.match(structureInspectorSource, /activeMode === "bibliography"[\s\S]*?<CitationLibraryPanel/);
 });
 
 test("focus selects the canvas pane and modal dialogs isolate background shortcuts", () => {

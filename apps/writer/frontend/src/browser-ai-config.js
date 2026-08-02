@@ -261,11 +261,23 @@ export function normalizeBrowserAiConfig(config = {}) {
   const applyResolver = normalizeBrowserTaskModelAssignment(
     taskModelsSource.applyResolver,
   );
+  const compositionAssignments = [
+    taskModelsSource.composeDraft,
+    taskModelsSource.composeOutline,
+    taskModelsSource.composeReview,
+  ].map((assignment) => normalizeBrowserTaskModelAssignment(assignment));
+  const composeDraft = compositionAssignments.find(
+    (assignment) => assignment.providerId && assignment.modelId,
+  ) || compositionAssignments[0];
   return {
     activeProvider,
     activeModelId,
     providers,
-    taskModels: { selectionChat, applyResolver },
+    taskModels: {
+      selectionChat,
+      applyResolver,
+      composeDraft,
+    },
   };
 }
 

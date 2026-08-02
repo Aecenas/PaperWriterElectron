@@ -248,7 +248,7 @@ export function FootnoteDialog({ dialog, onClose, onSubmit }) {
   return (
       <DialogFrame
         title={dialog.footnote ? "编辑脚注" : "新建脚注"}
-        eyebrow="注引 · 脚注"
+        eyebrow="脚注"
         icon={Hash}
         busy={busy}
         onClose={onClose}
@@ -364,7 +364,9 @@ export function CitationSourceDialog({ dialog, onClose, onSubmit }) {
   return (
       <DialogFrame
         title={source.id ? "编辑参考文献来源" : "新增参考文献来源"}
-        eyebrow={dialog.insertTarget ? "文献引用 · 新增并引用" : "注引 · 参考文献来源"}
+        eyebrow={dialog.insertTarget
+          ? "文献引用 · 新增并引用"
+          : `文献库 · ${dialog.scope === "public" ? "公域" : "私域"}`}
         icon={BookOpen}
         busy={busy}
         onClose={onClose}
@@ -458,7 +460,7 @@ export function KnowledgeReferencePopover({ popover, onClose }) {
     : `[${popover.number}] ${popover.source?.title || "参考文献来源"}`;
   return createPortal(
     <aside ref={popoverRef} className="knowledge-reference-popover" role="dialog" aria-modal="false" aria-label={title} tabIndex={-1} style={position || { visibility: "hidden" }}>
-      <header><span>{popover.kind === "footnote" ? <Hash size={16} /> : <BookOpen size={16} />}</span><strong>{title}</strong><button type="button" onClick={() => onClose?.({ restoreFocus: true })} aria-label="关闭注引详情"><X size={15} /></button></header>
+      <header><span>{popover.kind === "footnote" ? <Hash size={16} /> : <BookOpen size={16} />}</span><strong>{title}</strong><button type="button" onClick={() => onClose?.({ restoreFocus: true })} aria-label="关闭详情"><X size={15} /></button></header>
       {popover.kind === "footnote" ? (
         <p className="knowledge-reference-footnote">{popover.footnote?.text || "脚注内容缺失"}</p>
       ) : (

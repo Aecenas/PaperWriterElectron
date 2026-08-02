@@ -127,7 +127,52 @@ const EXPECTED_API_KEYS = [
   "watchResearchLibrary",
   "watchWorkspace",
   "writeClipboardContent",
-];
+  "addWritingDictionaryWord",
+  "cancelComposition",
+  "clearAutomaticDocumentHistory",
+  "clearDocumentHistory",
+  "commitProfileImport",
+  "createCompositionJob",
+  "createDocumentHistory",
+  "deleteCompositionJob",
+  "deleteDocumentHistory",
+  "deletePublicCitation",
+  "exportCitations",
+  "exportProfile",
+  "finalizeComposition",
+  "formatCitations",
+  "generateCompositionOutline",
+  "generateCompositionSection",
+  "getCompositionJob",
+  "getWritingAssistance",
+  "importProfile",
+  "inspectProfile",
+  "verifyProfile",
+  "listCitationStyles",
+  "listCompositionJobs",
+  "listDocumentHistory",
+  "listPublicCitations",
+  "lookupCitation",
+  "migrateWorkspaceCitationsToPublic",
+  "onCompositionEvent",
+  "onDocumentContextMenuRequest",
+  "parseCitations",
+  "pauseComposition",
+  "pickCitationImport",
+  "pickCitationStyle",
+  "readDocumentHistory",
+  "removeWritingDictionaryWord",
+  "rollbackProfileImport",
+  "restoreDocumentHistory",
+  "resumeComposition",
+  "reviewComposition",
+  "saveCitationExport",
+  "saveWritingAssistance",
+  "updateCompositionJob",
+  "updateDocumentHistory",
+  "upsertPublicCitation",
+  "validateCslStyle",
+].sort();
 
 const documentValue = { title: "契约稿", html: "<p>正文</p>" };
 const revision = { size: 42, mtimeMs: 1234, sha256: "a".repeat(64) };
@@ -165,10 +210,11 @@ const INVOKE_CONTRACTS = [
   ["openDocument", [], ["document:open"]],
   ["openDocumentPath", ["C:\\稿件.letterpaper"], ["document:open-path", "C:\\稿件.letterpaper"]],
   ["importDocument", [], ["document:import"]],
-  ["exportEditable", [documentValue, "markdown", "C:\\稿件.md"], ["document:export-editable", {
+  ["exportEditable", [documentValue, "docx", "C:\\稿件.docx", "<p>临时视觉正文</p>"], ["document:export-editable", {
     document: documentValue,
-    format: "markdown",
-    targetPath: "C:\\稿件.md",
+    format: "docx",
+    targetPath: "C:\\稿件.docx",
+    renderedHtml: "<p>临时视觉正文</p>",
   }]],
   ["openFolder", [], ["folder:open"]],
   ["listFolder", ["C:\\工作区"], ["folder:list", "C:\\工作区"]],
@@ -327,6 +373,49 @@ const INVOKE_CONTRACTS = [
   ["confirmClose", [payload], ["app:confirm-close", payload]],
   ["closeReady", [payload], ["app:close-ready", payload]],
   ["closeCanceled", [payload], ["app:close-canceled", payload]],
+  ["listCompositionJobs", [], ["composition:list"]],
+  ["getCompositionJob", ["job-1"], ["composition:get", "job-1"]],
+  ["createCompositionJob", [payload], ["composition:create", payload]],
+  ["updateCompositionJob", [payload], ["composition:update", payload]],
+  ["deleteCompositionJob", ["job-1"], ["composition:delete", "job-1"]],
+  ["generateCompositionOutline", [payload], ["composition:generate-outline", payload]],
+  ["generateCompositionSection", [payload], ["composition:generate-section", payload]],
+  ["reviewComposition", [payload], ["composition:review", payload]],
+  ["pauseComposition", ["job-1"], ["composition:pause", "job-1"]],
+  ["resumeComposition", [payload], ["composition:resume", payload]],
+  ["cancelComposition", ["job-1"], ["composition:cancel", "job-1"]],
+  ["finalizeComposition", [payload], ["composition:finalize", payload]],
+  ["parseCitations", [payload], ["citation:parse", payload]],
+  ["exportCitations", [payload], ["citation:export", payload]],
+  ["formatCitations", [payload], ["citation:format", payload]],
+  ["listCitationStyles", [], ["citation:styles"]],
+  ["validateCslStyle", [payload], ["citation:validate-style", payload]],
+  ["lookupCitation", [payload], ["citation:lookup", payload]],
+  ["pickCitationImport", [payload], ["citation:pick-import", payload]],
+  ["pickCitationStyle", [], ["citation:pick-style"]],
+  ["saveCitationExport", [payload], ["citation:save-export", payload]],
+  ["listPublicCitations", [], ["citation:public-list"]],
+  ["upsertPublicCitation", [payload], ["citation:public-upsert", payload]],
+  ["deletePublicCitation", ["source-1"], ["citation:public-delete", "source-1"]],
+  ["migrateWorkspaceCitationsToPublic", ["C:\\workspace"], ["citation:public-migrate", "C:\\workspace"]],
+  ["listDocumentHistory", ["document-1", "a".repeat(64)], ["history:list", "document-1", "a".repeat(64)]],
+  ["readDocumentHistory", [payload], ["history:read", payload]],
+  ["createDocumentHistory", [payload], ["history:create", payload]],
+  ["updateDocumentHistory", [payload], ["history:pin", payload]],
+  ["deleteDocumentHistory", [payload], ["history:delete", payload]],
+  ["restoreDocumentHistory", [payload], ["history:restore", payload]],
+  ["clearAutomaticDocumentHistory", ["document-1"], ["history:clear-auto", "document-1"]],
+  ["clearDocumentHistory", ["document-1"], ["history:clear", "document-1"]],
+  ["exportProfile", [payload], ["profile:export", payload]],
+  ["inspectProfile", [payload], ["profile:inspect", payload]],
+  ["verifyProfile", [payload], ["profile:verify", payload]],
+  ["importProfile", [payload], ["profile:import", payload]],
+  ["commitProfileImport", [payload], ["profile:commit", payload]],
+  ["rollbackProfileImport", [payload], ["profile:rollback", payload]],
+  ["getWritingAssistance", [], ["writing-assistance:get"]],
+  ["saveWritingAssistance", [payload], ["writing-assistance:save", payload]],
+  ["addWritingDictionaryWord", ["笺间"], ["writing-assistance:add-word", "笺间"]],
+  ["removeWritingDictionaryWord", ["笺间"], ["writing-assistance:remove-word", "笺间"]],
 ];
 
 const EVENT_CONTRACTS = [
@@ -334,6 +423,8 @@ const EVENT_CONTRACTS = [
   ["onAiDone", "ai:done", false],
   ["onAiError", "ai:error", false],
   ["onCodexCliStatus", "ai:codex-status", false],
+  ["onCompositionEvent", "composition:event", false],
+  ["onDocumentContextMenuRequest", "writing-assistance:document-context-menu", true],
   ["onExportProgress", "document:export-progress", false],
   ["onResearchWebViewState", "research:web-view-state", false],
   ["onUpdateState", "update:state", false],
@@ -406,12 +497,17 @@ test("sandbox preload bundle is current with every domain source included", () =
     collectPreloadModules().map((filePath) => path.basename(filePath)).sort(),
     [
       "ai-api.cjs",
+      "citation-api.cjs",
+      "composition-api.cjs",
       "document-api.cjs",
       "facade.cjs",
+      "history-api.cjs",
+      "profile-api.cjs",
       "research-api.cjs",
       "subscriptions.cjs",
       "window-update-api.cjs",
       "workspace-api.cjs",
+      "writing-assistance-api.cjs",
     ],
   );
 });
@@ -425,6 +521,25 @@ test("every preload command preserves its IPC channel and argument shape", async
     assert.equal(preload.invocations.length, before + 1, `${method} must invoke exactly once`);
     assert.deepEqual(normalize(preload.invocations.at(-1)), expected, method);
   }
+});
+
+test("editable export carries bounded static previews for HTML as well as DOCX", async () => {
+  const preload = loadPreloadApi();
+  await preload.api.exportEditable(
+    documentValue,
+    "html",
+    "C:\\稿件.html",
+    "<p>静态视觉正文</p>",
+  );
+  assert.deepEqual(normalize(preload.invocations.at(-1)), [
+    "document:export-editable",
+    {
+      document: documentValue,
+      format: "html",
+      targetPath: "C:\\稿件.html",
+      renderedHtml: "<p>静态视觉正文</p>",
+    },
+  ]);
 });
 
 test("every preload event subscription forwards payloads and removes its exact listener", () => {

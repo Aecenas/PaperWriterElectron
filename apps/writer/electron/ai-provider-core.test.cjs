@@ -115,6 +115,38 @@ test("keeps explicit task assignments exact and uses the active model only when 
   assert.deepEqual(unsafe.taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
 });
 
+test("migrates the former three-stage draft models into one AI draft assignment", () => {
+  const migrated = normalizeAiConfig({
+    taskModels: {
+      composeOutline: {
+        providerId: "legacy-provider",
+        modelId: "legacy-outline",
+        requestParams: { temperature: 0.2 },
+      },
+      composeReview: {
+        providerId: "legacy-provider",
+        modelId: "legacy-review",
+      },
+    },
+  });
+  assert.deepEqual(migrated.taskModels.composeDraft, {
+    providerId: "legacy-provider",
+    modelId: "legacy-outline",
+    requestParams: { temperature: 0.2 },
+  });
+  assert.equal(Object.hasOwn(migrated.taskModels, "composeOutline"), false);
+  assert.equal(Object.hasOwn(migrated.taskModels, "composeReview"), false);
+
+  const explicit = normalizeAiConfig({
+    taskModels: {
+      composeDraft: { providerId: "current-provider", modelId: "current-model" },
+      composeOutline: { providerId: "legacy-provider", modelId: "legacy-outline" },
+    },
+  });
+  assert.equal(explicit.taskModels.composeDraft.providerId, "current-provider");
+  assert.equal(explicit.taskModels.composeDraft.modelId, "current-model");
+});
+
 test("publishes Codex runtime readiness without credentials", () => {
   const publicConfig = publicAiConfig({
     providers: {

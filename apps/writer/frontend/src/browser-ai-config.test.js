@@ -123,6 +123,7 @@ test("browser AI config persists exact task-model assignments without fallback",
       modelId: "deepseek-resolver",
       requestParams: { thinking: { type: "enabled" }, max_tokens: 2048 },
     },
+    composeDraft: { providerId: "", modelId: "", requestParams: {} },
   });
   assert.deepEqual(publicBrowserAiConfig(configured).taskModels, configured.taskModels);
   assert.equal(exactBrowserAiProviderConfig(configured, configured.taskModels.applyResolver).model.model, "deepseek-resolver");
@@ -143,6 +144,39 @@ test("browser AI config persists exact task-model assignments without fallback",
   assert.deepEqual(unsafe.taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
   assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
   assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.selectionChat, { providerId: "", modelId: "", requestParams: {} });
+  assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.composeDraft, { providerId: "", modelId: "", requestParams: {} });
+});
+
+test("browser AI config migrates the former three-stage draft models into one AI draft model", () => {
+  const migrated = normalizeBrowserAiConfig({
+    taskModels: {
+      composeOutline: {
+        providerId: "legacy-provider",
+        modelId: "legacy-outline",
+        requestParams: { temperature: 0.2 },
+      },
+      composeReview: {
+        providerId: "legacy-provider",
+        modelId: "legacy-review",
+      },
+    },
+  });
+  assert.deepEqual(migrated.taskModels.composeDraft, {
+    providerId: "legacy-provider",
+    modelId: "legacy-outline",
+    requestParams: { temperature: 0.2 },
+  });
+  assert.equal(Object.hasOwn(migrated.taskModels, "composeOutline"), false);
+  assert.equal(Object.hasOwn(migrated.taskModels, "composeReview"), false);
+
+  const explicit = normalizeBrowserAiConfig({
+    taskModels: {
+      composeDraft: { providerId: "current-provider", modelId: "current-model" },
+      composeOutline: { providerId: "legacy-provider", modelId: "legacy-outline" },
+    },
+  });
+  assert.equal(explicit.taskModels.composeDraft.providerId, "current-provider");
+  assert.equal(explicit.taskModels.composeDraft.modelId, "current-model");
 });
 
 test("browser request parameters keep JSON values and remove reserved or dangerous entries", () => {

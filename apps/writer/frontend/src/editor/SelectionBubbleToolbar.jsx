@@ -23,6 +23,13 @@ import {
   normalizeUnderlineStyle,
 } from "./formatting.js";
 
+const NON_TEXT_SELECTION_SELECTOR = [
+  "[data-type='paper-toc']",
+  ".node-paperTableOfContents",
+  "[data-type='paper-bookmark']",
+  ".paper-bookmark",
+].join(", ");
+
 export function SelectionBubbleToolbar({
   editor,
   disabled,
@@ -46,7 +53,7 @@ export function SelectionBubbleToolbar({
   const activeUnderlineStyle = normalizeUnderlineStyle(editor?.getAttributes("underline")?.style);
   const selectedHeading = editor ? getSelectedHeadingNode(editor, savedSelectionRef) : null;
   const selectedHeadingNumberingMode = selectedHeading?.node?.attrs?.numberingMode || "inherit";
-  const selectedHeadingLevel = Math.max(1, Math.min(3, Number(selectedHeading?.node?.attrs?.level) || 1));
+  const selectedHeadingLevel = Math.max(1, Math.min(4, Number(selectedHeading?.node?.attrs?.level) || 1));
   const selectedHeadingInheritedNumbering = editor
     ? HEADING_NUMBERING_PLUGIN_KEY.getState(editor.state)?.defaults?.[selectedHeadingLevel] !== false
     : true;
@@ -63,7 +70,10 @@ export function SelectionBubbleToolbar({
       setToolbarPosition(null);
       return;
     }
-    if (selectionTouchesNodeType(editor, "paperTableOfContents")) {
+    if (
+      selectionTouchesNodeType(editor, "paperTableOfContents")
+      || selectionTouchesNodeType(editor, "paperBookmark")
+    ) {
       setToolbarPosition(null);
       return;
     }
@@ -75,7 +85,7 @@ export function SelectionBubbleToolbar({
     }
     const anchorElement = anchorNode.nodeType === window.Node.ELEMENT_NODE ? anchorNode : anchorNode.parentElement;
     const focusElement = focusNode.nodeType === window.Node.ELEMENT_NODE ? focusNode : focusNode.parentElement;
-    if (anchorElement?.closest("[data-type='paper-toc'], .node-paperTableOfContents") || focusElement?.closest("[data-type='paper-toc'], .node-paperTableOfContents")) {
+    if (anchorElement?.closest(NON_TEXT_SELECTION_SELECTOR) || focusElement?.closest(NON_TEXT_SELECTION_SELECTOR)) {
       setToolbarPosition(null);
       return;
     }
@@ -117,13 +127,13 @@ export function SelectionBubbleToolbar({
       setToolbarPosition(null);
       return undefined;
     }
-    const hideWhenPointingAtToc = (event) => {
-      if (event.target instanceof Element && event.target.closest("[data-type='paper-toc'], .node-paperTableOfContents")) {
+    const hideWhenPointingAtNonTextNode = (event) => {
+      if (event.target instanceof Element && event.target.closest(NON_TEXT_SELECTION_SELECTOR)) {
         savedSelectionRef.current = null;
         setToolbarPosition(null);
       }
     };
-    document.addEventListener("pointerdown", hideWhenPointingAtToc, true);
+    document.addEventListener("pointerdown", hideWhenPointingAtNonTextNode, true);
     document.addEventListener("selectionchange", scheduleToolbarPosition);
     document.addEventListener("scroll", scheduleToolbarPosition, true);
     document.addEventListener("keyup", scheduleToolbarPosition, true);
@@ -138,7 +148,7 @@ export function SelectionBubbleToolbar({
         toolbarFrameRef.current = 0;
       }
       document.removeEventListener("selectionchange", scheduleToolbarPosition);
-      document.removeEventListener("pointerdown", hideWhenPointingAtToc, true);
+      document.removeEventListener("pointerdown", hideWhenPointingAtNonTextNode, true);
       document.removeEventListener("scroll", scheduleToolbarPosition, true);
       document.removeEventListener("keyup", scheduleToolbarPosition, true);
       editor.view.dom.removeEventListener("mouseup", scheduleToolbarPosition);

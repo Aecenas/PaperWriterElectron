@@ -991,14 +991,22 @@ export function createDocumentPersistenceController({
     }
   };
 
-  const flushDirtyWorkspaceTabs = async ({ idleOnly = false } = {}) => {
+  const flushDirtyWorkspaceTabs = async ({
+    idleOnly = false,
+    tabIds = [],
+  } = {}) => {
     if (sessionStatePort.isClosePending()) {
       return { status: "gated" };
     }
     const timestamp = now();
+    const requestedTabIds = normalizeTabIds(tabIds);
+    const requestedTabIdSet = requestedTabIds.length
+      ? new Set(requestedTabIds)
+      : null;
     const snapshot = snapshotTabs();
     const candidates = snapshot.filter((tab) => (
-      tab.path
+      (!requestedTabIdSet || requestedTabIdSet.has(tab.id))
+      && tab.path
       && tab.dirty
       && !tab.readOnly
       && !tab.externalChanged
@@ -1010,6 +1018,7 @@ export function createDocumentPersistenceController({
       )
     ));
     const writtenTabIds = [];
+    const writtenRevisions = Object.create(null);
 
     for (const tab of candidates) {
       if (
@@ -1079,6 +1088,9 @@ export function createDocumentPersistenceController({
           }
         }
         writtenTabIds.push(tab.id);
+        if (result.diskRevision) {
+          writtenRevisions[tab.id] = result.diskRevision;
+        }
       } catch (error) {
         notifyPersistenceError(
           error,
@@ -1089,7 +1101,7 @@ export function createDocumentPersistenceController({
     sessionStatePort.commitSessionPatch({
       tabs: summarizeSessionTabs(readDocuments().tabs),
     });
-    return { status: "flushed", writtenTabIds };
+    return { status: "flushed", writtenTabIds, writtenRevisions };
   };
 
   const startLifecycle = ({ resolveController } = {}) => {

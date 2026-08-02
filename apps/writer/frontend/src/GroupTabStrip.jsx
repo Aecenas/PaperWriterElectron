@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, FileCode2, FileImage, FileQuestion, FileSpreadsheet, FileText, Globe2, LayoutTemplate, PanelLeft, PanelRight, Plus, X } from "lucide-react";
+import { BookOpen, FileCode2, FileImage, FileQuestion, FileSpreadsheet, FileText, Globe2, Plus, X } from "lucide-react";
+import DocumentContextMenu, { positionDocumentContextMenu } from "./DocumentContextMenu.jsx";
 
 const DRAG_MIME = "application/x-paperwriter-group-view";
-const GROUP_TAB_MENU_WIDTH = 160;
 
 export function scrollGroupTabListOnWheel(list, event) {
   if (!list || list.scrollWidth <= list.clientWidth + 1) return false;
@@ -55,6 +55,9 @@ export default function GroupTabStrip({
   onReorder,
   onMoveDocument,
   onOpenTemplatePicker,
+  onOpenHistory,
+  onSetPageViewMode,
+  getPageViewState,
   canMoveDocument,
 }) {
   const listRef = useRef(null);
@@ -142,16 +145,14 @@ export default function GroupTabStrip({
                 onContextMenu={(event) => {
                   if (disabled) return;
                   event.preventDefault();
+                  event.stopPropagation();
                   const rect = event.currentTarget.getBoundingClientRect();
-                  const anchorX = event.clientX || rect.left;
-                  const anchorY = event.clientY || rect.bottom;
-                  const menuWidth = Math.min(GROUP_TAB_MENU_WIDTH, Math.max(0, window.innerWidth - 16));
-                  setContextMenu({
+                  setContextMenu(positionDocumentContextMenu({
+                    clientX: event.clientX || rect.left,
+                    clientY: event.clientY || rect.bottom,
+                  }, {
                     viewId: view.viewId,
-                    x: Math.max(8, Math.min(anchorX, window.innerWidth - menuWidth - 8)),
-                    y: Math.max(8, Math.min(anchorY, window.innerHeight - 8)),
-                    openUp: anchorY > window.innerHeight / 2,
-                  });
+                  }));
                 }}
                 onDragStart={(event) => {
                   event.dataTransfer.effectAllowed = view.kind === "document" ? "move" : "move";
@@ -206,53 +207,37 @@ export default function GroupTabStrip({
         ) : null}
       </div>
       {contextMenu && contextView ? (
-        <div
-          className="document-tab-menu group-tab-menu"
-          style={{
-            left: `${contextMenu.x}px`,
-            top: `${contextMenu.y}px`,
-            transform: contextMenu.openUp ? "translateY(-100%)" : undefined,
-          }}
-          role="menu"
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          {contextView.kind === "document" ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                const returnFocusElement = listRef.current?.querySelector?.(
-                  `[data-view-id="${CSS.escape(contextView.viewId)}"]`,
-                );
-                onOpenTemplatePicker?.(contextView, returnFocusElement);
-                setContextMenu(null);
-              }}
-            >
-              <LayoutTemplate size={15} aria-hidden="true" />
-              <span>修改模板</span>
-            </button>
-          ) : null}
-          {contextView.kind === "document" ? (
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!moveAllowed}
-              title={moveAllowed ? "" : "左侧编辑组至少需要保留一个信笺"}
-              onClick={() => {
-                if (!moveAllowed) return;
-                onMoveDocument?.(contextView.viewId, otherGroup, null);
-                setContextMenu(null);
-              }}
-            >
-              {otherGroup === "primary" ? <PanelLeft size={15} aria-hidden="true" /> : <PanelRight size={15} aria-hidden="true" />}
-              <span>{otherGroup === "primary" ? "移到左侧" : "移到右侧"}</span>
-            </button>
-          ) : null}
-          <button type="button" role="menuitem" onClick={() => { onClose?.(contextView.viewId); setContextMenu(null); }}>
-            <X size={15} aria-hidden="true" />
-            <span>关闭标签</span>
-          </button>
-        </div>
+        <DocumentContextMenu
+          menu={contextMenu}
+          title={viewLabel(contextView)}
+          pageViewMode={getPageViewState?.(contextView.tabId)?.mode}
+          moveTarget={contextView.kind === "document" ? otherGroup : ""}
+          moveAllowed={moveAllowed}
+          onSetPageViewMode={contextView.kind === "document"
+            ? ((mode) => onSetPageViewMode?.(contextView, mode, groupId))
+            : undefined}
+          onOpenHistory={contextView.kind === "document"
+            ? (() => {
+              const returnFocusElement = listRef.current?.querySelector?.(
+                `[data-view-id="${CSS.escape(contextView.viewId)}"]`,
+              );
+              onOpenHistory?.(contextView.tabId, returnFocusElement);
+            })
+            : undefined}
+          onOpenTemplate={contextView.kind === "document"
+            ? (() => {
+              const returnFocusElement = listRef.current?.querySelector?.(
+                `[data-view-id="${CSS.escape(contextView.viewId)}"]`,
+              );
+              onOpenTemplatePicker?.(contextView, returnFocusElement);
+            })
+            : undefined}
+          onMove={contextView.kind === "document"
+            ? (() => onMoveDocument?.(contextView.viewId, otherGroup, null))
+            : undefined}
+          onCloseDocument={() => onClose?.(contextView.viewId)}
+          onDismiss={() => setContextMenu(null)}
+        />
       ) : null}
     </div>
   );

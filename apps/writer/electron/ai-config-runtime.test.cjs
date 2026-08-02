@@ -628,3 +628,24 @@ test("initialization preserves plaintext migration and login/status facade contr
   assert.equal(unavailable.message, "未检测到 Codex CLI");
   assert.deepEqual(harness.calls.launchedLogins, []);
 });
+
+test("profile facade reads and atomically replaces private AI configuration", async () => {
+  const harness = createHarness();
+  const current = await harness.runtime.profileFacade.readConfig();
+  assert.equal(current.providers.openai.apiKey, "stored-key");
+  const replacement = {
+    ...current,
+    activeProvider: "openai",
+    providers: {
+      ...current.providers,
+      openai: {
+        ...current.providers.openai,
+        apiKey: "imported-secret",
+      },
+    },
+  };
+  const saved = await harness.runtime.profileFacade.replaceConfig(replacement);
+  assert.equal(saved.providers.openai.apiKey, "imported-secret");
+  assert.equal(harness.state.config.providers.openai.apiKey, "imported-secret");
+  assert.equal(harness.calls.atomicWrites.length, 1);
+});

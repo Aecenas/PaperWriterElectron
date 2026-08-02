@@ -28,19 +28,80 @@ const __preloadModules = {
       createAiApi,
     };
   },
+  "citation-api.cjs": function preloadModule(module, exports, require) {
+    function createCitationApi(ipcRenderer) {
+      return {
+        parseCitations: (payload) => ipcRenderer.invoke("citation:parse", payload || {}),
+        exportCitations: (payload) => ipcRenderer.invoke("citation:export", payload || {}),
+        formatCitations: (payload) => ipcRenderer.invoke("citation:format", payload || {}),
+        listCitationStyles: () => ipcRenderer.invoke("citation:styles"),
+        validateCslStyle: (payload) => ipcRenderer.invoke("citation:validate-style", payload || {}),
+        pickCitationStyle: () => ipcRenderer.invoke("citation:pick-style"),
+        lookupCitation: (payload) => ipcRenderer.invoke("citation:lookup", payload || {}),
+        pickCitationImport: (payload) => ipcRenderer.invoke("citation:pick-import", payload || {}),
+        saveCitationExport: (payload) => ipcRenderer.invoke("citation:save-export", payload || {}),
+        listPublicCitations: () => ipcRenderer.invoke("citation:public-list"),
+        upsertPublicCitation: (source) => ipcRenderer.invoke("citation:public-upsert", source || {}),
+        deletePublicCitation: (sourceId) => ipcRenderer.invoke("citation:public-delete", sourceId || ""),
+        migrateWorkspaceCitationsToPublic: (workspacePath) => (
+          ipcRenderer.invoke("citation:public-migrate", workspacePath || "")
+        ),
+      };
+    }
+
+    module.exports = {
+      createCitationApi,
+    };
+  },
+  "composition-api.cjs": function preloadModule(module, exports, require) {
+    const { subscribeToIpc } = require("./subscriptions.cjs");
+
+    function createCompositionApi(ipcRenderer) {
+      return {
+        listCompositionJobs: () => ipcRenderer.invoke("composition:list"),
+        getCompositionJob: (jobId) => ipcRenderer.invoke("composition:get", jobId || ""),
+        createCompositionJob: (payload) => ipcRenderer.invoke("composition:create", payload || {}),
+        updateCompositionJob: (payload) => ipcRenderer.invoke("composition:update", payload || {}),
+        deleteCompositionJob: (jobId) => ipcRenderer.invoke("composition:delete", jobId || ""),
+        generateCompositionOutline: (payload) => ipcRenderer.invoke("composition:generate-outline", payload || {}),
+        generateCompositionSection: (payload) => ipcRenderer.invoke("composition:generate-section", payload || {}),
+        reviewComposition: (payload) => ipcRenderer.invoke("composition:review", payload || {}),
+        pauseComposition: (jobId) => ipcRenderer.invoke("composition:pause", jobId || ""),
+        resumeComposition: (payload) => ipcRenderer.invoke("composition:resume", payload || {}),
+        cancelComposition: (jobId) => ipcRenderer.invoke("composition:cancel", jobId || ""),
+        finalizeComposition: (payload) => ipcRenderer.invoke("composition:finalize", payload || {}),
+        onCompositionEvent: (callback) => subscribeToIpc(ipcRenderer, "composition:event", callback),
+      };
+    }
+
+    module.exports = {
+      createCompositionApi,
+    };
+  },
   "document-api.cjs": function preloadModule(module, exports, require) {
     const { subscribeToIpc } = require("./subscriptions.cjs");
+
+    const MAX_PROFESSIONAL_RENDERED_HTML_CHARS = 48 * 1024 * 1024;
 
     function createDocumentApi(ipcRenderer) {
       return {
         openDocument: () => ipcRenderer.invoke("document:open"),
         openDocumentPath: (filePath) => ipcRenderer.invoke("document:open-path", filePath || ""),
         importDocument: () => ipcRenderer.invoke("document:import"),
-        exportEditable: (document, format, targetPath = "") => ipcRenderer.invoke("document:export-editable", {
-          document: document || {},
-          format: format || "",
-          targetPath: targetPath || "",
-        }),
+        exportEditable: (document, format, targetPath = "", renderedHtml = "") => {
+          const transientHtml = ["docx", "html"].includes(format) && typeof renderedHtml === "string"
+            ? renderedHtml
+            : "";
+          if (transientHtml.length > MAX_PROFESSIONAL_RENDERED_HTML_CHARS) {
+            return Promise.reject(new Error("专业内容临时渲染结果超过 IPC 安全上限"));
+          }
+          return ipcRenderer.invoke("document:export-editable", {
+            document: document || {},
+            format: format || "",
+            targetPath: targetPath || "",
+            renderedHtml: transientHtml,
+          });
+        },
         getDocumentRevision: (filePath) => ipcRenderer.invoke("document:revision", filePath || ""),
         regenerateDocumentIdentity: (filePath, force = false) => (
           ipcRenderer.invoke("document:regenerate-identity", filePath || "", Boolean(force))
@@ -102,24 +163,72 @@ const __preloadModules = {
   },
   "facade.cjs": function preloadModule(module, exports, require) {
     const { createAiApi } = require("./ai-api.cjs");
+    const { createCitationApi } = require("./citation-api.cjs");
+    const { createCompositionApi } = require("./composition-api.cjs");
     const { createDocumentApi } = require("./document-api.cjs");
+    const { createHistoryApi } = require("./history-api.cjs");
+    const { createProfileApi } = require("./profile-api.cjs");
     const { createResearchApi } = require("./research-api.cjs");
     const { createWindowUpdateApi } = require("./window-update-api.cjs");
     const { createWorkspaceApi } = require("./workspace-api.cjs");
+    const { createWritingAssistanceApi } = require("./writing-assistance-api.cjs");
 
     function createPaperWriterApi(ipcRenderer) {
       return {
         isElectron: true,
         ...createWindowUpdateApi(ipcRenderer),
         ...createAiApi(ipcRenderer),
+        ...createCompositionApi(ipcRenderer),
+        ...createCitationApi(ipcRenderer),
         ...createDocumentApi(ipcRenderer),
+        ...createHistoryApi(ipcRenderer),
+        ...createProfileApi(ipcRenderer),
         ...createWorkspaceApi(ipcRenderer),
         ...createResearchApi(ipcRenderer),
+        ...createWritingAssistanceApi(ipcRenderer),
       };
     }
 
     module.exports = {
       createPaperWriterApi,
+    };
+  },
+  "history-api.cjs": function preloadModule(module, exports, require) {
+    function createHistoryApi(ipcRenderer) {
+      return {
+        listDocumentHistory: (documentId, currentSha256 = "") => (
+          currentSha256
+            ? ipcRenderer.invoke("history:list", documentId || "", currentSha256)
+            : ipcRenderer.invoke("history:list", documentId || "")
+        ),
+        readDocumentHistory: (payload) => ipcRenderer.invoke("history:read", payload || {}),
+        createDocumentHistory: (payload) => ipcRenderer.invoke("history:create", payload || {}),
+        updateDocumentHistory: (payload) => ipcRenderer.invoke("history:pin", payload || {}),
+        deleteDocumentHistory: (payload) => ipcRenderer.invoke("history:delete", payload || {}),
+        restoreDocumentHistory: (payload) => ipcRenderer.invoke("history:restore", payload || {}),
+        clearAutomaticDocumentHistory: (documentId) => ipcRenderer.invoke("history:clear-auto", documentId || ""),
+        clearDocumentHistory: (documentId) => ipcRenderer.invoke("history:clear", documentId || ""),
+      };
+    }
+
+    module.exports = {
+      createHistoryApi,
+    };
+  },
+  "profile-api.cjs": function preloadModule(module, exports, require) {
+    function createProfileApi(ipcRenderer) {
+      return {
+        exportProfile: (payload) => ipcRenderer.invoke("profile:export", payload || {}),
+        inspectProfile: (payload) => ipcRenderer.invoke("profile:inspect", payload || {}),
+        verifyProfile: (payload) => ipcRenderer.invoke("profile:verify", payload || {}),
+        importProfile: (payload) => ipcRenderer.invoke("profile:import", payload || {}),
+        commitProfileImport: (payload) => ipcRenderer.invoke("profile:commit", payload || {}),
+        rollbackProfileImport: (payload) => ipcRenderer.invoke("profile:rollback", payload || {}),
+      };
+    }
+
+    module.exports = {
+      createProfileApi,
     };
   },
   "research-api.cjs": function preloadModule(module, exports, require) {
@@ -400,10 +509,38 @@ const __preloadModules = {
     module.exports = {
       createWorkspaceApi,
     };
+  },
+  "writing-assistance-api.cjs": function preloadModule(module, exports, require) {
+    const { subscribeToIpc } = require("./subscriptions.cjs");
+
+    function createWritingAssistanceApi(ipcRenderer) {
+      return {
+        getWritingAssistance: () => ipcRenderer.invoke("writing-assistance:get"),
+        saveWritingAssistance: (patch) => ipcRenderer.invoke("writing-assistance:save", patch || {}),
+        addWritingDictionaryWord: (word) => ipcRenderer.invoke("writing-assistance:add-word", word || ""),
+        removeWritingDictionaryWord: (word) => ipcRenderer.invoke("writing-assistance:remove-word", word || ""),
+        onDocumentContextMenuRequest: (callback) => (
+          subscribeToIpc(
+            ipcRenderer,
+            "writing-assistance:document-context-menu",
+            callback,
+            true,
+          )
+        ),
+      };
+    }
+
+    module.exports = {
+      createWritingAssistanceApi,
+    };
   }
 };
 const __preloadDependencies = {
   "ai-api.cjs": {
+    "./subscriptions.cjs": "subscriptions.cjs"
+  },
+  "citation-api.cjs": {},
+  "composition-api.cjs": {
     "./subscriptions.cjs": "subscriptions.cjs"
   },
   "document-api.cjs": {
@@ -411,11 +548,18 @@ const __preloadDependencies = {
   },
   "facade.cjs": {
     "./ai-api.cjs": "ai-api.cjs",
+    "./citation-api.cjs": "citation-api.cjs",
+    "./composition-api.cjs": "composition-api.cjs",
     "./document-api.cjs": "document-api.cjs",
+    "./history-api.cjs": "history-api.cjs",
+    "./profile-api.cjs": "profile-api.cjs",
     "./research-api.cjs": "research-api.cjs",
     "./window-update-api.cjs": "window-update-api.cjs",
-    "./workspace-api.cjs": "workspace-api.cjs"
+    "./workspace-api.cjs": "workspace-api.cjs",
+    "./writing-assistance-api.cjs": "writing-assistance-api.cjs"
   },
+  "history-api.cjs": {},
+  "profile-api.cjs": {},
   "research-api.cjs": {
     "./subscriptions.cjs": "subscriptions.cjs"
   },
@@ -424,6 +568,9 @@ const __preloadDependencies = {
     "./subscriptions.cjs": "subscriptions.cjs"
   },
   "workspace-api.cjs": {
+    "./subscriptions.cjs": "subscriptions.cjs"
+  },
+  "writing-assistance-api.cjs": {
     "./subscriptions.cjs": "subscriptions.cjs"
   }
 };
