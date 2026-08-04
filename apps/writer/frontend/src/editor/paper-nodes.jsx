@@ -3,7 +3,7 @@ import { mergeAttributes, Node } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
 import { NodeViewWrapper, ReactNodeViewRenderer, useEditorState } from "@tiptap/react";
 import Image from "@tiptap/extension-image";
-import { Copy, Music2, Video } from "lucide-react";
+import { ClipboardCopy, Music2, Trash2, Video } from "lucide-react";
 import tocTitleSignatureAsset from "../assets/decor/toc-title-signature.png?inline";
 import {
   IMAGE_CAPTION_MAX_CHARS,
@@ -54,7 +54,7 @@ export function parsedImageElement(element) {
   return element?.querySelector?.("img") || null;
 }
 
-export function PaperImageNodeView({ node, updateAttributes, selected, editor, getPos }) {
+export function PaperImageNodeView({ node, updateAttributes, selected, editor, getPos, deleteNode }) {
   const width = normalizeEmbedWidth(node.attrs.width);
   const source = normalizeImageSource(node.attrs.src);
   const caption = normalizeImageCaption(node.attrs.caption);
@@ -85,7 +85,7 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
     >
       <div className="paper-image-frame" contentEditable={false}>
         <img src={source || undefined} alt={alt} title={title} draggable={false} decoding="async" />
-        <div className="image-size-tools" aria-label="调整图片大小">
+        <div className="image-size-tools" aria-label="图片工具">
           {IMAGE_WIDTH_OPTIONS.map((option) => (
             <button
               key={option.value}
@@ -99,6 +99,7 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
               {option.label}
             </button>
           ))}
+          <span className="image-tool-separator" aria-hidden="true" />
           <button
             type="button"
             className="image-copy-reference"
@@ -115,8 +116,18 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
               } }));
             }}
           >
-            <Copy size={13} aria-hidden="true" />
-            <span>引用</span>
+            <ClipboardCopy size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="image-delete is-danger"
+            title="删除图片"
+            aria-label="删除图片"
+            disabled={readOnly}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => deleteNode?.()}
+          >
+            <Trash2 size={14} aria-hidden="true" />
           </button>
         </div>
       </div>

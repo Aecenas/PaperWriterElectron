@@ -21,6 +21,20 @@ import {
 } from "../research-preview-model.js";
 import PreviewToolbar from "./PreviewToolbar.jsx";
 import { itemIdentity, normalizePdfBytes } from "./reader-utils.js";
+import ResearchTranslationMenu, {
+  keyboardResearchTranslationMenuPosition,
+  positionResearchTranslationMenu,
+  ResearchTranslationFeedback,
+} from "./ResearchTranslationMenu.jsx";
+import {
+  applyPlainTextTranslationPlan,
+  applyRichTextTranslationPlan,
+  applyTableTranslationPlan,
+  createPlainTextTranslationPlan,
+  createRichTextTranslationPlan,
+  createTableTranslationPlan,
+} from "./research-translation-model.js";
+import { useResearchTranslation } from "./useResearchTranslation.js";
 
 const MIN_STATIC_SCALE = 0.6;
 const MAX_STATIC_SCALE = 2;
@@ -67,7 +81,7 @@ function renderPreviewSearchText(value, query, cursor) {
   ) : <span key={`text-${index}`}>{segment.text}</span>);
 }
 
-export default function StaticResearchPreview({ item, initialSearch = null, loadPreview, onOpenExternal, onShowInFolder }) {
+export default function StaticResearchPreview({ item, initialSearch = null, loadPreview, onOpenExternal, onShowInFolder, onOpenTranslationSettings }) {
   const [status, setStatus] = useState("loading");
   const [payload, setPayload] = useState(null);
   const [error, setError] = useState("");
@@ -78,6 +92,7 @@ export default function StaticResearchPreview({ item, initialSearch = null, load
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
+  const [translationMenu, setTranslationMenu] = useState(null);
   const contentRef = useRef(null);
   const richTextRef = useRef(null);
   const searchInputRef = useRef(null);
@@ -95,6 +110,7 @@ export default function StaticResearchPreview({ item, initialSearch = null, load
     setSearchOpen(false);
     setSearchQuery("");
     setActiveSearchIndex(0);
+    setTranslationMenu(null);
     (async () => {
       try {
         if (typeof loadPreview !== "function") throw new Error("尚未连接资料预览服务");
@@ -135,6 +151,22 @@ export default function StaticResearchPreview({ item, initialSearch = null, load
   const richText = ["markdown", "docx"].includes(kind);
   const searchable = ["markdown", "docx", "text", "table"].includes(kind);
   const zoomable = ["markdown", "docx", "text", "table"].includes(kind);
+  const richTranslationPlan = useMemo(() => richText
+    ? createRichTextTranslationPlan(payload?.html || (kind === "docx" ? "<p>DOCX 内容为空。</p>" : "<p>Markdown 内容为空。</p>"))
+    : { html: "", blocks: [] }, [kind, payload?.html, richText]);
+  const textTranslationPlan = useMemo(() => kind === "text"
+    ? createPlainTextTranslationPlan(payload?.text || "")
+    : { source: "", blocks: [] }, [kind, payload?.text]);
+  const tableTranslationPlan = useMemo(() => kind === "table"
+    ? createTableTranslationPlan(table?.rows || [])
+    : { rows: [], blocks: [] }, [kind, table?.rows]);
+  const translationBlocks = richText
+    ? richTranslationPlan.blocks
+    : kind === "text"
+      ? textTranslationPlan.blocks
+      : kind === "table"
+        ? tableTranslationPlan.blocks
+        : [];
   const richTextRender = useMemo(() => {
     const html = payload?.html || (kind === "docx" ? "<p>DOCX 内容为空。</p>" : "<p>Markdown 内容为空。</p>");
     if (!richText || !normalizedSearchQuery || typeof document === "undefined") {
@@ -250,13 +282,50 @@ export default function StaticResearchPreview({ item, initialSearch = null, load
     root?.querySelectorAll?.("mark.is-active").forEach((node) => node.classList.remove("is-active"));
   }, [richText]);
 
+  const translation = useResearchTranslation({
+    kind,
+    blocks: translationBlocks,
+    resetKey: sourceKey,
+    onBeforeStart: closeSearch,
+  });
+  const translationActive = ["translating", "translated"].includes(translation.status);
+  const translatedRichHtml = useMemo(() => translation.status === "translated"
+    ? applyRichTextTranslationPlan(richTranslationPlan, translation.translations)
+    : "", [richTranslationPlan, translation.status, translation.translations]);
+  const translatedText = useMemo(() => translation.status === "translated"
+    ? applyPlainTextTranslationPlan(textTranslationPlan, translation.translations)
+    : "", [textTranslationPlan, translation.status, translation.translations]);
+  const translatedRows = useMemo(() => translation.status === "translated"
+    ? applyTableTranslationPlan(tableTranslationPlan, translation.translations)
+    : null, [tableTranslationPlan, translation.status, translation.translations]);
+  const displayedRows = translatedRows || table?.rows || [];
+  const openTranslationMenu = useCallback((event) => {
+    if (!searchable || event.target?.closest?.(".secondary-static-toolbar")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setTranslationMenu({ ...positionResearchTranslationMenu(event), returnFocus: event.currentTarget });
+  }, [searchable]);
+  const handleTranslationKeyDown = useCallback((event) => {
+    if (event.shiftKey && event.key === "F10" && searchable) {
+      event.preventDefault();
+      event.stopPropagation();
+      setTranslationMenu({ ...keyboardResearchTranslationMenuPosition(event.currentTarget), returnFocus: event.currentTarget });
+    }
+  }, [searchable]);
+
   if (status === "loading") return <div className="secondary-research-state" role="status"><LoaderCircle className="research-spin" size={19} /><span>正在读取资料…</span></div>;
   if (status === "error") return <div className="secondary-research-state is-error" role="alert"><ShieldAlert size={20} /><span>{error}</span></div>;
 
   const searchCursor = { value: 0, truncated: false, activeIndex: activeSearchIndex };
   const zoomLabel = `${Math.round(contentScale * 100)}%`;
   return (
-    <div className={`secondary-static-preview is-${kind}`}>
+    <div
+      className={`secondary-static-preview is-${kind}`}
+      tabIndex={searchable ? 0 : undefined}
+      aria-busy={translation.status === "translating" || undefined}
+      onContextMenu={openTranslationMenu}
+      onKeyDown={handleTranslationKeyDown}
+    >
       <PreviewToolbar item={item} onOpenExternal={onOpenExternal} onShowInFolder={onShowInFolder}>
         {searchable && searchOpen ? (
           <PreviewSearchForm
@@ -278,7 +347,7 @@ export default function StaticResearchPreview({ item, initialSearch = null, load
             <button type="button" onClick={() => setContentScale((value) => clampStaticScale(value + STATIC_SCALE_STEP))} aria-label="放大资料内容" title="放大"><ZoomIn size={14} /></button>
           </>
         ) : null}
-        {searchable ? <button type="button" className={searchOpen ? "is-active" : ""} onClick={() => { if (searchOpen) closeSearch(); else setSearchOpen(true); }} aria-label={searchOpen ? "收起资料搜索" : "展开资料搜索"} title={searchOpen ? "收起搜索" : "搜索"}>{searchOpen ? <X size={14} /> : <Search size={14} />}</button> : null}
+        {searchable ? <button type="button" disabled={translationActive} className={searchOpen ? "is-active" : ""} onClick={() => { if (searchOpen) closeSearch(); else setSearchOpen(true); }} aria-label={translationActive ? "取消翻译后可搜索资料" : (searchOpen ? "收起资料搜索" : "展开资料搜索")} title={translationActive ? "取消翻译后可搜索" : (searchOpen ? "收起搜索" : "搜索")}>{searchOpen ? <X size={14} /> : <Search size={14} />}</button> : null}
         {kind === "image" ? (
           <>
             <button type="button" onClick={() => { setImageFit(false); setImageScale((value) => Math.max(0.25, value - 0.15)); }} aria-label="缩小图片" title="缩小"><ZoomOut size={14} /></button>
@@ -288,6 +357,7 @@ export default function StaticResearchPreview({ item, initialSearch = null, load
           </>
         ) : null}
       </PreviewToolbar>
+      <ResearchTranslationFeedback translation={translation} onRetry={translation.start} onOpenSettings={onOpenTranslationSettings} />
       {richText ? (
         <article
           ref={richTextRef}
@@ -303,10 +373,10 @@ export default function StaticResearchPreview({ item, initialSearch = null, load
               if (["http:", "https:"].includes(url.protocol)) void bridge.openExternal?.(url.href);
             } catch {}
           }}
-          dangerouslySetInnerHTML={{ __html: richTextRender.html }}
+          dangerouslySetInnerHTML={{ __html: translation.status === "translated" ? translatedRichHtml : richTextRender.html }}
         />
       ) : null}
-      {kind === "text" ? <pre ref={contentRef} className="secondary-text-preview" style={{ "--research-preview-scale": contentScale }}>{renderPreviewSearchText(payload?.text || "", normalizedSearchQuery, searchCursor)}</pre> : null}
+      {kind === "text" ? <pre ref={contentRef} className="secondary-text-preview" style={{ "--research-preview-scale": contentScale }}>{renderPreviewSearchText(translation.status === "translated" ? translatedText : (payload?.text || ""), normalizedSearchQuery, searchCursor)}</pre> : null}
       {kind === "table" ? (
         <div className="secondary-table-preview" style={{ "--research-preview-scale": contentScale }}>
           {table?.truncated ? <p role="status">内容较大，仅显示前 2000 行、每行前 80 列。</p> : null}
@@ -314,7 +384,7 @@ export default function StaticResearchPreview({ item, initialSearch = null, load
             <div ref={contentRef} className="secondary-table-scroll" tabIndex={0} aria-label="可上下左右滚动的表格资料">
               <table>
                 <thead><tr><th className="secondary-table-corner" aria-label="行列坐标" />{Array.from({ length: table.columnCount }, (_, columnIndex) => <th className="secondary-table-column-label" scope="col" key={`column-${columnIndex}`}>{spreadsheetColumnLabel(columnIndex)}</th>)}</tr></thead>
-                <tbody>{table.rows.map((row, rowIndex) => <tr key={`row-${rowIndex}`}><th className="secondary-table-row-label" scope="row">{rowIndex + 1}</th>{row.map((cell, columnIndex) => <td key={`cell-${rowIndex}-${columnIndex}`}>{renderPreviewSearchText(cell, normalizedSearchQuery, searchCursor)}</td>)}</tr>)}</tbody>
+                <tbody>{displayedRows.map((row, rowIndex) => <tr key={`row-${rowIndex}`}><th className="secondary-table-row-label" scope="row">{rowIndex + 1}</th>{row.map((cell, columnIndex) => <td key={`cell-${rowIndex}-${columnIndex}`}>{renderPreviewSearchText(cell, normalizedSearchQuery, searchCursor)}</td>)}</tr>)}</tbody>
               </table>
             </div>
           ) : <p>表格内容为空。</p>}
@@ -325,6 +395,16 @@ export default function StaticResearchPreview({ item, initialSearch = null, load
           {imageUrl ? <img src={imageUrl} alt={sourceDisplayName(item)} className={imageFit ? "is-fit" : ""} style={imageFit ? undefined : { zoom: imageScale }} /> : <p>图片内容为空。</p>}
         </div>
       ) : null}
+      <ResearchTranslationMenu
+        menu={translationMenu}
+        status={translation.status}
+        progress={translation.progress}
+        hasText={translation.hasText}
+        pageMode={false}
+        onStart={translation.start}
+        onCancel={translation.cancelOrRestore}
+        onDismiss={() => setTranslationMenu(null)}
+      />
     </div>
   );
 }

@@ -54,6 +54,18 @@ export const AI_TASK_MODEL_DEFINITIONS = [
     selectLabel: "直接应用定位模型",
   },
   {
+    id: "helpAssistant",
+    label: "AI精灵",
+    description: "只依据内置帮助文档和代码核对的笺间知识回答软件使用问题，不读取信笺、路径或资料。未单独指定时跟随默认模型。",
+    selectLabel: "AI精灵模型",
+  },
+  {
+    id: "researchTranslation",
+    label: "资料翻译",
+    description: "用于资料区 PDF 当前页及本地文档预览翻译，只发送本次右键触发的可读文字。未单独指定时跟随默认模型。",
+    selectLabel: "资料翻译模型",
+  },
+  {
     id: "composeDraft",
     label: "AI 起稿",
     description: "用于结构设计、正文生成和全文检查，整个起稿流程统一使用这一模型。未单独指定时跟随默认模型。",
@@ -77,6 +89,8 @@ export const DEFAULT_AI_CONFIG = {
   taskModels: {
     selectionChat: { providerId: "", modelId: "", requestParams: {} },
     applyResolver: { providerId: "", modelId: "", requestParams: {} },
+    helpAssistant: { providerId: "", modelId: "", requestParams: {} },
+    researchTranslation: { providerId: "", modelId: "", requestParams: {} },
     composeDraft: { providerId: "", modelId: "", requestParams: {} },
   },
 };
@@ -237,6 +251,8 @@ export function normalizePublicAiConfig(config) {
   const activeModelId = activeModel.id || "";
   const selectionChat = normalizePublicAiTaskModelAssignment(config?.taskModels?.selectionChat);
   const applyResolver = normalizePublicAiTaskModelAssignment(config?.taskModels?.applyResolver);
+  const helpAssistant = normalizePublicAiTaskModelAssignment(config?.taskModels?.helpAssistant);
+  const researchTranslation = normalizePublicAiTaskModelAssignment(config?.taskModels?.researchTranslation);
   const composeDraft = normalizeCompositionTaskModelAssignment(config?.taskModels);
   return {
     ...DEFAULT_AI_CONFIG,
@@ -260,6 +276,8 @@ export function normalizePublicAiConfig(config) {
     taskModels: {
       selectionChat,
       applyResolver,
+      helpAssistant,
+      researchTranslation,
       composeDraft,
     },
   };

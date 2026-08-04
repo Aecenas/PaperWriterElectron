@@ -26,7 +26,7 @@ test.describe("P1 interaction regressions", () => {
     await reader.getByRole("button", { name: "展开资料搜索", exact: true }).click();
     await reader.getByRole("textbox", { name: "搜索资料内容", exact: true }).fill("DOCX");
     await expect(reader.locator("mark")).toHaveCount(3);
-    await expect(page.getByRole("button", { name: "查看版本 1.1.1 的更新历史", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看版本 1.1.5 的更新历史", exact: true })).toBeVisible();
 
     expect(pageErrors).toEqual([]);
   });

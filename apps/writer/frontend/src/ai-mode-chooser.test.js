@@ -28,7 +28,7 @@ const modeArtwork = [
 
 test("describes AI modes and confirms only destructive active transitions", () => {
   assert.equal(getAiModeLabel("optimize"), "AI优化");
-  assert.equal(getAiModeLabel("chat"), "AI问答");
+  assert.equal(getAiModeLabel("chat"), "AI协作");
   assert.equal(getAiModeLabel("compose"), "AI起稿");
   assert.equal(getAiModeLabel("none"), "未启用");
   assert.equal(shouldConfirmAiModeChange({ currentMode: "optimize", nextMode: "chat", busy: true }), true);
@@ -86,7 +86,7 @@ test("renders three accessible mode cards with an independent composition entry"
   assert.doesNotMatch(chooserSource, /推荐/);
   assert.doesNotMatch(chooserSource, /ai-mode-chooser-header/);
   assert.match(chooserSource, /润色、改写、提炼表达/);
-  assert.match(chooserSource, /快速解答、生成内容、辅助思考/);
+  assert.match(chooserSource, /问答、审阅并生成可控修改/);
   assert.match(chooserSource, /从简报和大纲生成完整文章/);
   assert.match(chooserSource, /className="ai-mode-card-copy"/);
   assert.match(chooserSource, /className="ai-mode-card-title"/);

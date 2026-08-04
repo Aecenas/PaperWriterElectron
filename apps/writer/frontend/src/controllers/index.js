@@ -149,6 +149,7 @@ export {
   createAiRequestActions,
   useAiRequestActions,
 } from "./ai-request-actions.js";
+export { useAiCollaborationActions } from "./ai-collaboration-actions.js";
 export {
   SELECTION_AI_STREAM_FLUSH_INTERVAL_MS,
   createSelectionAiController,

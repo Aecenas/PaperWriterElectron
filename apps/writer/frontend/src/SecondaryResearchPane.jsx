@@ -25,6 +25,7 @@ export default function SecondaryResearchPane({
   onCreateCitation,
   onEditSource,
   onPdfStateChange,
+  onOpenTranslationSettings,
   viewId = "",
   onActivate,
   webViewSuspended = false,
@@ -62,10 +63,11 @@ export default function SecondaryResearchPane({
             viewState={viewState}
             defaultViewState={defaultViewState}
             onViewStateChange={onViewStateChange}
+            onOpenTranslationSettings={onOpenTranslationSettings}
           />
         ) : null}
         {!loading && !error && kind === "web" ? <EmbeddedWebResearch item={item} viewId={viewId} suspended={webViewSuspended} onActivate={onActivate} onOpenExternal={onOpenExternal} /> : null}
-        {!loading && !error && ["docx", "markdown", "text", "table", "image"].includes(kind) ? <StaticResearchPreview item={item} initialSearch={item?.searchTarget} loadPreview={previewLoader} onOpenExternal={onOpenExternal} onShowInFolder={onShowInFolder} /> : null}
+        {!loading && !error && ["docx", "markdown", "text", "table", "image"].includes(kind) ? <StaticResearchPreview item={item} initialSearch={item?.searchTarget} loadPreview={previewLoader} onOpenExternal={onOpenExternal} onShowInFolder={onShowInFolder} onOpenTranslationSettings={onOpenTranslationSettings} /> : null}
         {!loading && !error && kind === "unsupported" ? <UnsupportedResearchCard item={item} onShowInFolder={onShowInFolder} /> : null}
       </div>
     </aside>

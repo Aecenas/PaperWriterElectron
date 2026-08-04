@@ -1,6 +1,6 @@
 export const AI_PROMPT_PREFIX = "这是我正在写的文章，请你帮我优化内容与表达：";
 export const AI_FIXED_LETTER_TEMPLATE_ID = "fiber-letter";
-export const AI_CHAT_SYSTEM_PREFIX = "你是笺间的 AI 问答助手。你可以阅读用户当前正在写的信笺内容，并围绕内容、结构、表达、事实一致性和写作策略回答问题。回答要具体、克制、可执行。";
+export const AI_CHAT_SYSTEM_PREFIX = "你是笺间 AI 协作中的问答助手。你可以阅读用户当前正在写的信笺内容，并围绕内容、结构、表达、事实一致性和写作策略回答问题。回答要具体、克制、可执行；本链路只回答，不声称已经修改信笺。";
 export const CODEX_DOCUMENT_ONLY_SCOPE = Object.freeze({ mode: "document-only", relativePath: "" });
 export const AI_FINALIZED_START = "【已定稿开始】";
 export const AI_FINALIZED_END = "【已定稿结束】";

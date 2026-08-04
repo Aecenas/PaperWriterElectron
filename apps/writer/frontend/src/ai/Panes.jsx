@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
   ChevronDown,
+  LoaderCircle,
   Send,
   Sparkles,
   UserRound,
@@ -31,6 +32,7 @@ import {
   InlineAiText,
 } from "./ResultBlocks.jsx";
 import { formatElapsedSeconds, formatTokenUsage } from "./usage.js";
+import { CollaborationReviewCard } from "../ai-collaboration/CollaborationReviewCard.jsx";
 
 
 export function getAiPaperPresentation() {
@@ -119,6 +121,16 @@ export function AiChatPane({
   selectedTexts = [],
   status,
   error,
+  collaborationBusy = false,
+  collaborationFrozen = false,
+  collaborationPendingQuestion = "",
+  collaborationStartedAt = 0,
+  collaborationStatusText = "",
+  pendingReview = null,
+  onAcceptAllPendingCollaboration,
+  onCommitCollaboration,
+  onDiscardCollaboration,
+  onRegenerateCollaboration,
   onInputChange,
   onSend,
   onRemoveSelectedText,
@@ -128,10 +140,28 @@ export function AiChatPane({
   const messagesRef = useRef(null);
   const [collapsedMessageIds, setCollapsedMessageIds] = useState(() => new Set());
   const [composerCollapsed, setComposerCollapsed] = useState(false);
+  const [collaborationClock, setCollaborationClock] = useState(() => Date.now());
   const { paperStyle } = useMemo(() => getAiPaperPresentation(), []);
   const isStreaming = status === "streaming";
   const hasUsableProvider = availableProviders.length > 0;
-  const canSend = Boolean(input.trim()) && !isStreaming && hasUsableProvider;
+  const inputDisabled = isStreaming || collaborationBusy || collaborationFrozen;
+  const canSend = Boolean(input.trim()) && !inputDisabled && hasUsableProvider;
+  const collaborationElapsedSeconds = collaborationStartedAt
+    ? Math.max(0, (collaborationClock - collaborationStartedAt) / 1000)
+    : 0;
+  const collaborationStageHint = /等待 AI|接收|请求一次格式修复|请求一次安全修复/.test(collaborationStatusText)
+    ? "当前正在等待模型接口；模型返回后，本地检查通常只需很短时间。"
+    : /本地检查|正在检查|正在整理|安全忽略/.test(collaborationStatusText)
+      ? "模型内容已经返回，正在本地整理和安全校验。"
+      : "你可以随时停止；明确的修改请求会直接进入方案生成。";
+
+  useEffect(() => {
+    if (!collaborationBusy || !collaborationStartedAt) return undefined;
+    const updateClock = () => setCollaborationClock(Date.now());
+    updateClock();
+    const timer = window.setInterval(updateClock, 1000);
+    return () => window.clearInterval(timer);
+  }, [collaborationBusy, collaborationStartedAt]);
 
   const toggleMessageCollapsed = useCallback((messageId) => {
     setCollapsedMessageIds((previous) => {
@@ -166,13 +196,13 @@ export function AiChatPane({
     <main className="canvas ai-chat-canvas" style={paperStyle}>
       <section className="ai-chat-panel">
         <div ref={messagesRef} className="ai-chat-messages">
-          {!messages.length ? (
+          {!messages.length && !collaborationPendingQuestion ? (
             <div className="ai-chat-empty">
               <div className="ai-chat-empty-icon" aria-hidden="true">
                 <img src={AI_ASSETS.aiEmptyMark} alt="" />
               </div>
-              <strong>围绕当前信笺提问</strong>
-              <p>AI 会读取左侧最新内容。图片只会作为“图N.标题”进入上下文。</p>
+              <strong>围绕当前信笺协作</strong>
+              <p>可以提问，也可以让 AI 生成逐项审阅的修改。提交前不会改动正文。</p>
             </div>
           ) : null}
           {messages.map((message) => {
@@ -189,7 +219,7 @@ export function AiChatPane({
                       </button>
                     ) : null}
                     {isAssistant ? <Sparkles size={16} /> : <UserRound size={15} />}
-                    <strong>{message.role === "user" ? "你" : "AI回答"}</strong>
+                    <strong>{message.role === "user" ? "你" : "AI 协作"}</strong>
                     {isAssistant ? (
                       <span className="ai-chat-message-meta inline">
                         <em>耗时：{formatElapsedSeconds(message.elapsedSeconds || 0)}</em>
@@ -218,6 +248,38 @@ export function AiChatPane({
               </article>
             );
           })}
+          {collaborationPendingQuestion && !messages.some((message) => message.role === "user" && message.content === collaborationPendingQuestion) ? (
+            <article className="ai-chat-message user routing-pending">
+              <header className="ai-chat-message-head">
+                <span className="ai-chat-message-role"><UserRound size={15} /><strong>你</strong></span>
+              </header>
+              <div className="ai-chat-message-body">{collaborationPendingQuestion}</div>
+            </article>
+          ) : null}
+          {collaborationBusy && collaborationStatusText ? (
+            <article className="ai-chat-message assistant ai-collaboration-running-message" role="status" aria-live="polite">
+              <header className="ai-chat-message-head">
+                <span className="ai-chat-message-role"><LoaderCircle className="spin" size={16} /><strong>AI 协作</strong></span>
+              </header>
+              <div className="ai-collaboration-running-body">
+                <div className="ai-collaboration-running-stage">
+                  <strong>{collaborationStatusText}</strong>
+                  <em>已用时 {formatElapsedSeconds(collaborationElapsedSeconds)}</em>
+                </div>
+                <span>{collaborationStageHint}</span>
+              </div>
+            </article>
+          ) : null}
+          {pendingReview ? (
+            <CollaborationReviewCard
+              busy={collaborationBusy}
+              pendingReview={pendingReview}
+              onAcceptAllPending={onAcceptAllPendingCollaboration}
+              onCommit={onCommitCollaboration}
+              onDiscard={onDiscardCollaboration}
+              onRegenerate={onRegenerateCollaboration}
+            />
+          ) : null}
           {error ? <p className="ai-chat-error">{error}</p> : null}
         </div>
         <footer className={[
@@ -229,7 +291,7 @@ export function AiChatPane({
             <span aria-hidden="true">
               <img src={AI_ASSETS.aiComposerMark} alt="" />
             </span>
-            <strong>对这篇信笺提问，或让 AI 帮你审阅、改写、找漏洞...</strong>
+            <strong>{collaborationFrozen ? "协作审阅期间已冻结新的 AI 请求" : "提问，或让 AI 添加标题、表格、Mermaid、拆分/合并信笺…"}</strong>
             <button type="button" className="ai-chat-composer-collapse" onClick={() => setComposerCollapsed((value) => !value)} aria-label={composerCollapsed ? "展开输入框" : "折叠输入框"} title={composerCollapsed ? "展开输入框" : "折叠输入框"}>
               <ChevronDown size={18} />
             </button>
@@ -242,7 +304,7 @@ export function AiChatPane({
                     <span className="selected-chip-label">已标记{index + 1}：</span>
                     <span>{summarizeSelectedText(selection.text, 5)}</span>
                   </button>
-                  <button type="button" className="ai-chat-selected-chip-remove" onClick={() => onRemoveSelectedText?.(selection.id)} disabled={isStreaming} aria-label={`清除已标记${index + 1}`}>
+                  <button type="button" className="ai-chat-selected-chip-remove" onClick={() => onRemoveSelectedText?.(selection.id)} disabled={inputDisabled} aria-label={`清除已标记${index + 1}`}>
                     <X size={13} />
                   </button>
                 </div>
@@ -255,8 +317,8 @@ export function AiChatPane({
               <textarea
                 value={input}
                 rows={3}
-                placeholder="问问这篇信笺，比如：这段逻辑哪里薄弱？标题是否准确？"
-                disabled={isStreaming}
+                placeholder="例如：在合适位置添加标题和 Emoji；把数据整理成表格并画 Mermaid 图"
+                disabled={inputDisabled}
                 onChange={(event) => onInputChange(event.target.value)}
                 onKeyDown={handleKeyDown}
               />
@@ -272,7 +334,7 @@ export function AiChatPane({
               </button>
               <div className="ai-chat-presets" aria-label="快捷提问">
                 {AI_CHAT_PROMPT_PRESETS.map((preset) => (
-                  <button type="button" key={preset.id} disabled={isStreaming} onClick={() => onPresetSelect?.(preset)}>
+                  <button type="button" key={preset.id} disabled={inputDisabled} onClick={() => onPresetSelect?.(preset)}>
                     <Sparkles size={12} />
                     <span>{preset.label}</span>
                   </button>

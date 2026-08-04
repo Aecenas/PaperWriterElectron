@@ -91,6 +91,7 @@ export function AiChatToolbar({
   messages = [],
   hasState = false,
   codexImageMode,
+  frozen = false,
   onProviderChange,
   onCodexImageModeChange,
   onStop,
@@ -111,12 +112,12 @@ export function AiChatToolbar({
     <div className="ai-result-toolbar ai-chat-toolbar">
       <div className="ai-result-model-line">
         <p>{runModelLabel}</p>
-        <AiProviderRunSelector providers={availableProviders} value={selectedProvider} disabled={isStreaming} onChange={onProviderChange} />
+        <AiProviderRunSelector providers={availableProviders} value={selectedProvider} disabled={isStreaming || frozen} onChange={onProviderChange} />
         {selectedRunModel?.transport === "codex-cli" ? (
           <CodexScopeSelector
             imageMode={codexImageMode}
             imageCount={imageCount}
-            disabled={isStreaming}
+            disabled={isStreaming || frozen}
             onImageModeChange={onCodexImageModeChange}
           />
         ) : null}
@@ -126,7 +127,7 @@ export function AiChatToolbar({
           <Download size={13} />
           <span>另存记录</span>
         </button>
-        <button type="button" disabled={!hasState || isStreaming} onClick={onClear}>
+        <button type="button" disabled={!hasState || isStreaming || frozen} onClick={onClear}>
           <Trash2 size={13} />
           <span>清空</span>
         </button>

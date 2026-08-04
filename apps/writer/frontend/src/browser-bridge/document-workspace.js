@@ -34,6 +34,21 @@ function waitForBrowserPreview(ms) {
 
 function createBrowserDocumentWorkspaceApi() {
   return {
+    createDocumentHistory: async (payload = {}) => {
+      const documentValue = payload.document && typeof payload.document === "object" ? payload.document : null;
+      const documentId = String(payload.documentId || documentValue?.documentId || "").trim().slice(0, 128);
+      if (!documentValue || !documentId) return { ok: false, message: "当前信笺快照无效" };
+      const entry = {
+        id: browserRandomId(),
+        documentId,
+        name: String(payload.name || "安全版本").trim().slice(0, 100) || "安全版本",
+        pinned: Boolean(payload.pinned),
+        createdAt: new Date().toISOString(),
+        document: documentValue,
+      };
+      writeJson(`paperwriter.preview.history.${documentId}.${entry.id}`, entry);
+      return { ok: true, entry, browserOnly: true };
+    },
     openDocument: async () => ({ canceled: true }),
     openDocumentPath: async (filePath = "") => {
       const documentValue = readJson("paperwriter.preview.document", null);

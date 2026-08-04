@@ -505,6 +505,10 @@
   text-indent: 2em;
 }
 
+.paper-sheet.indents-paragraphs .page-map-export-editor > p.paper-page-range-continuation {
+  text-indent: 0;
+}
+
 .paper-sheet.flush-paragraphs .paper-editor > p,
 .paper-sheet.flush-paragraphs .paged-page-body > p {
   text-indent: 0;
@@ -1025,11 +1029,11 @@
   top: 10px;
   right: -12px;
   display: grid;
-  gap: 5px;
+  gap: 4px;
   padding: 6px;
   border: 1px solid rgba(80, 72, 63, 0.12);
   border-radius: 8px;
-  background: rgba(255, 253, 248, 0.94);
+  background: rgba(255, 253, 248, 0.96);
   box-shadow: 0 12px 28px rgba(67, 55, 40, 0.14);
   opacity: 0;
   pointer-events: none;
@@ -1056,8 +1060,7 @@
   border-radius: 6px;
   color: #5f5a52;
   background: transparent;
-  font-size: 12px;
-  line-height: 1;
+  font: 700 11px/1 var(--body-font, "Segoe UI", sans-serif);
   text-align: center;
 }
 
@@ -1068,28 +1071,29 @@
 }
 
 .image-size-tools .image-copy-reference {
-  position: relative;
   display: none;
-  width: 58px;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  white-space: nowrap;
 }
 
-.image-size-tools .image-copy-reference::before {
-  content: "";
-  position: absolute;
-  top: -3px;
-  left: 8px;
-  right: 8px;
+.image-size-tools .image-tool-separator {
+  width: 18px;
   height: 1px;
+  margin: 2px auto;
   background: rgba(95, 90, 82, 0.18);
   pointer-events: none;
 }
 
 .paper-sheet.shows-image-captions.numbers-image-captions .image-size-tools .image-copy-reference {
-  display: flex;
+  display: grid;
+}
+
+.image-size-tools button.is-danger:hover:not(:disabled) {
+  color: #a13b34;
+  background: rgba(190, 73, 64, 0.1);
+}
+
+.image-size-tools button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .paper-image-figure.image-reference-target .paper-image-frame img,

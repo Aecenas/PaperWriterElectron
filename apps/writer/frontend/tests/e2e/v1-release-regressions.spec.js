@@ -73,6 +73,7 @@ test.describe("1.0.0 release regressions", () => {
   test("help center explains research search and the non-AI-mode selection assistant", async ({ page }) => {
     const pageErrors = await openReleasePreview(page);
     await page.getByRole("button", { name: "帮助", exact: true }).click();
+    await page.getByRole("menuitem", { name: /帮助文档/ }).click();
     const help = page.getByRole("dialog", { name: "帮助中心" });
 
     await help.getByRole("button", { name: "文档、文件夹与资料搜索" }).click();
@@ -394,8 +395,8 @@ test.describe("1.0.0 release regressions", () => {
 
     const taskList = aiSettings.getByRole("region", { name: "任务模型列表" });
     const taskHeaders = taskList.locator(".ai-task-model-summary");
-    await expect(taskHeaders).toHaveCount(3);
-    for (let index = 0; index < 3; index += 1) {
+    await expect(taskHeaders).toHaveCount(5);
+    for (let index = 0; index < 5; index += 1) {
       await expect(taskHeaders.nth(index)).toHaveAttribute("aria-expanded", "false");
     }
     await expect(taskHeaders.locator(".ai-task-model-badge.default")).toHaveCount(0);
@@ -456,8 +457,8 @@ test.describe("1.0.0 release regressions", () => {
     aiSettings = page.locator(".ai-settings-dialog");
     await aiSettings.getByRole("button", { name: /任务模型/ }).click();
     const reopenedTaskHeaders = aiSettings.locator(".ai-task-model-summary");
-    await expect(reopenedTaskHeaders).toHaveCount(3);
-    for (let index = 0; index < 3; index += 1) {
+    await expect(reopenedTaskHeaders).toHaveCount(5);
+    for (let index = 0; index < 5; index += 1) {
       await expect(reopenedTaskHeaders.nth(index)).toHaveAttribute("aria-expanded", "false");
     }
     await aiSettings.getByRole("button", { name: "关闭 AI 设置" }).click();

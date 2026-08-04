@@ -356,7 +356,7 @@ test("saved AI state keeps schema defaults, bounds, own images, and safe Codex m
     },
   });
 
-  assert.equal(normalized.version, 3);
+  assert.equal(normalized.version, 4);
   assert.equal(normalized.lastMode, "chat");
   assert.deepEqual(Object.keys(normalized.optimize.assets.images), [
     "own",

@@ -9,7 +9,7 @@ import {
 test("the single application style entry preserves the explicit cascade order", async () => {
   const entrySource = await readFile(new URL("./styles.css", import.meta.url), "utf8");
   assert.equal(
-    entrySource,
+    entrySource.replace(/\r\n?/g, "\n"),
     `${APP_STYLE_FRAGMENT_NAMES.map((name) => `@import "./${name}";`).join("\n")}\n`,
   );
 });

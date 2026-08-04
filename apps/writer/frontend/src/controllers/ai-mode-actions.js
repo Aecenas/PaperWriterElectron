@@ -10,6 +10,7 @@ import { AI_MODEL_REQUIRED_MESSAGE } from "../ai-settings/model.js";
 
 export function createAiModeChooserActions({
   activeTabReadOnly,
+  aiCollaborationPending = false,
   aiHasUsableProvider,
   aiModeChooserOpen,
   openAiSettings,
@@ -17,6 +18,11 @@ export function createAiModeChooserActions({
   showStatus,
 }) {
   const toggleAiModeChooser = () => {
+    if (aiCollaborationPending) {
+      setAiModeChooserOpen(false);
+      showStatus("请先完成或取消待审阅的 AI 协作", "warning");
+      return;
+    }
     if (aiModeChooserOpen) {
       setAiModeChooserOpen(false);
       return;
@@ -45,6 +51,7 @@ export function useAiModeChooserActions(options) {
     () => createAiModeChooserActions(options),
     [
       options.activeTabReadOnly,
+      options.aiCollaborationPending,
       options.aiHasUsableProvider,
       options.aiModeChooserOpen,
       options.openAiSettings,
@@ -59,6 +66,7 @@ export function createAiModeTransitionActions({
   activeTabReadOnly,
   aiBridge = bridge,
   aiHasUsableProvider,
+  aiCollaborationPending = false,
   aiModeKind,
   aiStatus,
   effectiveAiProvider,
@@ -129,6 +137,11 @@ export function createAiModeTransitionActions({
   };
 
   const requestAiModeChange = async (kind) => {
+    if (aiCollaborationPending && kind !== aiModeKind) {
+      setAiModeChooserOpen(false);
+      showStatus("请先完成或取消待审阅的 AI 协作", "warning");
+      return false;
+    }
     if (activeTabReadOnly) {
       setAiModeChooserOpen(false);
       showStatus("当前信笺为只读，不能进入 AI 模式", "warning");
@@ -152,8 +165,8 @@ export function createAiModeTransitionActions({
       nextMode: kind,
       busy: aiStatus === "streaming",
     })) {
-      const currentLabel = aiModeKind === "chat" ? "AI问答" : "AI优化";
-      const nextLabel = kind === "chat" ? "AI问答" : "AI优化";
+      const currentLabel = aiModeKind === "chat" ? "AI协作" : "AI优化";
+      const nextLabel = kind === "chat" ? "AI协作" : "AI优化";
       const decision = await showConfirmDialog({
         tone: "warning",
         icon: Square,
@@ -187,6 +200,11 @@ export function createAiModeTransitionActions({
   };
 
   const requestExitAiMode = async () => {
+    if (aiCollaborationPending) {
+      setAiModeChooserOpen(false);
+      showStatus("请先完成或取消待审阅的 AI 协作", "warning");
+      return false;
+    }
     if (aiModeKind === "none") {
       setAiModeChooserOpen(false);
       return true;
@@ -195,7 +213,7 @@ export function createAiModeTransitionActions({
       currentMode: aiModeKind,
       busy: aiStatus === "streaming",
     })) {
-      const currentLabel = aiModeKind === "chat" ? "AI问答" : "AI优化";
+      const currentLabel = aiModeKind === "chat" ? "AI协作" : "AI优化";
       const decision = await showConfirmDialog({
         tone: "warning",
         icon: Square,
@@ -239,6 +257,7 @@ export function useAiModeTransitionActions(options) {
       options.activeTabReadOnly,
       options.aiBridge,
       options.aiHasUsableProvider,
+      options.aiCollaborationPending,
       options.aiModeKind,
       options.aiStatus,
       options.effectiveAiProvider,

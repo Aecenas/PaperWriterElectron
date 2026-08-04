@@ -8,3 +8,5 @@ export * from "./ResultBlocks.jsx";
 export * from "./Selectors.jsx";
 export * from "./Toolbars.jsx";
 export * from "./Panes.jsx";
+export * from "../ai-collaboration/protocol.js";
+export { buildAiApplyBlockManifest } from "../ai-direct-apply.js";

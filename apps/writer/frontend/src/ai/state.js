@@ -7,6 +7,7 @@ import { normalizeCodexImageMode, normalizeCodexScope } from "../codex-scope.js"
 import { normalizeEmbedWidth, normalizeImageSource } from "../resource-safety.js";
 import { CODEX_DOCUMENT_ONLY_SCOPE } from "./constants.js";
 import { createAiChatSelectionId } from "./context.js";
+import { normalizeCollaborationProposal } from "../ai-collaboration/protocol.js";
 
 
 export function createEmptyAiOptimizeState() {
@@ -34,6 +35,42 @@ export function createEmptyAiChatState() {
     status: "idle",
     error: "",
     updatedAt: "",
+    pendingReview: null,
+    proposalSummaries: [],
+  };
+}
+
+function normalizeProposalSummary(summary = {}) {
+  const status = ["applied", "discarded", "stale"].includes(summary.status)
+    ? summary.status
+    : "discarded";
+  return {
+    id: typeof summary.id === "string" ? summary.id.slice(0, 128) : "",
+    status,
+    summary: typeof summary.summary === "string" ? summary.summary.slice(0, 2_000) : "",
+    acceptedCount: Math.max(0, Math.floor(Number(summary.acceptedCount) || 0)),
+    rejectedCount: Math.max(0, Math.floor(Number(summary.rejectedCount) || 0)),
+    decisions: (Array.isArray(summary.decisions) ? summary.decisions : []).slice(0, 50).map((decision) => ({
+      id: typeof decision?.id === "string" ? decision.id.slice(0, 128) : "",
+      label: typeof decision?.label === "string" ? decision.label.slice(0, 240) : "",
+      type: typeof decision?.type === "string" ? decision.type.slice(0, 40) : "",
+      status: decision?.status === "accepted" ? "accepted" : "rejected",
+      edited: Boolean(decision?.edited),
+    })).filter((decision) => decision.id),
+    resolvedAt: Number.isFinite(Number(summary.resolvedAt)) ? Number(summary.resolvedAt) : Date.now(),
+  };
+}
+
+export function normalizeAiCollaborationPendingReview(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const proposal = normalizeCollaborationProposal(value.proposal || value);
+  if (!proposal.operations.length || !["pending", "stale"].includes(proposal.status)) return null;
+  return {
+    proposal,
+    originDocumentKey: typeof value.originDocumentKey === "string" ? value.originDocumentKey.slice(0, 32768) : "",
+    originTabId: typeof value.originTabId === "string" ? value.originTabId.slice(0, 128) : "",
+    workspaceRoot: typeof value.workspaceRoot === "string" ? value.workspaceRoot.slice(0, 32768) : "",
+    createdAt: Number.isFinite(Number(value.createdAt)) ? Number(value.createdAt) : proposal.createdAt,
   };
 }
 
@@ -95,12 +132,17 @@ export function normalizeAiChatState(state = {}) {
     status: ["idle", "streaming", "error"].includes(state.status) ? state.status : "idle",
     error: typeof state.error === "string" ? state.error.slice(0, 2000) : "",
     updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : "",
+    pendingReview: normalizeAiCollaborationPendingReview(state.pendingReview),
+    proposalSummaries: (Array.isArray(state.proposalSummaries) ? state.proposalSummaries : [])
+      .slice(-20)
+      .map(normalizeProposalSummary)
+      .filter((summary) => summary.id),
   };
 }
 
 export function createEmptyAiState() {
   return {
-    version: 3,
+    version: 4,
     lastMode: "",
     optimize: createEmptyAiOptimizeState(),
     chat: createEmptyAiChatState(),
@@ -109,7 +151,7 @@ export function createEmptyAiState() {
 
 export function normalizeAiState(state = {}) {
   return {
-    version: 3,
+    version: 4,
     lastMode: ["optimize", "chat"].includes(state.lastMode) ? state.lastMode : "",
     optimize: normalizeAiOptimizeState(state.optimize),
     chat: normalizeAiChatState(state.chat),

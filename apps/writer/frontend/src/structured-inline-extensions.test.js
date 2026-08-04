@@ -186,9 +186,14 @@ test("the copy-reference control is gated by both image-caption template flags",
   const pageArticle = fs.readFileSync(new URL("./editor/PageArticle.jsx", import.meta.url), "utf8");
   const css = readAppStylesSync();
   assert.match(paperNodes, /className="image-copy-reference"/);
+  assert.match(paperNodes, /<ClipboardCopy size=\{14\} aria-hidden="true" \/>/);
+  assert.doesNotMatch(paperNodes, /<span>引用<\/span>/);
+  assert.match(paperNodes, /className="image-delete is-danger"[\s\S]*aria-label="删除图片"[\s\S]*onClick=\{\(\) => deleteNode\?\.\(\)\}/);
   assert.equal(paperCanvasViewModel({ documentId: DOCUMENT_ONE }).documentId, DOCUMENT_ONE);
   assert.match(pageArticle, /data-paper-document-id=\{normalizeDocumentId\(document\.documentId\)\}/);
   assert.match(css, /\.image-size-tools button \{[\s\S]*display: grid;[\s\S]*place-items: center;[\s\S]*justify-self: center;[\s\S]*text-align: center;/);
   assert.match(css, /\.image-size-tools \.image-copy-reference \{[\s\S]*display: none;/);
-  assert.match(css, /\.paper-sheet\.shows-image-captions\.numbers-image-captions \.image-size-tools \.image-copy-reference \{[\s\S]*display: flex;/);
+  assert.match(css, /\.image-size-tools \.image-tool-separator \{[\s\S]*width: 18px;[\s\S]*height: 1px;/);
+  assert.match(css, /\.paper-sheet\.shows-image-captions\.numbers-image-captions \.image-size-tools \.image-copy-reference \{[\s\S]*display: grid;/);
+  assert.match(css, /\.image-size-tools button\.is-danger:hover:not\(:disabled\) \{[\s\S]*color: #a13b34;/);
 });

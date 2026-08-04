@@ -7,6 +7,9 @@ export const PAGE_MAP_EXPORT_STAGE_ID = "paperwriter-page-map-export-stage";
 export const PAGE_MAP_EXPORT_MAX_PAGES = 500;
 export const PAGE_MAP_EXPORT_UNSAFE_OVERSIZE = "PAGE_MAP_EXPORT_UNSAFE_OVERSIZE";
 export const PAGE_MAP_EXPORT_UNAVAILABLE = "PAGE_MAP_EXPORT_UNAVAILABLE";
+export const PAGE_RANGE_CONTINUATION_CLASS = "paper-page-range-continuation";
+
+const FIGURE_NODE_TYPES = new Set(["image", "paperMermaid"]);
 
 function pageMapExportError(message, code = PAGE_MAP_EXPORT_UNAVAILABLE) {
   const error = new Error(message);
@@ -85,6 +88,35 @@ function cloneEditorRange(editor, from, to, documentObject) {
   return range.cloneContents();
 }
 
+export function countFiguresBeforePageRange(editor, from) {
+  const end = Math.max(0, Math.trunc(Number(from) || 0));
+  const documentNode = editor?.state?.doc;
+  if (!end || typeof documentNode?.nodesBetween !== "function") return 0;
+  let count = 0;
+  documentNode.nodesBetween(0, end, (node, position) => {
+    if (position >= end) return false;
+    if (FIGURE_NODE_TYPES.has(node?.type?.name)) count += 1;
+    return true;
+  });
+  return count;
+}
+
+export function decorateStaticPageRange({ editor, editorClone, page, pageRange }) {
+  const figureOffset = countFiguresBeforePageRange(editor, pageRange?.from);
+  page.style?.setProperty?.("counter-reset", `paper-figure ${figureOffset}`);
+  page.setAttribute?.("data-page-map-figure-offset", String(figureOffset));
+
+  let start = null;
+  try {
+    start = editor?.state?.doc?.resolve?.(Math.max(0, Math.trunc(Number(pageRange?.from) || 0)));
+  } catch {
+    start = null;
+  }
+  if (start?.parent?.isTextblock && Number(start.parentOffset) > 0) {
+    editorClone.firstElementChild?.classList?.add(PAGE_RANGE_CONTINUATION_CLASS);
+  }
+}
+
 export function cleanStaticPage(page) {
   page.querySelectorAll?.(
     ".image-size-tools, .media-size-tools, .paper-code-toolbar, .paper-mermaid-tools, "
@@ -130,6 +162,7 @@ function createStaticPage({
   editorClone.removeAttribute("contenteditable");
   editorClone.removeAttribute("spellcheck");
   editorClone.append(fragment);
+  decorateStaticPageRange({ editor, editorClone, page, pageRange });
   page.append(editorClone);
 
   const pageNumber = documentObject.createElement("span");

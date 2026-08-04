@@ -166,6 +166,7 @@
 }
 
 .secondary-static-preview {
+  position: relative;
   inline-size: 100%;
   block-size: 100%;
   min-inline-size: 0;
@@ -174,6 +175,11 @@
   flex-direction: column;
   overflow: hidden;
   background: #f3efe7;
+}
+
+.secondary-static-preview:focus-visible {
+  outline: 2px solid rgba(154, 86, 53, 0.62);
+  outline-offset: -2px;
 }
 
 .secondary-static-toolbar {
@@ -644,6 +650,39 @@
   background: rgba(115, 158, 195, 0.42);
 }
 
+.secondary-pdf-translation-layer {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  overflow: visible;
+  color: #2d2924;
+  pointer-events: none;
+}
+
+.secondary-pdf-translation-layer > span {
+  position: absolute;
+  display: block;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  border-radius: 1px;
+  padding: 1px 2px;
+  color: #2d2924;
+  background: rgba(255, 253, 250, 0.985);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-weight: 400;
+  line-height: 1.18;
+  text-align: left;
+  white-space: normal;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.research-translated-rich-text {
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+}
+
 @media (forced-colors: active) {
   .secondary-pdf-text-layer mark,
   .secondary-pdf-text-layer mark.is-active {
@@ -674,6 +713,111 @@
 
 .secondary-pdf-feedback.is-error {
   color: #8e4b40;
+}
+
+.research-translation-feedback {
+  position: absolute;
+  z-index: 4;
+  inset-block-start: 8px;
+  inset-inline-start: 50%;
+  max-inline-size: calc(100% - 24px);
+  min-block-size: 27px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  border: 1px solid rgba(101, 89, 72, 0.12);
+  border-radius: 999px;
+  padding: 3px 5px 3px 9px;
+  color: #5a5148;
+  background: rgba(255, 253, 248, 0.97);
+  box-shadow: 0 3px 12px rgba(72, 58, 40, 0.14);
+  font-size: 10px;
+  line-height: 1.35;
+  transform: translateX(-50%);
+}
+
+.secondary-static-preview > .research-translation-feedback {
+  inset-block-start: 46px;
+}
+
+.research-translation-feedback > span {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.research-translation-feedback button {
+  min-inline-size: 0;
+  block-size: 21px;
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 7px;
+  color: #82462d;
+  background: rgba(198, 111, 69, 0.12);
+  cursor: pointer;
+}
+
+.research-translation-feedback.is-error {
+  color: #8e4638;
+  background: rgba(255, 244, 239, 0.98);
+}
+
+.research-translation-menu {
+  position: fixed;
+  z-index: 1260;
+  width: 216px;
+  box-sizing: border-box;
+  border: 1px solid rgba(111, 92, 68, 0.2);
+  border-radius: 10px;
+  padding: 6px;
+  color: #4d4338;
+  background: rgba(255, 253, 248, 0.99);
+  box-shadow: 0 16px 38px rgba(57, 46, 32, 0.2);
+  font-size: 12px;
+}
+
+.research-translation-menu button {
+  inline-size: 100%;
+  min-block-size: 34px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 9px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.research-translation-menu button:hover:not(:disabled),
+.research-translation-menu button:focus-visible {
+  color: #82462d;
+  background: rgba(198, 111, 69, 0.12);
+}
+
+.research-translation-menu button:focus-visible {
+  outline: 2px solid rgba(198, 111, 69, 0.62);
+  outline-offset: 1px;
+}
+
+.research-translation-menu button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.research-translation-menu button small {
+  display: block;
+  margin-block-start: 2px;
+  color: rgba(77, 67, 56, 0.66);
+  font-size: 10px;
+  line-height: 1.25;
 }
 
 .research-pane-tab {
@@ -733,5 +877,10 @@
 @media (prefers-reduced-motion: reduce) {
   .secondary-pdf-hud button {
     transition: none;
+  }
+
+  .research-translation-feedback .research-spin,
+  .research-translation-menu .research-spin {
+    animation: none;
   }
 }

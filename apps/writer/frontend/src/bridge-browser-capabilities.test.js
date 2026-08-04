@@ -292,6 +292,99 @@ test("browser selection generation honors its task model and exact cancel regist
   }
 });
 
+test("browser AI精灵 keeps isolated local sessions and predictable dedicated streaming events", async () => {
+  const memory = new Map();
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem: (key, value) => memory.set(key, String(value)),
+      removeItem: (key) => memory.delete(key),
+    },
+  });
+  globalThis.window = globalThis;
+  try {
+    memory.set("paperwriter.aiConfig", JSON.stringify({
+      activeProvider: "deepseek",
+      activeModelId: "help-model",
+      taskModels: { helpAssistant: {} },
+      providers: {
+        deepseek: {
+          apiKey: "preview-key",
+          activeModelId: "help-model",
+          models: [{ id: "help-model", name: "Help", model: "help-model", testedOk: true }],
+        },
+      },
+    }));
+    const initial = await browserBridge.getHelpAssistantState();
+    const sessionId = initial.activeSessionId;
+    assert.equal(JSON.parse(memory.get("paperwriter.helpAssistant.v1")).sessions[0].id, sessionId);
+    const created = await browserBridge.createHelpAssistantSession();
+    assert.equal(created.state.sessions.length, 2);
+    await browserBridge.setActiveHelpAssistantSession(sessionId);
+    const renamed = await browserBridge.renameHelpAssistantSession({ sessionId, title: "恢复问题" });
+    assert.equal(renamed.state.sessions.find((session) => session.id === sessionId).title, "恢复问题");
+
+    const leaked = await browserBridge.generateHelpAssistant({
+      requestId: "ai-help-browser-leak-123",
+      sessionId,
+      question: "怎么恢复？",
+      documentHtml: "不得进入 AI精灵",
+    });
+    assert.equal(leaked.ok, false);
+    assert.equal(leaked.code, "AI_HELP_PAYLOAD_INVALID");
+
+    const chunks = [];
+    const terminal = new Promise((resolve) => {
+      const offDone = browserBridge.onHelpAssistantDone((event) => {
+        offDone();
+        resolve(event);
+      });
+    });
+    const offChunk = browserBridge.onHelpAssistantChunk((event) => chunks.push(event.delta));
+    const started = await browserBridge.generateHelpAssistant({
+      requestId: "ai-help-browser-stream-123",
+      sessionId,
+      question: "异常退出后怎么恢复信笺？",
+    });
+    assert.equal(started.ok, true);
+    assert.equal((await browserBridge.getHelpAssistantState()).activeRequest.sessionId, sessionId);
+    const done = await terminal;
+    offChunk();
+    assert.equal(done.sessionId, sessionId);
+    assert.match(chunks.join(""), /浏览器预览回答/);
+    assert.equal(done.sources[0].helpTopicId, "save-recovery");
+    const restored = await browserBridge.getHelpAssistantState();
+    assert.equal(restored.activeRequest, null);
+    assert.equal(restored.sessions.find((session) => session.id === sessionId).messages.at(-1).status, "done");
+
+    const productTerminal = new Promise((resolve) => {
+      const offDone = browserBridge.onHelpAssistantDone((event) => {
+        offDone();
+        resolve(event);
+      });
+    });
+    const productStarted = await browserBridge.generateHelpAssistant({
+      requestId: "ai-help-browser-product-123",
+      sessionId,
+      question: "这个软件是干嘛的？",
+    });
+    assert.equal(productStarted.ok, true);
+    const productDone = await productTerminal;
+    assert.match(productDone.content, /面向 Windows 的本地优先写作软件/);
+    assert.equal(productDone.sources[0].id, "detail:product-overview");
+
+    const deleted = await browserBridge.deleteHelpAssistantSession(sessionId);
+    assert.equal(deleted.state.sessions.some((session) => session.id === sessionId), false);
+    assert.ok(JSON.parse(memory.get("paperwriter.helpAssistant.v1")).sessions.length >= 1);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    delete globalThis.localStorage;
+  }
+});
+
 test("browser workspace search is bounded to unsaved overrides", async () => {
   const result = await browserBridge.searchFolder({
     folderPath: "browser-preview",
@@ -512,7 +605,7 @@ test("browser bridge exposes the desktop feature surface with explicit browser f
     "deleteResearchWebFolder", "moveResearchWebSource", "copyResearchWebSelection", "getWorkspaceIdentity",
     "listLibrarySources", "upsertLibrarySource", "deleteLibrarySource", "readResearchPdf", "openResearchEntryExternal",
     "searchResearch", "cancelResearchSearch", "watchResearchLibrary", "onResearchLibraryChanged", "onResearchLibraryWatchError",
-    "onResearchSearchProgress",
+    "onResearchSearchProgress", "translateResearchContent", "cancelResearchTranslation", "onResearchTranslationProgress",
     "showResearchWebView", "updateResearchWebViewBounds", "hideResearchWebView", "controlResearchWebView",
     "destroyResearchWebView", "onResearchWebViewState",
     "writeClipboardContent",
@@ -524,4 +617,70 @@ test("browser bridge exposes the desktop feature surface with explicit browser f
     () => browserBridge.pickExportPath("docx"),
     /浏览器预览暂不支持 DOCX 导出/,
   );
+});
+
+test("browser preview exposes deterministic research translation progress, validation and cancellation", async () => {
+  const memory = new Map();
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key) => memory.get(key) ?? null,
+      setItem: (key, value) => memory.set(key, String(value)),
+      removeItem: (key) => memory.delete(key),
+    },
+  });
+  globalThis.window = globalThis;
+  memory.set("paperwriter.aiConfig", JSON.stringify({
+    activeProvider: "gemini",
+    activeModelId: "gemini-main",
+    providers: {
+      gemini: {
+        apiKey: "browser-preview-key",
+        activeModelId: "gemini-main",
+        models: [{ id: "gemini-main", name: "Main", model: "gemini-main", testedOk: true }],
+      },
+    },
+  }));
+  const progress = [];
+  const unsubscribe = browserBridge.onResearchTranslationProgress((value) => progress.push(value));
+  try {
+    const result = await browserBridge.translateResearchContent({
+      requestId: "ai-research-translation-browser-123456",
+      kind: "text",
+      targetLanguage: "zh-CN",
+      blocks: [{ id: "text-0-0", text: "Hello" }],
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.translations[0].text, "【简体中文预览】Hello");
+    assert.deepEqual(progress.map((value) => value.completedBatches), [0, 1]);
+
+    const privatePayload = await browserBridge.translateResearchContent({
+      requestId: "ai-research-translation-browser-private-123456",
+      kind: "text",
+      targetLanguage: "zh-CN",
+      blocks: [{ id: "text-0-0", text: "Hello" }],
+      filePath: "C:\\private\\book.txt",
+    });
+    assert.equal(privatePayload.ok, false);
+    assert.equal(privatePayload.requestId, "ai-research-translation-browser-private-123456");
+    assert.equal(privatePayload.code, "AI_RESEARCH_TRANSLATION_PAYLOAD_INVALID");
+
+    const requestId = "ai-research-translation-browser-cancel-123456";
+    const pending = browserBridge.translateResearchContent({
+      requestId,
+      kind: "text",
+      targetLanguage: "zh-CN",
+      blocks: [{ id: "text-0-0", text: "Late result" }],
+    });
+    assert.deepEqual(await browserBridge.cancelResearchTranslation(requestId), { ok: true, canceled: true });
+    const canceled = await pending;
+    assert.equal(canceled.canceled, true);
+    assert.equal(canceled.code, "AI_RESEARCH_TRANSLATION_CANCELED");
+  } finally {
+    unsubscribe();
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    delete globalThis.localStorage;
+  }
 });

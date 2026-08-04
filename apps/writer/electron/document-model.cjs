@@ -55,7 +55,7 @@ function isSupportedDocument(filePath) {
 
 function createEmptyAiState() {
   return {
-    version: 3,
+    version: 4,
     lastMode: "",
     optimize: {
       output: "",
@@ -78,8 +78,21 @@ function createEmptyAiState() {
       status: "idle",
       error: "",
       updatedAt: "",
+      pendingReview: null,
+      proposalSummaries: [],
     },
   };
+}
+
+function boundedCollaborationValue(value, maximum = 8 * 1024 * 1024) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized.length > maximum) return null;
+    return JSON.parse(serialized);
+  } catch {
+    return null;
+  }
 }
 
 function normalizeSavedAiState(state = {}) {
@@ -221,7 +234,7 @@ function normalizeSavedAiState(state = {}) {
     }
     : null;
   return {
-    version: 3,
+    version: 4,
     lastMode: ["optimize", "chat"].includes(source.lastMode)
       ? source.lastMode
       : "",
@@ -281,6 +294,13 @@ function normalizeSavedAiState(state = {}) {
       updatedAt: typeof chat.updatedAt === "string"
         ? chat.updatedAt.slice(0, 64)
         : "",
+      pendingReview: boundedCollaborationValue(chat.pendingReview),
+      proposalSummaries: (Array.isArray(chat.proposalSummaries)
+        ? chat.proposalSummaries
+        : [])
+        .slice(-20)
+        .map((summary) => boundedCollaborationValue(summary, 16 * 1024))
+        .filter(Boolean),
     },
   };
 }

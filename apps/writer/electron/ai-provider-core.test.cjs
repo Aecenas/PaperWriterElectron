@@ -104,6 +104,7 @@ test("keeps explicit task assignments exact and uses the active model only when 
   const empty = normalizeAiConfig({ ...configured, taskModels: {} });
   assert.deepEqual(empty.taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
   assert.deepEqual(empty.taskModels.selectionChat, { providerId: "", modelId: "", requestParams: {} });
+  assert.deepEqual(empty.taskModels.researchTranslation, { providerId: "", modelId: "", requestParams: {} });
   assert.equal(taskAiProviderConfig(empty, empty.taskModels.applyResolver).modelId, "gemini-main");
   assert.equal(taskAiProviderConfig(configured, configured.taskModels.selectionChat).modelId, "deepseek-resolver");
   assert.equal(taskAiProviderConfig(configured, configured.taskModels.applyResolver).modelId, "deepseek-resolver");

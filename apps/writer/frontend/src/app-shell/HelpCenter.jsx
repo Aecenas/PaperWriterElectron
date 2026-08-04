@@ -39,7 +39,7 @@ export function renderHelpText(text) {
   });
 }
 
-export function HelpCenterDialog({ open, onClose }) {
+export function HelpCenterDialog({ open, onClose, initialTopicId = "", returnFocusRef }) {
   const [activeTopicId, setActiveTopicId] = useState(HELP_TOPICS[0]?.id || "");
   const [imagePreview, setImagePreview] = useState(null);
   const dialogRef = useRef(null);
@@ -49,7 +49,7 @@ export function HelpCenterDialog({ open, onClose }) {
   const activeTopic = HELP_TOPICS.find((topic) => topic.id === activeTopicId) || HELP_TOPICS[0];
   const activeIllustrations = helpIllustrationsFor(activeTopic);
   const activeCategoryId = activeTopic?.categoryId || HELP_CATEGORIES[0]?.id;
-  useModalFocusTrap(open, dialogRef, closeButtonRef);
+  useModalFocusTrap(open, dialogRef, closeButtonRef, returnFocusRef);
   useModalFocusTrap(Boolean(imagePreview), previewDialogRef, previewCloseButtonRef);
 
   useEffect(() => {
@@ -74,6 +74,12 @@ export function HelpCenterDialog({ open, onClose }) {
     window.document.addEventListener("keydown", handleKeyDown, true);
     return () => window.document.removeEventListener("keydown", handleKeyDown, true);
   }, [activeTopic, imagePreview, onClose, open]);
+
+  useEffect(() => {
+    if (open && initialTopicId && HELP_TOPICS.some((topic) => topic.id === initialTopicId)) {
+      setActiveTopicId(initialTopicId);
+    }
+  }, [initialTopicId, open]);
 
   const handleCategoryClick = useCallback((categoryId) => {
     const firstTopic = getTopicsForCategory(categoryId)[0];

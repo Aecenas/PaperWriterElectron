@@ -2,6 +2,8 @@ const AI_CONFIG_FILE = "ai-config.json";
 const AI_TASK_MODEL_KEYS = Object.freeze([
   "selectionChat",
   "applyResolver",
+  "helpAssistant",
+  "researchTranslation",
   "composeDraft",
 ]);
 const AI_TASK_MODEL_KEY_SET = new Set(AI_TASK_MODEL_KEYS);

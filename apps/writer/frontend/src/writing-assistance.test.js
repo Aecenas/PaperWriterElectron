@@ -249,7 +249,7 @@ test("writing assistance pane exposes jump, ignore, replace-once, and replace-al
 });
 
 test("writing settings use the product-styled card hierarchy and accessible controls", () => {
-  const source = readFileSync(new URL("./writing-assistance/WritingAssistanceSettings.jsx", import.meta.url), "utf8");
+  const source = readFileSync(new URL("./writing-assistance/WritingAssistanceSettings.jsx", import.meta.url), "utf8").replace(/\r\n?/g, "\n");
   const css = readFileSync(new URL("./writing-assistance/writing-assistance.css", import.meta.url), "utf8");
   [
     'className="writing-assistance-overview"',

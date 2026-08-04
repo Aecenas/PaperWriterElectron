@@ -23,7 +23,7 @@ function browserResearchPreviewKind() {
 }
 
 function createBrowserResearchPreviewTable() {
-  const headers = ["项目", "负责人", "状态", "优先级", "开始日期", "截止日期", "进度", "字数", "来源", "标签", "备注", "下一步"];
+  const headers = ["Project", "负责人", "状态", "优先级", "开始日期", "截止日期", "进度", "字数", "来源", "标签", "备注", "下一步"];
   const rows = Array.from({ length: 28 }, (_, index) => [
     `研究任务 ${String(index + 1).padStart(2, "0")}`,
     index % 3 === 0 ? "林青" : index % 3 === 1 ? "周遥" : "陈墨",

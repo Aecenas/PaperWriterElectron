@@ -261,6 +261,12 @@ export function normalizeBrowserAiConfig(config = {}) {
   const applyResolver = normalizeBrowserTaskModelAssignment(
     taskModelsSource.applyResolver,
   );
+  const helpAssistant = normalizeBrowserTaskModelAssignment(
+    taskModelsSource.helpAssistant,
+  );
+  const researchTranslation = normalizeBrowserTaskModelAssignment(
+    taskModelsSource.researchTranslation,
+  );
   const compositionAssignments = [
     taskModelsSource.composeDraft,
     taskModelsSource.composeOutline,
@@ -276,6 +282,8 @@ export function normalizeBrowserAiConfig(config = {}) {
     taskModels: {
       selectionChat,
       applyResolver,
+      helpAssistant,
+      researchTranslation,
       composeDraft,
     },
   };

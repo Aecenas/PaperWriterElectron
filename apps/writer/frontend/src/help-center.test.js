@@ -4,6 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const helpDataUrl = new URL("./app-shell/help-data.js", import.meta.url);
+const helpTopicsUrl = new URL("../../knowledge/user-help-topics.json", import.meta.url);
 const screenshotsUrl = new URL("./assets/help/screenshots/", import.meta.url);
 
 function section(source, startMarker, endMarker) {
@@ -64,12 +65,15 @@ function illustrationArrayField(object) {
 
 async function helpSource() {
   const data = await readFile(helpDataUrl, "utf8");
-  const topicsStart = data.indexOf("const HELP_TOPICS = [");
-  assert.notEqual(topicsStart, -1, "missing const HELP_TOPICS = [");
+  const helpKnowledge = JSON.parse(await readFile(helpTopicsUrl, "utf8"));
+  assert.equal(helpKnowledge.schemaVersion, 1);
+  assert.match(helpKnowledge.appVersion, /^\d+\.\d+\.\d+$/);
+  assert.match(data, /export \{ HELP_TOPICS \} from "\.\/help-topics\.generated\.js";/);
   return {
     screenshots: section(data, "const HELP_SCREENSHOTS = {", "const HELP_CATEGORIES = ["),
-    categories: section(data, "const HELP_CATEGORIES = [", "const HELP_TOPICS = ["),
-    topics: data.slice(topicsStart),
+    categories: section(data, "const HELP_CATEGORIES = [", "export { HELP_TOPICS }"),
+    topics: helpKnowledge.topics,
+    topicsText: JSON.stringify(helpKnowledge.topics),
   };
 }
 
@@ -97,7 +101,7 @@ test("help center has five valid categories and 29 complete topics with valid sc
   const source = await helpSource();
   const categoryIds = [...source.categories.matchAll(/\{\s*id:\s*"([^"]+)"/g)].map((match) => match[1]);
   const screenshots = parseScreenshots(source.screenshots);
-  const topics = parseTopics(source.topics);
+  const topics = source.topics;
 
   assert.deepEqual(categoryIds, ["files", "writing", "research", "ai", "view"]);
   assert.equal(topics.length, 29);
@@ -114,7 +118,7 @@ test("help center has five valid categories and 29 complete topics with valid sc
     for (const field of ["id", "title", "summary", "illustrationAlt", "illustrationCaption"]) {
       assert.ok(topic[field].trim(), `${topic.id || "unknown topic"} has an empty ${field}`);
     }
-    for (const illustration of topic.illustrations) {
+    for (const illustration of topic.illustrations || []) {
       assert.ok(screenshotKeys.has(illustration.type), `${topic.id} references a missing extra screenshot key`);
       assert.ok(illustration.alt.trim(), `${topic.id} has an extra screenshot without alt text`);
       assert.ok(illustration.caption.trim(), `${topic.id} has an extra screenshot without a caption`);
@@ -148,7 +152,7 @@ test("help screenshots exist one-to-one without orphans or duplicate image conte
 });
 
 test("help preserves user-visible boundaries, covers 1.1.0 additions and rejects stale guidance", async () => {
-  const { topics } = await helpSource();
+  const { topicsText } = await helpSource();
   const required = [
     "导入结果始终成为未保存的新信笺",
     "通用导出不包含评注和 AI 记录",
@@ -171,8 +175,14 @@ test("help preserves user-visible boundaries, covers 1.1.0 additions and rejects
     "使用 scrypt 与 AES-256-GCM 加密",
     "连续、单页或双页",
     "Mermaid 预览失败不会清空源码",
+    "在有文字的 PDF 页面内点击右键并选择__翻译当页__",
+    "单次最多翻译 200,000 个正文字符",
+    "AI 协作既能围绕当前信笺问答",
+    "从__帮助 → AI精灵__打开软件知识问答",
+    "图片可调整宽度并编辑标题，选中后也可从悬浮工具直接删除",
+    "跨页段落不会在续页重复首行缩进",
   ];
-  required.forEach((copy) => assert.ok(topics.includes(copy), `missing protected help copy: ${copy}`));
+  required.forEach((copy) => assert.ok(topicsText.includes(copy), `missing protected help copy: ${copy}`));
 
   const stale = [
     "右分屏只允许一个",
@@ -185,5 +195,5 @@ test("help preserves user-visible boundaries, covers 1.1.0 additions and rejects
     "顶部约 6 像素热区",
     "窗口顶端保留细窄唤出热区",
   ];
-  stale.forEach((copy) => assert.ok(!topics.includes(copy), `stale help copy returned: ${copy}`));
+  stale.forEach((copy) => assert.ok(!topicsText.includes(copy), `stale help copy returned: ${copy}`));
 });

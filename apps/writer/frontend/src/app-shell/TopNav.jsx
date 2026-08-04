@@ -84,7 +84,9 @@ export function TopNav({
   onInsertBookmark,
   onOpenCitationPicker,
   onOpenHelp,
+  onOpenHelpAssistant,
   onOpenSettings,
+  helpTriggerRef,
   settingsTriggerRef,
   elementsTriggerRef,
   exportTriggerRef,
@@ -127,7 +129,7 @@ export function TopNav({
   const canEdit = Boolean(editor) && !editorLocked && !aiMode;
   const documentActionsDisabled = Boolean(aiMode);
   const [openMenu, setOpenMenu] = useState("");
-  const activeAiModeLabel = aiModeKind === "chat" ? "AI问答" : "AI优化";
+  const activeAiModeLabel = aiModeKind === "chat" ? "AI协作" : "AI优化";
   const aiModeTriggerDisabled = aiReadOnly && !aiMode;
   const aiModeTriggerLabel = aiModeTriggerDisabled
     ? "当前信笺为只读，不能进入 AI 模式"
@@ -279,16 +281,18 @@ export function TopNav({
           <MenuItem icon={FileInput} label="导入文档" description="MD、HTML、TXT、DOCX" shortcut="Ctrl+Alt+I" onClick={() => runMenuAction(onImport)} />
           <MenuItem icon={PackageOpen} label="备份与迁移" description="导入或导出软件配置" onClick={() => runMenuAction(onOpenProfileMigration)} />
         </MenuButton>
-        <button
-          type="button"
-          className="nav-menu-trigger"
-          title="帮助"
-          aria-label="帮助"
-          onClick={() => runMenuAction(onOpenHelp)}
+        <MenuButton
+          icon={HelpCircle}
+          label="帮助"
+          menuId="help"
+          openMenu={openMenu}
+          onOpenMenu={setOpenMenu}
+          triggerRef={helpTriggerRef}
+          showDisclosure={false}
         >
-          <HelpCircle size={19} strokeWidth={1.9} />
-          <span>帮助</span>
-        </button>
+          <MenuItem icon={BookOpenText} label="帮助文档" description="查看功能说明与操作步骤" onClick={() => runMenuAction(onOpenHelp)} />
+          <MenuItem icon={Sparkles} label="AI精灵" description="询问笺间功能与使用问题" onClick={() => runMenuAction(onOpenHelpAssistant)} />
+        </MenuButton>
         <button
           ref={settingsTriggerRef}
           type="button"

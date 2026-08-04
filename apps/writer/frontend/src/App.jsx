@@ -61,9 +61,15 @@ import {
   AiChatToolbar,
   AiOptimizeToolbar,
   AiResultPane,
+  buildAiApplyBlockManifest,
+  collaborationBlocksToReviewText,
+  collaborationBlocksToSafeHtml,
+  createCollaborationEditorOperation,
   createEmptyAiState,
   normalizeAiState,
+  parseCollaborationReviewText,
 } from "./ai/index.js";
+import { HelpAssistantDialog } from "./help-assistant/index.js";
 import {
   AppConfirmDialog,
   AppPromptDialog,
@@ -101,6 +107,7 @@ import {
   useAiModeChooserActions,
   useAiModeState,
   useAiModeTransitionActions,
+  useAiCollaborationActions,
   useAiRequestActions,
   useAiStreamChatMessagesSlot,
   useAiStreamEventsLifecycle,
@@ -176,6 +183,7 @@ import {
   getEditorLinkContext,
   setDocumentCommentVisibility,
   syncAiChatSelectionDecorations,
+  syncAiCollaborationReviewDecorations,
   syncDocumentCommentDecorations,
 } from "./editor/index.js";
 import {
@@ -471,6 +479,8 @@ export default function App() {
     releaseNotesOpen,
     setReleaseNotesOpen,
   } = useHelpReleaseState();
+  const [helpAssistantOpen, setHelpAssistantOpen] = useState(false);
+  const [helpTargetTopicId, setHelpTargetTopicId] = useState("");
   const {
     exportDialogOpen,
     setExportDialogOpen,
@@ -656,6 +666,7 @@ export default function App() {
   const previousImmersiveModeRef = useRef(false);
   const aiModeTriggerRef = useRef(null);
   const settingsTriggerRef = useRef(null);
+  const helpTriggerRef = useRef(null);
   const writingSettingsTriggerRef = useRef(null);
   const elementsTriggerRef = useRef(null);
   const exportTriggerRef = useRef(null);
@@ -976,9 +987,47 @@ export default function App() {
   });
   const activeTabReadOnly = Boolean(openTabs.find((tab) => tab.id === activeTabId)?.readOnly || documentState?._readOnlyFutureSchema);
   const rightSplitReadOnly = Boolean(rightSplitTab?.readOnly || rightSplitDocument?._readOnlyFutureSchema);
+  const pendingCollaborationOwner = useMemo(() => {
+    if (activeChatState.pendingReview) {
+      return { tabId: activeTabId, pendingReview: activeChatState.pendingReview };
+    }
+    for (const tab of openTabs) {
+      if (tab.id === activeTabId) continue;
+      const pendingReview = normalizeAiState(tab.document?.aiState).chat.pendingReview;
+      if (pendingReview) return { tabId: tab.id, pendingReview };
+    }
+    return null;
+  }, [activeChatState.pendingReview, activeTabId, openTabs]);
+  const collaborationLockedPaths = useMemo(() => {
+    const owner = pendingCollaborationOwner;
+    if (!owner) return [];
+    const root = String(owner.pendingReview.workspaceRoot || "").replace(/[\\/]+$/, "");
+    if (!root) return [];
+    return (owner.pendingReview.proposal.sources || [])
+      .map((source) => String(source.relativePath || "").replace(/^[/\\]+/, ""))
+      .filter(Boolean)
+      .map((relativePath) => `${root}\\${relativePath.replace(/\//g, "\\")}`);
+  }, [pendingCollaborationOwner]);
+  const collaborationLockedTabIds = useMemo(() => {
+    const owner = pendingCollaborationOwner;
+    if (!owner) return new Set();
+    const result = new Set([owner.pendingReview.originTabId || owner.tabId]);
+    openTabs.forEach((tab) => {
+      if (tab.path && collaborationLockedPaths.some((sourcePath) => sameDocumentPath(tab.path, sourcePath))) result.add(tab.id);
+    });
+    return result;
+  }, [collaborationLockedPaths, openTabs, pendingCollaborationOwner]);
+  const isCollaborationPathLocked = useCallback((filePath) => (
+    Boolean(filePath) && collaborationLockedPaths.some((sourcePath) => sameDocumentPath(filePath, sourcePath))
+  ), [collaborationLockedPaths]);
+  const activeTabCollaborationLocked = collaborationLockedTabIds.has(activeTabId);
+  const rightSplitCollaborationLocked = collaborationLockedTabIds.has(rightSplitTabId);
+  const activeCollaborationReview = pendingCollaborationOwner?.tabId === activeTabId
+    ? pendingCollaborationOwner.pendingReview
+    : null;
   const activeWorkReadOnly = splitPaneActive
-    ? rightSplitReadOnly
-    : activeTabReadOnly;
+    ? (rightSplitReadOnly || rightSplitCollaborationLocked)
+    : (activeTabReadOnly || activeTabCollaborationLocked);
   const mainCanvasDocument = useMemo(() => paperCanvasViewModel(documentState), [
     documentState.author,
     documentState.createdAt,
@@ -1169,6 +1218,42 @@ export default function App() {
     updateOptimizeState,
     updateOptimizeStateForKey,
   } = useAiDocumentStateActions(aiDocumentPort);
+
+  useEffect(() => {
+    const pending = pendingCollaborationOwner?.pendingReview;
+    const proposal = pending?.proposal;
+    if (!pending || !proposal || proposal.status === "stale") return;
+    const sourceExternallyChanged = openTabs.some((tab) => (
+      collaborationLockedTabIds.has(tab.id) && tab.externalChanged
+    ));
+    const currentFingerprintChanged = Boolean(
+      activeCollaborationReview
+      && documentState.documentId === proposal.base.documentId
+      && editor?.state?.doc
+      && proposal.base.documentFingerprint
+      && buildAiApplyBlockManifest(editor.state.doc).documentFingerprint !== proposal.base.documentFingerprint
+    );
+    if (!sourceExternallyChanged && !currentFingerprintChanged) return;
+    updateChatStateForKey(pending.originDocumentKey, (chat) => {
+      if (chat.pendingReview?.proposal?.id !== proposal.id) return chat;
+      return {
+        ...chat,
+        pendingReview: {
+          ...chat.pendingReview,
+          proposal: { ...chat.pendingReview.proposal, status: "stale" },
+        },
+        error: "涉及信笺版本已变化，这份协作方案已过期",
+      };
+    });
+  }, [
+    activeCollaborationReview,
+    collaborationLockedTabIds,
+    documentState.documentId,
+    editor,
+    openTabs,
+    pendingCollaborationOwner,
+    updateChatStateForKey,
+  ]);
 
   useEffect(() => {
     syncAiChatSelectionDecorations(editor, aiChatMode ? aiChatSelections : []);
@@ -1537,6 +1622,7 @@ export default function App() {
 
   const { toggleAiModeChooser } = useAiModeChooserActions({
     activeTabReadOnly,
+    aiCollaborationPending: Boolean(pendingCollaborationOwner),
     aiHasUsableProvider,
     aiModeChooserOpen,
     openAiSettings,
@@ -1998,21 +2084,22 @@ export default function App() {
     if (!editor) {
       return undefined;
     }
-    editor.setEditable(!activeTabReadOnly && !(aiMode && aiStatus === "streaming") && !aiApplyPreview);
+    editor.setEditable(!activeTabReadOnly && !activeTabCollaborationLocked && !(aiMode && aiStatus === "streaming") && !aiApplyPreview);
     return () => {
       editor.setEditable(true);
     };
-  }, [activeTabReadOnly, aiApplyPreview, aiMode, aiStatus, editor]);
+  }, [activeTabCollaborationLocked, activeTabReadOnly, aiApplyPreview, aiMode, aiStatus, editor]);
 
   useEffect(() => {
     if (!rightSplitEditor) {
       return undefined;
     }
     rightSplitEditor.setEditable(!rightSplitReadOnly);
+    if (rightSplitCollaborationLocked) rightSplitEditor.setEditable(false);
     return () => {
       rightSplitEditor.setEditable(true);
     };
-  }, [rightSplitEditor, rightSplitReadOnly]);
+  }, [rightSplitCollaborationLocked, rightSplitEditor, rightSplitReadOnly]);
 
   useAiElapsedLifecycle({
     aiMode,
@@ -2035,6 +2122,47 @@ export default function App() {
     openReleaseNotes,
     closeReleaseNotes,
   } = useHelpReleaseActions(setHelpOpen, setReleaseNotesOpen);
+
+  const handleOpenHelpCenter = useCallback(() => {
+    setHelpTargetTopicId("");
+    setHelpAssistantOpen(false);
+    openHelpCenter();
+  }, [openHelpCenter]);
+
+  const handleOpenHelpAssistant = useCallback(() => {
+    setHelpOpen(false);
+    setHelpAssistantOpen(true);
+  }, [setHelpOpen]);
+
+  const handleOpenHelpAssistantSettings = useCallback(() => {
+    setHelpAssistantOpen(false);
+    openAiSettings({ panel: "tasks", taskId: "helpAssistant" });
+  }, [openAiSettings]);
+
+  const handleOpenHelpAssistantSource = useCallback((topicId) => {
+    setHelpAssistantOpen(false);
+    setHelpTargetTopicId(topicId || "");
+    openHelpCenter();
+  }, [openHelpCenter]);
+
+  const handleDeleteHelpAssistantSession = useCallback(async (session) => {
+    setHelpAssistantOpen(false);
+    const decision = await showConfirmDialog({
+      tone: "warning",
+      icon: Trash2,
+      eyebrow: "AI精灵",
+      title: `删除“${session?.title || "这段对话"}”？`,
+      message: "这段问答会从本机历史中永久删除。",
+      detail: "信笺、资料区和其他 AI 记录不会受到影响。",
+      cancelValue: "cancel",
+      actions: [
+        { value: "delete", label: "删除", variant: "danger", icon: Trash2 },
+        { value: "cancel", label: "取消", variant: "secondary", autoFocus: true },
+      ],
+    });
+    setHelpAssistantOpen(true);
+    return decision === "delete";
+  }, [showConfirmDialog]);
 
   const clearUpdateResultReset = useClearUpdateResultReset(updateResultResetTimerRef);
 
@@ -2822,6 +2950,10 @@ export default function App() {
   );
 
   const handleCloseTab = useCallback(async (tabId) => {
+    if (collaborationLockedTabIds.has(tabId)) {
+      showStatus("这封信笺正被 AI 协作审阅锁定，请先完成或取消审阅", "warning");
+      return { status: "canceled" };
+    }
     const tab = openTabsRef.current.find((candidate) => candidate.id === tabId);
     const sessionSummary = selectionAi.getTabSessionSummary(tabId);
     if (
@@ -2852,6 +2984,7 @@ export default function App() {
     }
     return documentPersistenceController.closeTab(tabId);
   }, [
+    collaborationLockedTabIds,
     documentPersistenceController,
     selectionAi.getTabSessionSummary,
     showConfirmDialog,
@@ -3468,10 +3601,22 @@ export default function App() {
   const handleCreateFolderInTree = workspaceFileMutationPort.createFolder;
   const handleCreateDocumentInTree = workspaceFileMutationPort.createDocument;
   const handleRenameTreeEntry = workspaceFileMutationPort.renameEntry;
+  const handleGuardedRenameTreeEntry = useCallback((entry, ...args) => {
+    const entryPath = typeof entry === "string" ? entry : entry?.path;
+    if (entryPath && (isCollaborationPathLocked(entryPath) || collaborationLockedPaths.some((lockedPath) => pathIsSameOrInside(lockedPath, entryPath)))) {
+      showStatus("涉及 AI 协作审阅的信笺或目录不能重命名", "warning");
+      return false;
+    }
+    return handleRenameTreeEntry(entry, ...args);
+  }, [collaborationLockedPaths, isCollaborationPathLocked, showStatus, workspaceFileMutationPort]);
   const handleBackupTreeDocument = workspaceFileMutationPort.backupDocument;
 
   const handleDeleteTreeEntry = useCallback(async (entry, interaction = {}) => {
     if (!entry?.path) {
+      return;
+    }
+    if (isCollaborationPathLocked(entry.path) || collaborationLockedPaths.some((lockedPath) => pathIsSameOrInside(lockedPath, entry.path))) {
+      showStatus("涉及 AI 协作审阅的信笺或目录不能删除", "warning");
       return;
     }
     const fallbackFolderPath = folderStateRef.current.path;
@@ -3531,9 +3676,17 @@ export default function App() {
     } finally {
       barrier.release();
     }
-  }, [documentPersistenceController, showConfirmDialog, showStatus, snapshotLiveTabs, workspaceFileMutationPort]);
+  }, [collaborationLockedPaths, documentPersistenceController, isCollaborationPathLocked, showConfirmDialog, showStatus, snapshotLiveTabs, workspaceFileMutationPort]);
 
   const handleMoveTreeEntry = workspaceFileMutationPort.moveEntry;
+  const handleGuardedMoveTreeEntry = useCallback((entry, ...args) => {
+    const entryPath = typeof entry === "string" ? entry : entry?.path;
+    if (entryPath && (isCollaborationPathLocked(entryPath) || collaborationLockedPaths.some((lockedPath) => pathIsSameOrInside(lockedPath, entryPath)))) {
+      showStatus("涉及 AI 协作审阅的信笺或目录不能移动", "warning");
+      return false;
+    }
+    return handleMoveTreeEntry(entry, ...args);
+  }, [collaborationLockedPaths, isCollaborationPathLocked, showStatus, workspaceFileMutationPort]);
   const handleToggleFolder = workspaceFileNavigationPort.toggleFolder;
 
   const handleOutlineItemClick = useCallback(
@@ -3885,6 +4038,7 @@ export default function App() {
     activePane,
     activeTabReadOnly,
     aiHasUsableProvider,
+    aiCollaborationPending: Boolean(pendingCollaborationOwner),
     aiModeKind,
     aiStatus,
     effectiveAiProvider,
@@ -4390,7 +4544,7 @@ export default function App() {
     updateChatState({ input: prompt });
   }, [aiChatSelections.length, showStatus, updateChatState]);
 
-  const createAiApplySafetySnapshot = useCallback(async () => {
+  const createAiApplySafetySnapshot = useCallback(async (name = "AI 应用前") => {
     if (typeof bridge.createDocumentHistory !== "function") {
       throw new Error("当前版本不支持本地安全版本");
     }
@@ -4402,7 +4556,7 @@ export default function App() {
     const result = await bridge.createDocumentHistory({
       documentId,
       document,
-      name: "AI 应用前",
+      name,
       pinned: false,
     });
     if (!result?.ok || !result?.entry) {
@@ -4460,6 +4614,190 @@ export default function App() {
     setManualAiApply,
     showStatus,
   });
+
+  const getAiCollaborationOverlays = useCallback(() => (
+    snapshotLiveTabs().filter((tab) => tab.path && tab.document).map((tab) => ({
+      path: tab.path,
+      document: tab.document,
+      revision: String(documentRevisionPort.readLiveRevision(tab.id) || ""),
+    }))
+  ), [documentRevisionPort, snapshotLiveTabs]);
+  const {
+    acceptAllPendingCollaboration,
+    collaborationBusy,
+    collaborationPendingQuestion,
+    collaborationStartedAt,
+    collaborationStatusText,
+    commitCollaborationReview,
+    discardCollaborationReview,
+    sendAiCollaboration,
+    stopAiCollaboration,
+    updateCollaborationOperation,
+  } = useAiCollaborationActions({
+    activeTabId,
+    activeTabReadOnly,
+    aiChatInput,
+    aiChatMessages,
+    aiStatus,
+    applyTitle: handleTitleChange,
+    createSafetySnapshot: createAiApplySafetySnapshot,
+    currentPath,
+    editor,
+    effectiveAiConfig,
+    getActiveDocumentKey,
+    getActiveDocumentSnapshot,
+    getSaveDocument,
+    getWorkspaceOverlays: getAiCollaborationOverlays,
+    handleSendAiChat,
+    openDocumentPath: handleOpenFolderFile,
+    showConfirmDialog,
+    showStatus,
+    updateChatState,
+    updateChatStateForKey,
+    writingWorkspaceRoot,
+  });
+  const pendingCollaborationProposalId = pendingCollaborationOwner?.pendingReview?.proposal?.id || "";
+  const pendingCollaborationProposalStatus = pendingCollaborationOwner?.pendingReview?.proposal?.status || "";
+  useEffect(() => {
+    const pending = pendingCollaborationOwner?.pendingReview;
+    const proposal = pending?.proposal;
+    if (!pending || !proposal || proposal.status === "stale" || typeof bridge.validateAiCollaborationProposal !== "function") return undefined;
+    const hasExternalSources = proposal.sources.some((source) => (
+      source.relativePath && source.documentId !== proposal.base.documentId
+    ));
+    if (!hasExternalSources) return undefined;
+    let active = true;
+    bridge.validateAiCollaborationProposal({
+      workspaceRoot: pending.workspaceRoot,
+      currentDocumentId: proposal.base.documentId,
+      sources: proposal.sources,
+      overlays: getAiCollaborationOverlays(),
+    }).then((result) => {
+      if (!active || !result?.stale) return;
+      updateChatStateForKey(pending.originDocumentKey, (chat) => {
+        if (chat.pendingReview?.proposal?.id !== proposal.id) return chat;
+        return {
+          ...chat,
+          pendingReview: {
+            ...chat.pendingReview,
+            proposal: { ...chat.pendingReview.proposal, status: "stale" },
+          },
+          error: result.message || "涉及信笺版本已变化，这份协作方案已过期",
+        };
+      });
+    }).catch(() => {
+      // A transient validation failure does not mutate the proposal; commit still fails closed.
+    });
+    return () => { active = false; };
+  }, [
+    getAiCollaborationOverlays,
+    pendingCollaborationOwner,
+    pendingCollaborationProposalId,
+    pendingCollaborationProposalStatus,
+    updateChatStateForKey,
+  ]);
+  const handleStopAiWork = useCallback(() => {
+    if (collaborationBusy) return stopAiCollaboration();
+    return handleStopAi();
+  }, [collaborationBusy, handleStopAi, stopAiCollaboration]);
+  const handleRegenerateCollaboration = useCallback(() => {
+    const lastRequest = [...aiChatMessages].reverse().find((message) => message.role === "user")?.content || "";
+    updateChatState((chat) => {
+      if (!chat.pendingReview) return chat;
+      const proposal = chat.pendingReview.proposal;
+      return {
+        ...chat,
+        pendingReview: null,
+        input: lastRequest,
+        proposalSummaries: [...(chat.proposalSummaries || []), {
+          id: proposal.id,
+          status: "stale",
+          summary: proposal.summary || proposal.reply,
+          acceptedCount: 0,
+          rejectedCount: proposal.operations.length,
+          resolvedAt: Date.now(),
+        }].slice(-20),
+      };
+    });
+    showStatus("已基于原请求准备重新生成，请确认输入后发送", "success");
+  }, [aiChatMessages, showStatus, updateChatState]);
+
+  useEffect(() => {
+    if (!activeCollaborationReview || activeCollaborationReview.proposal.status === "stale" || !editor?.state?.doc) {
+      syncAiCollaborationReviewDecorations(editor, null);
+      return;
+    }
+    const manifest = buildAiApplyBlockManifest(editor.state.doc);
+    const originalTitle = activeCollaborationReview.proposal.sources
+      .find((source) => source.documentId === activeCollaborationReview.proposal.base.documentId)?.title || documentState.title;
+    const items = activeCollaborationReview.proposal.operations.map((operation) => {
+      let decorationOperation;
+      if (["replace_blocks", "insert_before", "insert_after"].includes(operation.type)) {
+        decorationOperation = createCollaborationEditorOperation(operation, manifest);
+      } else if (operation.type === "set_title") {
+        decorationOperation = { action: "set_title", from: 0, to: 0, title: operation.title };
+      } else if (operation.type === "create_document") {
+        decorationOperation = {
+          action: "create_document",
+          from: editor.state.doc.content.size,
+          to: editor.state.doc.content.size,
+          html: collaborationBlocksToSafeHtml(operation.blocks),
+          title: operation.title,
+          fileName: operation.fileName,
+          folderRelativePath: operation.folderRelativePath,
+        };
+      }
+      const reviewText = operation.blocks ? collaborationBlocksToReviewText(operation.blocks) : undefined;
+      const editFields = operation.type === "set_title"
+        ? [{ key: "title", label: "拟应用标题", value: operation.title }]
+        : operation.type === "create_document"
+          ? [
+              { key: "title", label: "派生信笺标题", value: operation.title },
+              { key: "fileName", label: "文件名", value: operation.fileName },
+              { key: "folderRelativePath", label: "工作区内目标文件夹", value: operation.folderRelativePath },
+            ]
+          : [];
+      return {
+        id: operation.id,
+        label: operation.label,
+        decision: operation.decision,
+        editable: true,
+        editFields,
+        manifest,
+        operation: decorationOperation,
+        originalTitle,
+        reviewRevision: operation.reviewRevision,
+        reviewText,
+        onDecision: (decision) => updateCollaborationOperation(operation.id, {
+          decision,
+          selected: decision === "accepted",
+        }),
+        onSave: ({ fields, reviewText: nextReviewText }) => {
+          try {
+            const patch = { ...fields, edited: true };
+            if (typeof nextReviewText === "string") {
+              const blocks = parseCollaborationReviewText(nextReviewText);
+              if (!blocks.length && !operation.sourceBlockIds?.length && !operation.sourceDocumentIds?.length) {
+                throw new Error("拟应用内容不能为空");
+              }
+              patch.blocks = blocks;
+            }
+            updateCollaborationOperation(operation.id, patch);
+            return { ok: true };
+          } catch (error) {
+            showStatus(error?.message || "拟应用内容格式无效", "warning");
+            return { ok: false, message: error?.message || "拟应用内容格式无效" };
+          }
+        },
+      };
+    })
+      .filter((item) => item.operation);
+    syncAiCollaborationReviewDecorations(editor, items.length ? {
+      id: activeCollaborationReview.proposal.id,
+      items,
+    } : null);
+    return () => syncAiCollaborationReviewDecorations(editor, null);
+  }, [activeCollaborationReview, documentState.title, editor]);
 
   const measuredWorkSurfaceWidth = workSurfaceWidth || Math.max(1, window.innerWidth - (leftSidebarCollapsed ? 0 : 330));
   const secondaryGroupOpen = workspaceGroups.secondary.views.length > 0;
@@ -4543,6 +4881,7 @@ export default function App() {
     || Boolean(settingsDialog.section)
     || tabTemplateDialog.open
     || helpOpen
+    || helpAssistantOpen
     || releaseNotesOpen
     || exportDialogOpen
     || internalLinkPicker
@@ -4580,8 +4919,10 @@ export default function App() {
         onInsertMermaid={() => openProfessionalUi("mermaid")}
         onInsertBookmark={handleInsertBookmark}
         onOpenCitationPicker={handleOpenCitationPicker}
-        onOpenHelp={openHelpCenter}
+        onOpenHelp={handleOpenHelpCenter}
+        onOpenHelpAssistant={handleOpenHelpAssistant}
         onOpenSettings={openSettings}
+        helpTriggerRef={helpTriggerRef}
         settingsTriggerRef={settingsTriggerRef}
         elementsTriggerRef={elementsTriggerRef}
         exportTriggerRef={exportTriggerRef}
@@ -4618,10 +4959,10 @@ export default function App() {
             onToggleFolder={handleToggleFolder}
             onCreateFolder={handleCreateFolderInTree}
             onCreateDocument={handleCreateDocumentInTree}
-            onRenameEntry={handleRenameTreeEntry}
+            onRenameEntry={handleGuardedRenameTreeEntry}
             onBackupDocument={handleBackupTreeDocument}
             onDeleteEntry={handleDeleteTreeEntry}
-            onMoveEntry={handleMoveTreeEntry}
+            onMoveEntry={handleGuardedMoveTreeEntry}
             onModeChange={setLeftSidebarMode}
             onOutlineItemClick={handleOutlineItemClick}
             researchPanel={(
@@ -4785,13 +5126,14 @@ export default function App() {
                     editor={editor}
                     availableProviders={availableAiProviders}
                     selectedProvider={effectiveAiProvider}
-                    status={aiStatus}
+                    status={collaborationBusy ? "streaming" : aiStatus}
                     messages={aiChatMessages}
-                    hasState={Boolean(aiChatMessages.length || aiChatInput || aiChatSelections.length || aiError)}
+                    hasState={Boolean(aiChatMessages.length || aiChatInput || aiChatSelections.length || aiError || pendingCollaborationOwner)}
                     codexImageMode={aiChatCodexImageMode}
+                    frozen={Boolean(pendingCollaborationOwner)}
                     onProviderChange={setAiSelectedProvider}
                     onCodexImageModeChange={handleCodexImageModeChange}
-                    onStop={handleStopAi}
+                    onStop={handleStopAiWork}
                     onClear={handleClearAiChat}
                     onExport={handleExportAiChat}
                   />
@@ -4904,6 +5246,12 @@ export default function App() {
                   <button type="button" onClick={cancelAiApplyPreview}>取消对比</button>
                 </div>
               ) : null}
+              {pendingCollaborationOwner ? (
+                <div className="ai-collaboration-lock-banner" role="status">
+                  <span>{activeCollaborationReview ? "AI 协作审阅中：涉及信笺已冻结，逐项确认后再提交" : "另一封信笺有待完成的 AI 协作审阅"}</span>
+                  {!activeCollaborationReview ? <button type="button" onClick={() => handleSelectTab(pendingCollaborationOwner.tabId)}>返回审阅</button> : null}
+                </div>
+              ) : null}
               <PaperCanvas
                 editor={editor}
                 document={mainCanvasDocument}
@@ -4919,8 +5267,8 @@ export default function App() {
                   !aiMode && activePane === "main" ? "active-pane" : "",
                 ].filter(Boolean).join(" ")}
                 onActivate={() => setActivePane("main")}
-                readOnly={activeTabReadOnly || (aiMode && aiStatus === "streaming") || Boolean(aiApplyPreview)}
-                aiCaptureEnabled={aiMode && aiChatMode}
+                readOnly={activeTabReadOnly || activeTabCollaborationLocked || (aiMode && aiStatus === "streaming") || collaborationBusy || Boolean(aiApplyPreview)}
+                aiCaptureEnabled={aiMode && aiChatMode && !pendingCollaborationOwner}
                 onCaptureAiSelection={handleCaptureAiChatSelection}
                 selectionAiEnabled={!aiMode && !aiApplyPreview}
                 onOpenSelectionAi={(selection, anchor) => openSelectionAiForPane("main", selection, anchor)}
@@ -4969,7 +5317,7 @@ export default function App() {
                       savedSelectionRef={rightSplitSelectionRef}
                       className={activePane === "right" ? "right-split-canvas active-pane" : "right-split-canvas"}
                       onActivate={() => setActivePane("right")}
-                      readOnly={rightSplitReadOnly}
+                      readOnly={rightSplitReadOnly || rightSplitCollaborationLocked}
                       selectionAiEnabled={!aiMode}
                       onOpenSelectionAi={(selection, anchor) => openSelectionAiForPane("right", selection, anchor)}
                       comments={rightSplitDocument.comments}
@@ -4993,6 +5341,7 @@ export default function App() {
                     previewLoader={handleLoadIndependentResearchPreview}
                     onOpenExternal={handleOpenIndependentResearchExternal}
                     onShowInFolder={handleShowResearchEntry}
+                    onOpenTranslationSettings={() => openAiSettings({ panel: "tasks", taskId: "researchTranslation" })}
                     onEditSource={handleEditLibrarySource}
                     viewId={activeSecondaryView.viewId}
                     onActivate={() => setActivePane("right")}
@@ -5032,8 +5381,18 @@ export default function App() {
                   selectedTexts={aiChatSelections}
                   status={aiStatus}
                   error={aiError}
+                  collaborationBusy={collaborationBusy}
+                  collaborationFrozen={Boolean(pendingCollaborationOwner)}
+                  collaborationPendingQuestion={collaborationPendingQuestion}
+                  collaborationStartedAt={collaborationStartedAt}
+                  collaborationStatusText={collaborationStatusText}
+                  pendingReview={activeCollaborationReview}
+                  onAcceptAllPendingCollaboration={acceptAllPendingCollaboration}
                   onInputChange={(input) => updateChatState({ input })}
-                  onSend={handleSendAiChat}
+                  onSend={sendAiCollaboration}
+                  onCommitCollaboration={commitCollaborationReview}
+                  onDiscardCollaboration={discardCollaborationReview}
+                  onRegenerateCollaboration={handleRegenerateCollaboration}
                   onRemoveSelectedText={handleRemoveAiChatSelection}
                   onJumpSelectedText={handleJumpAiChatSelection}
                   onPresetSelect={handleAiChatPresetSelect}
@@ -5453,6 +5812,18 @@ export default function App() {
       <HelpCenterDialog
         open={helpOpen}
         onClose={closeHelpCenter}
+        initialTopicId={helpTargetTopicId}
+        returnFocusRef={helpTriggerRef}
+      />
+      <HelpAssistantDialog
+        open={helpAssistantOpen}
+        aiConfig={aiConfig}
+        returnFocusRef={helpTriggerRef}
+        onClose={() => setHelpAssistantOpen(false)}
+        onOpenSettings={handleOpenHelpAssistantSettings}
+        onOpenHelpTopic={handleOpenHelpAssistantSource}
+        onRequestDelete={handleDeleteHelpAssistantSession}
+        onStatus={showStatus}
       />
       <ReleaseNotesDialog
         open={releaseNotesOpen}

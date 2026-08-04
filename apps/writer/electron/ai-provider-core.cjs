@@ -303,6 +303,12 @@ function normalizeAiConfig(config = {}) {
   const applyResolver = normalizeAiTaskModelAssignment(
     source.taskModels?.applyResolver,
   );
+  const helpAssistant = normalizeAiTaskModelAssignment(
+    source.taskModels?.helpAssistant,
+  );
+  const researchTranslation = normalizeAiTaskModelAssignment(
+    source.taskModels?.researchTranslation,
+  );
   const compositionAssignments = [
     source.taskModels?.composeDraft,
     source.taskModels?.composeOutline,
@@ -318,6 +324,8 @@ function normalizeAiConfig(config = {}) {
     taskModels: {
       selectionChat,
       applyResolver,
+      helpAssistant,
+      researchTranslation,
       composeDraft,
     },
   };

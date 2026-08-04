@@ -76,7 +76,7 @@ App / 顶层页面
 
 `bridge` 在 Electron 中使用 `window.paperWriter`，在普通浏览器中使用 `browserBridge`。两种运行环境允许能力实现不同，但调用方看到的方法名和调用形状必须稳定。
 
-`bridge-surface-contract.test.js` 固定浏览器桥的精确 120-key 表面；新增、删除或重命名方法时必须同步评估 Electron preload 契约，不能只修改组合入口。
+`bridge-surface-contract.test.js` 固定浏览器桥的完整方法表面；新增、删除或重命名方法时必须同步评估 Electron preload 契约，不能只修改组合入口。
 
 ## Electron 与 IPC
 
@@ -94,6 +94,9 @@ App / 顶层页面
 - `research-web-view-ipc.cjs`
 - `ai-config-ipc.cjs`
 - `ai-generation-ipc.cjs`
+- `ai-collaboration-ipc.cjs`
+- `help-assistant-ipc.cjs`
+- `research-translation-ipc.cjs`
 - `workspace-folder-ipc.cjs`
 - `document-open-ipc.cjs`
 - `research-library-ipc.cjs`
@@ -106,6 +109,10 @@ App / 顶层页面
 领域 registrar 接收显式依赖并注册自己的 channel，不应直接创建窗口级全局状态，也不能绕过可信 registrar 调用原生 `electron.ipcMain.handle`。`main.cjs` 可继续拥有需要跨领域共享的生命周期状态，并通过 getter、setter、队列或服务显式注入。
 
 有状态能力分别由 AI、文档存储与资源、导出、文件系统、资料和工作区 runtime 持有。`main.cjs` 只组合这些 runtime、registrar、窗口生命周期和退出清理；保存队列、watcher generation、AI request registry 等私有状态不能重新搬回组合根。
+
+AI精灵由 `help-assistant-runtime.cjs` 在主进程持有检索、提示构造、单请求注册表和独立原子 JSON 历史。每次有效提问都会进入任务模型；常驻产品概览和相关知识检索只作为 RAG 上下文，不参与决定是否调用模型。`apps/writer/knowledge/` 的两层版本化源同时生成帮助中心主题与 Electron 检索索引；构建检查会拒绝失效关联、引用、版本和陈旧生成物。renderer 通过专用 bridge/IPC 只提交会话标识、请求标识和问题，不能提交知识块、正文或其他文档上下文。
+
+AI 协作由 `ai-collaboration-runtime.cjs` 持有工作区只读检索、来源快照校验和两阶段提交；renderer 只负责意图选择、结构化方案校验及逐项审阅。资料翻译则由 `research-translation-runtime.cjs` 完成任务模型选择、分批请求和结构化响应修复，renderer 负责从当前预览提取安全文本块、定位临时译文和维护仅本次运行有效的 LRU 缓存。两条链路均通过独立 IPC 注册，不复用可携带任意正文的通用消息入口。
 
 ## Preload 生成流程
 
@@ -121,7 +128,7 @@ App / 顶层页面
 npm.cmd run preload:build
 ```
 
-`preload-contract.test.cjs` 固定 `window.paperWriter` 的精确 117-key 表面，并检查每个 invoke 的 channel/参数、事件载荷/取消订阅以及生成包新鲜度。`npm.cmd run check` 也会拒绝过期的 `preload.cjs`。
+`preload-contract.test.cjs` 固定 `window.paperWriter` 的完整方法表面，并检查每个 invoke 的 channel/参数、事件载荷/取消订阅以及生成包新鲜度。`npm.cmd run check` 也会拒绝过期的 `preload.cjs`。
 
 ## CSS 层叠
 

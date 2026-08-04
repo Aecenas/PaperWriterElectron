@@ -80,7 +80,7 @@ export async function copyAiBlockToClipboard(block) {
 export function chatMessagesToMarkdown(document, messages) {
   const title = document?.title || "未命名信笺";
   const lines = [
-    `# ${title} - AI问答`,
+    `# ${title} - AI协作`,
     "",
     `导出时间：${new Date().toLocaleString("zh-CN")}`,
     "",

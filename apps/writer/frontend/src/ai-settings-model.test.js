@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AI_PROVIDER_OPTIONS,
+  AI_TASK_MODEL_DEFINITIONS,
   createAiModelKey,
   getAiProviderConnectionMeta,
   getAiProviderRuntimeConfig,
@@ -117,7 +118,7 @@ test("task assignments reject unsafe provider ids and incomplete pairs", () => {
   });
 });
 
-test("legacy configs gain an empty selectionChat assignment without changing applyResolver", () => {
+test("legacy configs gain empty selection-chat and research-translation assignments without changing applyResolver", () => {
   const normalized = normalizePublicAiConfig({
     taskModels: {
       applyResolver: {
@@ -135,6 +136,12 @@ test("legacy configs gain an empty selectionChat assignment without changing app
     modelId: "",
     requestParams: {},
   });
+  assert.deepEqual(normalized.taskModels.researchTranslation, {
+    providerId: "",
+    modelId: "",
+    requestParams: {},
+  });
+  assert.equal(AI_TASK_MODEL_DEFINITIONS.find((task) => task.id === "researchTranslation")?.label, "资料翻译");
   assert.equal(Object.hasOwn(normalized.taskModels, "unknownTask"), false);
   assert.equal(normalized.taskModels.applyResolver.providerId, "deepseek");
 });

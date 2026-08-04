@@ -14,6 +14,9 @@ const docx = require("docx");
 const iconvLite = require("iconv-lite");
 const { registerAiConfigIpcHandlers } = require("./ai-config-ipc.cjs");
 const { registerAiGenerationIpcHandlers } = require("./ai-generation-ipc.cjs");
+const { registerAiCollaborationIpcHandlers } = require("./ai-collaboration-ipc.cjs");
+const { registerHelpAssistantIpcHandlers } = require("./help-assistant-ipc.cjs");
+const { registerResearchTranslationIpcHandlers } = require("./research-translation-ipc.cjs");
 const { registerCitationIpcHandlers } = require("./citation-ipc.cjs");
 const { registerCompositionIpcHandlers } = require("./composition-ipc.cjs");
 const { registerDocumentHistoryIpcHandlers } = require("./document-history-ipc.cjs");
@@ -26,6 +29,7 @@ const { registerDocumentOpenIpcHandlers } = require("./document-open-ipc.cjs");
 const { registerDocumentOutputIpcHandlers } = require("./document-output-ipc.cjs");
 const { registerDocumentSaveIpcHandlers } = require("./document-save-ipc.cjs");
 const { createAiRuntime } = require("./ai-runtime.cjs");
+const { createAiCollaborationRuntime } = require("./ai-collaboration-runtime.cjs");
 const { createCitationRuntime } = require("./citation-runtime.cjs");
 const { createCompositionJobStore } = require("./composition-job-store.cjs");
 const { createCompositionRuntime } = require("./composition-runtime.cjs");
@@ -76,6 +80,7 @@ const {
 } = require("./document-storage.cjs");
 const {
   createWorkspaceSearchIndex,
+  htmlToSearchText,
   isPathInside,
   isWorkspaceRelationshipCandidate,
   readSearchDocument,
@@ -339,6 +344,13 @@ const aiRuntime = createAiRuntime({
   sanitizeName,
   timestampForFileName,
   randomUUID,
+  knowledgeIndexPath: path.join(
+    __dirname,
+    nativeFs.existsSync(path.join(__dirname, "knowledge", "runtime-index.generated.json"))
+      ? "knowledge"
+      : "../knowledge",
+    "runtime-index.generated.json",
+  ),
 });
 
 const profileRuntime = createProfileRuntime({
@@ -414,6 +426,34 @@ const workspaceRuntime = createWorkspaceRuntime({
   getUserDataPath: () => app.getPath("userData"),
   getRendererWebContents: () => mainWindow?.webContents,
   sendRendererEvent,
+  writeDebugLog: writeAiDebugLog,
+});
+
+const aiCollaborationRuntime = createAiCollaborationRuntime({
+  completeTask: aiRuntime.completeSelectedAiTask,
+  fs,
+  path,
+  createHash,
+  randomUUID,
+  getUserDataPath: () => app.getPath("userData"),
+  atomicWriteFile,
+  assertAuthorizedDirectory,
+  isPathInside,
+  isSupportedDocument,
+  walkWorkspaceDocuments,
+  readSearchDocument,
+  searchWorkspace: workspaceRuntime.facade.search,
+  loadPaperDocument: storageFacade.loadPaperDocument,
+  savePaperDocument: storageFacade.savePaperDocument,
+  authorizeDocumentPath,
+  normalizeDocument: documentModel.normalizeDocument,
+  createEmptyAiState: documentModel.createEmptyAiState,
+  htmlToSearchText,
+  emitEvent: (sender, payload) => sendRendererEvent(
+    sender,
+    "ai-collaboration:event",
+    payload,
+  ),
   writeDebugLog: writeAiDebugLog,
 });
 
@@ -1124,6 +1164,20 @@ registerAiGenerationIpcHandlers({
   generationFacade: aiRuntime.generationFacade,
 });
 
+registerAiCollaborationIpcHandlers({
+  ipcMain,
+  collaborationFacade: aiCollaborationRuntime.facade,
+});
+
+registerHelpAssistantIpcHandlers({
+  ipcMain,
+  helpAssistantFacade: aiRuntime.helpAssistantFacade,
+});
+registerResearchTranslationIpcHandlers({
+  ipcMain,
+  researchTranslationFacade: aiRuntime.researchTranslationFacade,
+});
+
 registerCompositionIpcHandlers({
   ipcMain,
   compositionFacade: compositionRuntime,
@@ -1346,6 +1400,7 @@ app.whenReady().then(async () => {
   );
   await initializeFilesystemAccess();
   await compositionRuntime.initialize();
+  await aiCollaborationRuntime.initialize();
   await researchRuntime.initialize();
   await documentAssetsRuntime.initialize();
   documentStorageRuntime.initializeDocumentInterchange();
@@ -1373,6 +1428,7 @@ app.on("before-quit", (event) => {
   workspaceRuntime.shutdown();
   researchRuntime.shutdown();
   aiRuntime.abortAll();
+  aiCollaborationRuntime.abortAll();
   const storageShutdown = documentStorageRuntime.shutdown();
   if (storageShutdown.pending) {
     event.preventDefault();

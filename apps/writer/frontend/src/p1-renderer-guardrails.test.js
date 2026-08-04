@@ -267,7 +267,7 @@ test("focus selects the canvas pane and modal dialogs isolate background shortcu
   assert.match(shortcuts, /if \(isGlobalShortcutBlocked\(event\)\) return;/);
   assert.match(uiInteractionsSource, /export function isGlobalShortcutBlocked\(/);
   assert.match(uiInteractionsSource, /export function useModalFocusTrap\(/);
-  assert.match(helpCenterSource, /useModalFocusTrap\(open, dialogRef, closeButtonRef\)/);
+  assert.match(helpCenterSource, /useModalFocusTrap\(open, dialogRef, closeButtonRef, returnFocusRef\)/);
   assert.match(exportDialogSource, /useModalFocusTrap\(open, dialogRef, firstFormatRef, returnFocusRef\)/);
   assert.match(appDialogsSource, /useModalFocusTrap\(Boolean\(dialog\), dialogRef/);
 });

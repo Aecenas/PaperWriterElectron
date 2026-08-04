@@ -1,6 +1,6 @@
 {
   "name": "paperwriter-electron",
-  "version": "1.1.1",
+  "version": "1.1.5",
   "private": false,
   "license": "MIT",
   "main": "main.cjs",
@@ -9,7 +9,7 @@
     "preload:check": "node build-preload.cjs --check",
     "dev": "node build-preload.cjs && electron .",
     "dev:vite": "node build-preload.cjs && node dev-vite.cjs",
-    "check": "node build-preload.cjs --check && node check-cjs.cjs",
+    "check": "node ../knowledge/build-knowledge.cjs --check && node build-preload.cjs --check && node check-cjs.cjs",
     "test": "node --test *.test.cjs",
     "frontend:build": "npm --prefix ../frontend run build",
     "dist": "npm run frontend:build && node build-preload.cjs && electron-builder --win nsis --x64",
@@ -65,6 +65,13 @@
         "to": "frontend/dist",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "../knowledge",
+        "to": "knowledge",
+        "filter": [
+          "runtime-index.generated.json"
         ]
       }
     ],

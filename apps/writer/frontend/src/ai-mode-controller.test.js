@@ -325,7 +325,7 @@ test("streaming mode switch cancels and clears only active identity while retain
     ["transition", "chat"],
     ["chooser", false],
   ]);
-  assert.equal(dialogs[0].title, "停止AI优化并切换到AI问答？");
+  assert.equal(dialogs[0].title, "停止AI优化并切换到AI协作？");
   assert.equal(dialogs[0].message, "当前生成会停止，已经产生的内容会保留。");
   assert.deepEqual(
     dialogs[0].actions.map(({ value, label }) => ({ value, label })),

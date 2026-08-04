@@ -259,6 +259,168 @@ export function buildAiApplyPreviewDecorationSet(doc, preview) {
   return DecorationSet.create(doc, decorations);
 }
 
+export function buildAiCollaborationReviewDecorationSet(doc, review) {
+  const items = Array.isArray(review?.items) ? review.items : [];
+  if (!items.length) return DecorationSet.empty;
+  const decorations = [];
+  items.forEach((item, index) => {
+    const operation = item?.operation;
+    const manifest = item?.manifest;
+    if (!operation) return;
+    if (operation.action === "replace" && item.decision !== "rejected") {
+      (operation.targetBlockIds || []).forEach((targetBlockId) => {
+        const target = manifest.blocks?.find((block) => block.id === targetBlockId);
+        if (!target || target.from < 0 || target.to > doc.content.size || target.from >= target.to) return;
+        decorations.push(Decoration.node(target.from, target.to, {
+          class: "ai-apply-preview-original ai-collaboration-preview-original",
+          "data-ai-collaboration-review": review.id,
+        }));
+      });
+    }
+    const position = Math.max(0, Math.min(Number(operation.to) || 0, doc.content.size));
+    decorations.push(Decoration.widget(position, () => {
+      const card = window.document.createElement("section");
+      card.className = `ai-apply-preview-card ai-collaboration-inline-preview is-${item.decision || "pending"}`;
+      card.contentEditable = "false";
+      card.setAttribute("role", "group");
+      card.setAttribute("aria-label", `协作修改预览 ${index + 1}`);
+      const heading = window.document.createElement("div");
+      heading.className = "ai-apply-preview-heading";
+      const label = window.document.createElement("strong");
+      label.textContent = ({
+        replace: "蓝色：拟替换内容",
+        insert_before: "蓝色：拟插入内容",
+        insert_after: "蓝色：拟插入内容",
+        set_title: "蓝色：拟修改标题",
+        create_document: "蓝色：拟创建派生信笺",
+      })[operation.action] || "蓝色：拟应用内容";
+      const action = window.document.createElement("span");
+      action.textContent = item.label || `修改 ${index + 1}`;
+      heading.append(label, action);
+      const body = window.document.createElement("div");
+      body.className = "ai-apply-preview-proposed";
+      if (operation.action === "set_title") {
+        const previous = window.document.createElement("p");
+        previous.className = "ai-collaboration-inline-title-old";
+        previous.textContent = `原标题：${item.originalTitle || "未命名信笺"}`;
+        const proposed = window.document.createElement("p");
+        proposed.className = "ai-collaboration-inline-title-new";
+        proposed.textContent = operation.title || "未命名信笺";
+        body.append(previous, proposed);
+      } else if (operation.action === "create_document") {
+        const metadata = window.document.createElement("p");
+        metadata.className = "ai-collaboration-inline-file-meta";
+        metadata.textContent = `${operation.title || "未命名信笺"} · ${[operation.folderRelativePath, operation.fileName].filter(Boolean).join("/")}`;
+        body.append(metadata);
+        if (operation.html) {
+          const generated = window.document.createElement("div");
+          generated.className = "ai-collaboration-inline-file-content";
+          generated.innerHTML = operation.html;
+          body.append(generated);
+        }
+      } else {
+        body.innerHTML = operation.html || "";
+      }
+      const details = window.document.createElement("p");
+      details.className = "ai-apply-preview-details";
+      details.textContent = item.decision === "accepted"
+        ? "已接受；最终提交前仍可改为拒绝"
+        : item.decision === "rejected"
+          ? "已拒绝；这项修改不会在提交时应用"
+          : operation.action === "replace"
+            ? "红色是提交后将被替换的原文；请在这里接受或拒绝"
+            : "原文尚未改变；请在这里接受或拒绝";
+
+      const actions = window.document.createElement("div");
+      actions.className = "ai-apply-preview-actions ai-collaboration-inline-actions";
+      let editPanel = null;
+      if (item.editable) {
+        const edit = window.document.createElement("button");
+        edit.type = "button";
+        edit.className = "ai-collaboration-inline-edit";
+        edit.textContent = "编辑";
+        actions.append(edit);
+        editPanel = window.document.createElement("div");
+        editPanel.className = "ai-collaboration-inline-editor";
+        editPanel.hidden = true;
+        const fieldInputs = [];
+        (item.editFields || []).forEach((field) => {
+          const fieldLabel = window.document.createElement("label");
+          fieldLabel.textContent = field.label;
+          const input = window.document.createElement("input");
+          input.type = "text";
+          input.value = field.value || "";
+          input.dataset.field = field.key;
+          fieldLabel.append(input);
+          fieldInputs.push(input);
+          editPanel.append(fieldLabel);
+        });
+        let textarea = null;
+        if (typeof item.reviewText === "string") {
+          const fieldLabel = window.document.createElement("label");
+          fieldLabel.textContent = "拟应用内容";
+          textarea = window.document.createElement("textarea");
+          textarea.rows = Math.min(14, Math.max(4, item.reviewText.split(/\r?\n/).length + 1));
+          textarea.value = item.reviewText;
+          fieldLabel.append(textarea);
+          editPanel.append(fieldLabel);
+        }
+        const editError = window.document.createElement("p");
+        editError.className = "ai-collaboration-inline-edit-error";
+        editPanel.append(editError);
+        const editorActions = window.document.createElement("div");
+        editorActions.className = "ai-collaboration-inline-editor-actions";
+        const cancelEdit = window.document.createElement("button");
+        cancelEdit.type = "button";
+        cancelEdit.textContent = "取消编辑";
+        const saveEdit = window.document.createElement("button");
+        saveEdit.type = "button";
+        saveEdit.className = "primary";
+        saveEdit.textContent = "保存修改";
+        editorActions.append(cancelEdit, saveEdit);
+        editPanel.append(editorActions);
+        edit.addEventListener("click", () => {
+          editPanel.hidden = !editPanel.hidden;
+          if (!editPanel.hidden) (textarea || fieldInputs[0])?.focus();
+        });
+        cancelEdit.addEventListener("click", () => { editPanel.hidden = true; });
+        saveEdit.addEventListener("click", () => {
+          const result = item.onSave?.({
+            fields: Object.fromEntries(fieldInputs.map((input) => [input.dataset.field, input.value])),
+            reviewText: textarea?.value,
+          });
+          if (result?.ok === false) {
+            editError.textContent = result.message || "修改内容格式无效";
+            return;
+          }
+          editPanel.hidden = true;
+        });
+      }
+      const reject = window.document.createElement("button");
+      reject.type = "button";
+      reject.className = `ai-collaboration-decision reject${item.decision === "rejected" ? " active" : ""}`;
+      reject.textContent = item.decision === "rejected" ? "已拒绝" : "拒绝";
+      reject.setAttribute("aria-pressed", String(item.decision === "rejected"));
+      reject.addEventListener("click", () => item.onDecision?.("rejected"));
+      const accept = window.document.createElement("button");
+      accept.type = "button";
+      accept.className = `ai-collaboration-decision accept primary${item.decision === "accepted" ? " active" : ""}`;
+      accept.textContent = item.decision === "accepted" ? "已接受" : "接受";
+      accept.setAttribute("aria-pressed", String(item.decision === "accepted"));
+      accept.addEventListener("click", () => item.onDecision?.("accepted"));
+      actions.append(reject, accept);
+      card.append(heading, body, details, actions);
+      if (editPanel) card.append(editPanel);
+      return card;
+    }, {
+      side: operation.action === "insert_before" ? -1 : 1,
+      key: `ai-collaboration-preview-${review.id}-${item.id || index}-${item.decision || "pending"}-${item.reviewRevision || 0}`,
+      stopEvent: (event) => Boolean(event.target?.closest?.(".ai-collaboration-inline-preview")),
+    }));
+  });
+  return DecorationSet.create(doc, decorations);
+}
+
 export const AiApplyPreviewDecorations = Extension.create({
   name: "aiApplyPreviewDecorations",
 
@@ -271,6 +433,7 @@ export const AiApplyPreviewDecorations = Extension.create({
           apply(transaction, previousDecorationSet) {
             const meta = transaction.getMeta(AI_APPLY_PREVIEW_PLUGIN_KEY);
             if (meta?.type === "show") return buildAiApplyPreviewDecorationSet(transaction.doc, meta.preview);
+            if (meta?.type === "show-collaboration") return buildAiCollaborationReviewDecorationSet(transaction.doc, meta.review);
             if (meta?.type === "clear" || transaction.docChanged) return DecorationSet.empty;
             return previousDecorationSet.map(transaction.mapping, transaction.doc);
           },
@@ -430,6 +593,13 @@ export function syncAiApplyPreviewDecorations(editor, preview = null) {
   if (!editor?.view || editor.isDestroyed) return;
   editor.view.dispatch(editor.state.tr.setMeta(AI_APPLY_PREVIEW_PLUGIN_KEY, preview
     ? { type: "show", preview }
+    : { type: "clear" }));
+}
+
+export function syncAiCollaborationReviewDecorations(editor, review = null) {
+  if (!editor?.view || editor.isDestroyed) return;
+  editor.view.dispatch(editor.state.tr.setMeta(AI_APPLY_PREVIEW_PLUGIN_KEY, review
+    ? { type: "show-collaboration", review }
     : { type: "clear" }));
 }
 

@@ -20,6 +20,8 @@ test("one AI runtime owns config, HTTP, generation, and shutdown state while mai
     httpRuntime,
     configIpc,
     generationIpc,
+    helpRuntime,
+    helpIpc,
   ] = await Promise.all([
     sourceOf("main.cjs"),
     sourceOf("ai-runtime.cjs"),
@@ -28,6 +30,8 @@ test("one AI runtime owns config, HTTP, generation, and shutdown state while mai
     sourceOf("ai-http-runtime.cjs"),
     sourceOf("ai-config-ipc.cjs"),
     sourceOf("ai-generation-ipc.cjs"),
+    sourceOf("help-assistant-runtime.cjs"),
+    sourceOf("help-assistant-ipc.cjs"),
   ]);
 
   assert.match(main, /require\("\.\/ai-runtime\.cjs"\)/);
@@ -40,6 +44,8 @@ test("one AI runtime owns config, HTTP, generation, and shutdown state while mai
     main,
     /generationFacade:\s*aiRuntime\.generationFacade/,
   );
+  assert.match(main, /helpAssistantFacade:\s*aiRuntime\.helpAssistantFacade/);
+  assert.match(main, /knowledgeIndexPath:[\s\S]*runtime-index\.generated\.json/);
   assert.match(main, /await aiRuntime\.initialize\(\)/);
   assert.match(main, /aiRuntime\.abortAll\(\)/);
   assert.doesNotMatch(
@@ -54,6 +60,7 @@ test("one AI runtime owns config, HTTP, generation, and shutdown state while mai
   assert.match(aiRuntime, /createAiHttpRuntime\(\{/);
   assert.match(aiRuntime, /createAiConfigRuntime\(\{/);
   assert.match(aiRuntime, /createAiGenerationRuntime\(\{/);
+  assert.match(aiRuntime, /createHelpAssistantRuntime\(\{/);
   assert.match(aiRuntime, /async function getCompositionModelAssignments\(\)/);
   assert.match(aiRuntime, /const compositionModelTaskKey = "composeDraft"/);
   assert.match(
@@ -135,4 +142,8 @@ test("one AI runtime owns config, HTTP, generation, and shutdown state while mai
     generationIpc,
     /generationFacade\.(?:generate|cancel)/,
   );
+  assert.match(helpRuntime, /const activeRequests = new Map\(\)/);
+  assert.match(helpRuntime, /retrieveKnowledge\(knowledgeIndex, question, session\.messages\)/);
+  assert.match(helpRuntime, /resolveCodexScopeDirectory\(\{/);
+  assert.match(helpIpc, /helpAssistantFacade\.(?:getState|generate|cancel)/);
 });

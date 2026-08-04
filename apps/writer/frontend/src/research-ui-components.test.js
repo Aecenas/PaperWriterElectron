@@ -219,6 +219,13 @@ test("secondary research pane is a fill container with a shared accessible PDF t
   assert.match(jsx, /if \(disposed\) return;[\s\S]*pdfjs\.GlobalWorkerOptions\.workerSrc/);
   assert.match(jsx, /RenderingCancelledException/);
   assert.match(jsx, /aria-live=\{error \? undefined : "polite"\}/);
+  assert.match(jsx, /useResearchTranslation/);
+  assert.match(jsx, /onContextMenu=\{openTranslationMenu\}/);
+  assert.match(jsx, /event\.shiftKey && event\.key === "F10"/);
+  assert.match(jsx, /createPdfTranslationPlan\(textContent\)/);
+  assert.match(jsx, /measurePdfTranslationBlocks/);
+  assert.match(jsx, /secondary-pdf-translation-layer/);
+  assert.match(jsx, /disabled=\{translationActive\}/);
   assert.doesNotMatch(jsx, /将第 \$\{page\} 页设为引用页码|BookmarkPlus|BookPlus/);
   assert.doesNotMatch(css, /linear-gradient/);
 });
@@ -272,7 +279,7 @@ test("static research previews cover sanitized DOCX, markdown, text, tables and 
   const css = await source("./secondary-research-pane.css");
   assert.match(pane, /import StaticResearchPreview from "\.\/research\/StaticResearchPreview\.jsx"/);
   assert.match(jsx, /readResearchPreview|loadPreview/);
-  assert.match(jsx, /dangerouslySetInnerHTML=\{\{ __html: richTextRender\.html/);
+  assert.match(jsx, /dangerouslySetInnerHTML=\{\{ __html: translation\.status === "translated" \? translatedRichHtml : richTextRender\.html/);
   assert.match(jsx, /mark\.textContent = segment\.text/);
   assert.match(jsx, /parseDelimitedPreview/);
   assert.match(jsx, /PreviewSearchForm/);
@@ -298,6 +305,38 @@ test("static research previews cover sanitized DOCX, markdown, text, tables and 
   assert.match(css, /font-size:\s*calc\([^\n]*--research-preview-scale/);
   assert.match(css, /\.secondary-image-preview/);
   assert.match(css, /scrollbar-gutter:\s*stable both-edges/);
+  assert.match(jsx, /createRichTextTranslationPlan/);
+  assert.match(jsx, /createPlainTextTranslationPlan/);
+  assert.match(jsx, /createTableTranslationPlan/);
+  assert.match(jsx, /onContextMenu=\{openTranslationMenu\}/);
+  assert.match(jsx, /disabled=\{translationActive\}/);
+});
+
+test("research translation menu is keyboard accessible and exposes all task states", async () => {
+  const menu = await source("./research/ResearchTranslationMenu.jsx");
+  const hook = await source("./research/useResearchTranslation.js");
+  const css = await source("./secondary-research-pane.css");
+  assert.match(menu, /role="menu"/);
+  assert.match(menu, /role="menuitem"/);
+  assert.match(menu, /event\.key !== "Escape"/);
+  assert.match(menu, /pointerdown/);
+  assert.match(menu, /停止翻译/);
+  assert.match(menu, /取消翻译/);
+  assert.match(menu, /翻译当页/);
+  assert.match(menu, /翻译当前内容/);
+  assert.match(menu, /无可翻译文字/);
+  assert.match(menu, /aria-live="polite"/);
+  assert.match(menu, /打开任务模型/);
+  assert.match(menu, /已从本次运行的缓存恢复译文/);
+  assert.match(hook, /RESEARCH_TRANSLATION_MAX_CHARACTERS/);
+  assert.match(hook, /readResearchTranslationCache/);
+  assert.match(hook, /writeResearchTranslationCache/);
+  assert.match(hook, /cacheHit:\s*true/);
+  assert.match(hook, /cancelResearchTranslation/);
+  assert.match(hook, /requestRef\.current !== requestId/);
+  assert.match(css, /\.research-translation-menu/);
+  assert.match(css, /\.research-translation-feedback/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
 });
 
 test("the unified group tab strip owns all research title chrome", async () => {

@@ -123,6 +123,8 @@ test("browser AI config persists exact task-model assignments without fallback",
       modelId: "deepseek-resolver",
       requestParams: { thinking: { type: "enabled" }, max_tokens: 2048 },
     },
+    helpAssistant: { providerId: "", modelId: "", requestParams: {} },
+    researchTranslation: { providerId: "", modelId: "", requestParams: {} },
     composeDraft: { providerId: "", modelId: "", requestParams: {} },
   });
   assert.deepEqual(publicBrowserAiConfig(configured).taskModels, configured.taskModels);
@@ -145,6 +147,7 @@ test("browser AI config persists exact task-model assignments without fallback",
   assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.applyResolver, { providerId: "", modelId: "", requestParams: {} });
   assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.selectionChat, { providerId: "", modelId: "", requestParams: {} });
   assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.composeDraft, { providerId: "", modelId: "", requestParams: {} });
+  assert.deepEqual(normalizeBrowserAiConfig({ providers: configured.providers }).taskModels.researchTranslation, { providerId: "", modelId: "", requestParams: {} });
 });
 
 test("browser AI config migrates the former three-stage draft models into one AI draft model", () => {

@@ -115,7 +115,7 @@ export function createAiRequestActions({
     const question = aiChatInput.trim();
     if (!question || aiStatus === "streaming") return;
     if (activeTabReadOnly) {
-      showStatus("当前信笺为只读，不能发送 AI 问答", "warning");
+      showStatus("当前信笺为只读，不能发送 AI 协作请求", "warning");
       return;
     }
     if (!aiHasUsableProvider) {
@@ -263,17 +263,17 @@ export function createAiRequestActions({
 
   const handleExportAiChat = async () => {
     if (!aiChatMessages.length) {
-      showStatus("当前没有可导出的问答记录", "warning");
+      showStatus("当前没有可导出的协作记录", "warning");
       return;
     }
     const activeDocument = getActiveDocumentSnapshot()?.document;
     const markdown = chatMessagesToMarkdown(activeDocument, aiChatMessages);
     const result = await aiBridge.exportAiChat?.({
-      title: activeDocument?.title || "AI问答",
+      title: activeDocument?.title || "AI协作",
       markdown,
     });
     if (!result?.canceled) {
-      showStatus("AI 问答记录已导出", "success");
+      showStatus("AI 协作记录已导出", "success");
     }
   };
 

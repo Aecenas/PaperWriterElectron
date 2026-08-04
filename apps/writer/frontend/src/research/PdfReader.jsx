@@ -15,6 +15,16 @@ import {
 } from "lucide-react";
 import PreviewToolbar from "./PreviewToolbar.jsx";
 import { itemIdentity, normalizePdfBytes } from "./reader-utils.js";
+import ResearchTranslationMenu, {
+  keyboardResearchTranslationMenuPosition,
+  positionResearchTranslationMenu,
+  ResearchTranslationFeedback,
+} from "./ResearchTranslationMenu.jsx";
+import {
+  createPdfTranslationPlan,
+  measurePdfTranslationBlocks,
+} from "./research-translation-model.js";
+import { useResearchTranslation } from "./useResearchTranslation.js";
 import {
   createPdfPageSearchIndex,
   findPdfPageSearchMatches,
@@ -142,6 +152,7 @@ export function PdfReader({
   viewState = null,
   defaultViewState = null,
   onViewStateChange,
+  onOpenTranslationSettings,
 }) {
   const initialViewState = normalizePdfViewState(viewState ?? defaultViewState);
   const stageRef = useRef(null);
@@ -166,6 +177,7 @@ export function PdfReader({
   const pendingScrollRef = useRef(null);
   const onViewStateChangeRef = useRef(onViewStateChange);
   const viewSnapshotRef = useRef({ ...initialViewState, itemKey: itemIdentity(source) });
+  const resetTranslationRef = useRef(() => {});
   const [pdf, setPdf] = useState(null);
   const [page, setPage] = useState(initialViewState.page);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -180,6 +192,9 @@ export function PdfReader({
   const [pageDraft, setPageDraft] = useState(String(initialViewState.page));
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
+  const [pdfTranslationPlan, setPdfTranslationPlan] = useState({ page: 0, blocks: [] });
+  const [translationGeometry, setTranslationGeometry] = useState([]);
+  const [translationMenu, setTranslationMenu] = useState(null);
   const sourceKey = itemIdentity(source);
   const pageCount = pdf?.numPages || 1;
 
@@ -229,6 +244,7 @@ export function PdfReader({
     let loadingTask = null;
     const controller = new AbortController();
     const restoredViewState = normalizePdfViewState(viewState ?? defaultViewState);
+    resetTranslationRef.current();
     searchRunRef.current += 1;
     window.cancelAnimationFrame(scrollRestoreFrameRef.current);
     window.clearTimeout(scrollCommitTimerRef.current);
@@ -255,6 +271,9 @@ export function PdfReader({
     setSearchState(emptyPdfSearchState());
     setTextLayerVersion(0);
     setError("");
+    setPdfTranslationPlan({ page: 0, blocks: [] });
+    setTranslationGeometry([]);
+    setTranslationMenu(null);
     setStatus("loading");
     (async () => {
       try {
@@ -405,6 +424,8 @@ export function PdfReader({
   useEffect(() => {
     if (!pdf || !canvasRef.current || !textLayerRef.current || !pageSurfaceRef.current || !pdfjsRef.current) return undefined;
     let disposed = false;
+    setPdfTranslationPlan((current) => current.page === page ? current : { page, blocks: [] });
+    setTranslationGeometry([]);
     setError("");
     textLayerTaskRef.current?.cancel?.();
     textLayerTaskRef.current = null;
@@ -440,7 +461,7 @@ export function PdfReader({
           transform: outputScale === 1 ? null : [outputScale, 0, 0, outputScale, 0, 0],
         });
         renderTaskRef.current = task;
-        const [{ index }, textLayerResult] = await Promise.all([
+        const [{ index, textContent }, textLayerResult] = await Promise.all([
           getPageSearchIndex(page),
           task.promise.then(async () => {
             if (disposed) return null;
@@ -462,6 +483,7 @@ export function PdfReader({
             textDivs: textLayerResult.textDivs,
             strings: textLayerResult.textContentItemsStr,
           };
+          setPdfTranslationPlan({ page, blocks: createPdfTranslationPlan(textContent).blocks });
           setTextLayerVersion((value) => value + 1);
           schedulePendingScroll();
         }
@@ -517,6 +539,7 @@ export function PdfReader({
   const goToPage = useCallback((nextPage) => {
     const requested = typeof nextPage === "function" ? nextPage(page) : Number(nextPage) || 1;
     const resolvedPage = Math.max(1, Math.min(pdf?.numPages || 1, requested));
+    if (resolvedPage !== page) resetTranslationRef.current();
     setPage(resolvedPage);
     pageDraftRef.current = String(resolvedPage);
     setPageDraft(String(resolvedPage));
@@ -541,6 +564,23 @@ export function PdfReader({
     setQuery("");
     setSearchMessage("");
     setSearchState(emptyPdfSearchState());
+  }, []);
+
+  const currentTranslationBlocks = pdfTranslationPlan.page === page ? pdfTranslationPlan.blocks : [];
+  const translation = useResearchTranslation({
+    kind: "pdf",
+    page,
+    blocks: currentTranslationBlocks,
+    resetKey: `${sourceKey}:${page}`,
+    onBeforeStart: closePdfSearch,
+  });
+  resetTranslationRef.current = translation.cancelOrRestore;
+  const translationActive = ["translating", "translated"].includes(translation.status);
+  const openTranslationMenu = useCallback((event) => {
+    if (event.target?.closest?.(".secondary-pdf-toolbar")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setTranslationMenu({ ...positionResearchTranslationMenu(event), returnFocus: event.currentTarget });
   }, []);
 
   const changePdfSearchQuery = useCallback((value) => {
@@ -577,10 +617,16 @@ export function PdfReader({
 
   const handleReaderKeyDown = useCallback((event) => {
     if (isTextEntryTarget(event.target)) return;
+    if (event.shiftKey && event.key === "F10") {
+      event.preventDefault();
+      event.stopPropagation();
+      setTranslationMenu({ ...keyboardResearchTranslationMenuPosition(viewportRef.current), returnFocus: viewportRef.current });
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLocaleLowerCase("en-US") === "f") {
       event.preventDefault();
       event.stopPropagation();
-      setSearchOpen(true);
+      if (!translationActive) setSearchOpen(true);
       return;
     }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -595,7 +641,7 @@ export function PdfReader({
     event.preventDefault();
     event.stopPropagation();
     goToPage(nextPage);
-  }, [goToPage, page, pageCount]);
+  }, [goToPage, page, pageCount, translationActive]);
 
   const searchPdf = useCallback(async (requestedQuery = query, preferredPage = page) => {
     const needle = normalizePdfSearchQuery(requestedQuery);
@@ -733,6 +779,23 @@ export function PdfReader({
     return () => window.cancelAnimationFrame(frame);
   }, [page, searchOpen, searchState.activeIndex, searchState.matches, textLayerVersion]);
 
+  useEffect(() => {
+    if (translation.status !== "translated" || pdfTranslationPlan.page !== page) {
+      setTranslationGeometry([]);
+      return undefined;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const layer = currentTextLayerRef.current;
+      if (!layer || layer.page !== page) return;
+      setTranslationGeometry(measurePdfTranslationBlocks(
+        pdfTranslationPlan.blocks,
+        layer.textDivs,
+        pageSurfaceRef.current,
+      ));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [page, pdfTranslationPlan, renderedScale, textLayerVersion, translation.status, translation.translations]);
+
   const normalizedQuery = normalizePdfSearchQuery(query);
   const searchResultsCurrent = searchState.status === "ready" && searchState.query === normalizedQuery;
   const hasSearchMatches = searchResultsCurrent && searchState.matches.length > 0;
@@ -818,9 +881,10 @@ export function PdfReader({
             <button type="button" aria-label="放大 PDF" title="放大" onClick={() => zoomBy(PDF_ZOOM_STEP)}><ZoomIn size={14} aria-hidden="true" /></button>
           </>
         )}
-        <button type="button" className={searchOpen ? "is-active" : ""} aria-label={searchOpen ? "收起 PDF 搜索" : "展开 PDF 搜索"} title={searchOpen ? "收起搜索" : "搜索 PDF 文字"} aria-expanded={searchOpen} onClick={() => { if (searchOpen) closePdfSearch(); else setSearchOpen(true); }}>{searchOpen ? <X size={14} aria-hidden="true" /> : <Search size={14} aria-hidden="true" />}</button>
+        <button type="button" disabled={translationActive} className={searchOpen ? "is-active" : ""} aria-label={translationActive ? "取消翻译后可搜索 PDF" : (searchOpen ? "收起 PDF 搜索" : "展开 PDF 搜索")} title={translationActive ? "取消翻译后可搜索" : (searchOpen ? "收起搜索" : "搜索 PDF 文字")} aria-expanded={searchOpen} onClick={() => { if (searchOpen) closePdfSearch(); else setSearchOpen(true); }}>{searchOpen ? <X size={14} aria-hidden="true" /> : <Search size={14} aria-hidden="true" />}</button>
       </PreviewToolbar>
       <div ref={stageRef} className="secondary-pdf-stage">
+        <ResearchTranslationFeedback translation={translation} onRetry={translation.start} onOpenSettings={onOpenTranslationSettings} />
         {error || searchMessage ? (
           <p className={["secondary-pdf-feedback", error ? "is-error" : ""].filter(Boolean).join(" ")} role={error ? "alert" : undefined} aria-live={error ? undefined : "polite"}>
             {error || searchMessage}
@@ -832,6 +896,7 @@ export function PdfReader({
           tabIndex={0}
           aria-label={`PDF 第 ${page} 页。可用方向键、PageUp、PageDown、空格、Home 和 End 翻页。`}
           onScroll={handleViewportScroll}
+          onContextMenu={openTranslationMenu}
           onPointerDown={(event) => {
             if (event.button === 0 && !isTextEntryTarget(event.target)) event.currentTarget.focus({ preventScroll: true });
           }}
@@ -839,9 +904,29 @@ export function PdfReader({
           <div ref={pageSurfaceRef} className="secondary-pdf-page-surface">
             <canvas ref={canvasRef} role="img" aria-label={`PDF 第 ${page} 页`} />
             <div ref={textLayerRef} className="secondary-pdf-text-layer" aria-hidden="true" />
+            {translation.status === "translated" ? (
+              <div className="secondary-pdf-translation-layer" role="document" aria-label={`PDF 第 ${page} 页简体中文译文`}>
+                {translationGeometry.map((block) => (
+                  <span
+                    key={block.id}
+                    style={{ left: block.left, top: block.top, width: block.width, minHeight: block.height, fontSize: Math.max(8, Math.min(18, block.height * 0.82)) }}
+                  >{translation.translations.get(block.id) || block.text}</span>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
+      <ResearchTranslationMenu
+        menu={translationMenu}
+        status={translation.status}
+        progress={translation.progress}
+        hasText={translation.hasText}
+        pageMode
+        onStart={translation.start}
+        onCancel={translation.cancelOrRestore}
+        onDismiss={() => setTranslationMenu(null)}
+      />
     </div>
   );
 }

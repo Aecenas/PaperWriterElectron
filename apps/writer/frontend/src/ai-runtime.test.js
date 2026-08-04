@@ -144,7 +144,7 @@ test("AI response blocks retain Markdown structure and rich clipboard serializat
 
 test("AI state normalization preserves versioned defaults and isolated Codex scope", () => {
   const empty = createEmptyAiState();
-  assert.equal(empty.version, 3);
+  assert.equal(empty.version, 4);
   assert.deepEqual(empty.chat.codexScope, { mode: "document-only", relativePath: "" });
 
   const normalized = normalizeAiState({
@@ -157,7 +157,7 @@ test("AI state normalization preserves versioned defaults and isolated Codex sco
       selectedTexts: [{ text: "标记", from: 2, to: 4 }],
     },
   });
-  assert.equal(normalized.version, 3);
+  assert.equal(normalized.version, 4);
   assert.equal(normalized.optimize.status, "ready");
   assert.equal(normalized.optimize.elapsedSeconds, 0);
   assert.deepEqual(normalized.chat.codexScope, { mode: "document-only", relativePath: "" });
@@ -188,7 +188,7 @@ test("AI token usage and chat export helpers keep their public formats", () => {
       { role: "assistant", content: "回答" },
     ],
   );
-  assert.match(markdown, /^# 测试信笺 - AI问答/m);
+  assert.match(markdown, /^# 测试信笺 - AI协作/m);
   assert.match(markdown, /## 我[\s\S]*问题[\s\S]*## AI[\s\S]*回答/);
   assert.doesNotMatch(markdown, /隐藏/);
 });

@@ -19,8 +19,8 @@ const MODE_OPTIONS = [
   },
   {
     id: "chat",
-    label: "AI问答",
-    description: "快速解答、生成内容、辅助思考",
+    label: "AI协作",
+    description: "问答、审阅并生成可控修改",
     idleImage: aiChatIdle,
     selectedImage: aiChatSelected,
   },

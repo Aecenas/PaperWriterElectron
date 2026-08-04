@@ -19,11 +19,23 @@ const browserAiListeners = {
   chunk: new Set(),
   done: new Set(),
   error: new Set(),
+  helpChunk: new Set(),
+  helpDone: new Set(),
+  helpError: new Set(),
+  researchTranslationProgress: new Set(),
+  collaborationEvent: new Set(),
 };
 const browserSelectionAiRequests = new Map();
+const browserHelpAiRequests = new Map();
+const browserCollaborationRequests = new Map();
+const browserCollaborationCommits = new Map();
+const browserResearchTranslationRequests = new Map();
+const BROWSER_HELP_AI_STORAGE_KEY = "paperwriter.helpAssistant.v1";
 const BROWSER_AI_TASK_MODEL_KEYS = Object.freeze([
   "selectionChat",
   "applyResolver",
+  "helpAssistant",
+  "researchTranslation",
   "composeDraft",
 ]);
 const BROWSER_AI_TASK_MODEL_KEY_SET = new Set(
@@ -56,6 +68,170 @@ function emitBrowserAi(type, payload) {
   browserAiListeners[type]?.forEach((callback) => callback(payload));
 }
 
+function browserCollaborationId(prefix = "ai-collaboration") {
+  return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
+}
+
+function browserCollaborationDelay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function browserResearchTranslationBatches(blocks) {
+  const batches = [];
+  let current = [];
+  let characters = 0;
+  for (const block of blocks) {
+    if (current.length && (current.length >= 100 || characters + block.text.length > 12_000)) {
+      batches.push(current);
+      current = [];
+      characters = 0;
+    }
+    current.push(block);
+    characters += block.text.length;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+function browserCollaborationRoute(question) {
+  const asksForChange = /(?:添加|加入|插入|修改|改成|改写|替换|删除|移除|拆分|分割|合并|生成|制作|画|转换|转成|整理成|应用|加上).*(?:标题|表情|emoji|图|表格|正文|段落|信笺)|(?:把|将).*(?:改|转|拆|分|合|加|删)/i.test(question);
+  return {
+    mode: asksForChange ? "collaborate" : "answer",
+    confidence: asksForChange ? 0.92 : 0.86,
+    reason: asksForChange ? "请求包含对信笺内容的修改动作" : "请求主要是在询问信息",
+  };
+}
+
+function browserCollaborationProposal(payload = {}) {
+  const question = String(payload.question || "").trim();
+  const current = payload.current || {};
+  const manifest = current.manifest || {};
+  const editableBlocks = (Array.isArray(manifest.blocks) ? manifest.blocks : []).filter((block) => !block?.protected);
+  const anchor = editableBlocks.at(-1) || editableBlocks[0];
+  const operations = [];
+  if (/标题/.test(question)) {
+    operations.push({
+      id: "browser-set-title",
+      type: "set_title",
+      label: "修改信笺标题",
+      title: String(question.match(/[《“\"]([^》”\"]+)[》”\"]/)?.[1] || `${current.title || "未命名信笺"}（AI 协作）`).slice(0, 200),
+    });
+  }
+  if (anchor && /mermaid|流程图|关系图|时序图/i.test(question)) {
+    operations.push({
+      id: "browser-insert-mermaid",
+      type: "insert_after",
+      label: "添加 Mermaid 图",
+      anchorBlockId: anchor.id,
+      blocks: [{ type: "mermaid", source: "flowchart TD\n  A[现有内容] --> B[AI 协作审阅]\n  B --> C[用户提交]", caption: "AI 协作流程" }],
+    });
+  } else if (anchor && /表格/.test(question)) {
+    operations.push({
+      id: "browser-insert-table",
+      type: "insert_after",
+      label: "添加表格",
+      anchorBlockId: anchor.id,
+      blocks: [{ type: "table", headers: ["项目", "说明"], rows: [["浏览器预览", "可审阅当前信笺修改"], ["桌面端", "可按需读取工作区并创建派生信笺"]] }],
+    });
+  } else if (anchor && /表情|emoji/i.test(question)) {
+    operations.push({
+      id: "browser-insert-emoji",
+      type: "insert_after",
+      label: "添加表情提示",
+      anchorBlockId: anchor.id,
+      blocks: [{ type: "paragraph", text: "✨ 这里是 AI 协作生成的浏览器预览内容。" }],
+    });
+  }
+  if (!operations.length && anchor) {
+    operations.push({
+      id: "browser-insert-preview",
+      type: "insert_after",
+      label: "添加协作预览段落",
+      anchorBlockId: anchor.id,
+      blocks: [{ type: "paragraph", text: "这是 AI 协作的浏览器预览修改；提交前可以继续编辑或取消。" }],
+    });
+  }
+  return {
+    version: 1,
+    id: browserCollaborationId("collaboration"),
+    reply: "我已生成一份浏览器预览修改。请逐项审阅；在你明确提交前，不会改动正文。",
+    summary: "浏览器预览协作方案",
+    createdAt: Date.now(),
+    base: {
+      documentId: String(current.documentId || ""),
+      documentFingerprint: String(manifest.documentFingerprint || ""),
+      revision: String(current.revision || ""),
+    },
+    sources: [{
+      id: String(current.documentId || "current-document"),
+      documentId: String(current.documentId || ""),
+      title: String(current.title || "当前信笺"),
+      relativePath: String(current.relativePath || ""),
+      fingerprint: String(manifest.documentFingerprint || ""),
+      revision: String(current.revision || ""),
+    }],
+    operations,
+    status: "pending",
+  };
+}
+
+function browserHelpSessionId() {
+  return `help-session-${globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`}`;
+}
+
+function browserHelpState() {
+  const stored = readJson(BROWSER_HELP_AI_STORAGE_KEY, {});
+  const sessions = (Array.isArray(stored.sessions) ? stored.sessions : [])
+    .slice(0, 50)
+    .filter((session) => session?.id && Array.isArray(session.messages))
+    .map((session) => ({
+      id: String(session.id),
+      title: String(session.title || "新对话").slice(0, 80),
+      createdAt: Number(session.createdAt) || Date.now(),
+      updatedAt: Number(session.updatedAt) || Date.now(),
+      messages: session.messages.slice(-200),
+    }));
+  const createdDefaultSession = sessions.length === 0;
+  if (createdDefaultSession) {
+    const createdAt = Date.now();
+    sessions.push({ id: browserHelpSessionId(), title: "新对话", createdAt, updatedAt: createdAt, messages: [] });
+  }
+  const activeSessionId = sessions.some((session) => session.id === stored.activeSessionId)
+    ? stored.activeSessionId
+    : sessions[0].id;
+  const activeRequest = [...browserHelpAiRequests.entries()].map(([requestId, request]) => ({
+    requestId,
+    sessionId: request.sessionId,
+    messageId: request.messageId,
+  }))[0] || null;
+  if (createdDefaultSession) {
+    writeJson(BROWSER_HELP_AI_STORAGE_KEY, { version: 1, activeSessionId, sessions });
+  }
+  return { version: 1, activeSessionId, sessions, knowledgeVersion: "浏览器预览", activeRequest };
+}
+
+function saveBrowserHelpState(value) {
+  const state = {
+    version: 1,
+    activeSessionId: value.activeSessionId,
+    sessions: value.sessions,
+  };
+  if (new TextEncoder().encode(JSON.stringify(state)).byteLength > 32 * 1024 * 1024) {
+    throw new Error("AI精灵本机历史已达到 32 MB，请删除旧会话后重试");
+  }
+  writeJson(BROWSER_HELP_AI_STORAGE_KEY, state);
+  return { ...state, knowledgeVersion: "浏览器预览", activeRequest: value.activeRequest || null };
+}
+
+function browserHelpSource(question) {
+  if (/笺间.*(?:是什么|做什么|干嘛|用途)|(?:软件|应用).*(?:是什么|做什么|干嘛|用途)|产品介绍/.test(question)) {
+    return { id: "detail:product-overview", kind: "detail", title: "笺间是什么与主要用途", helpTopicId: "files-sidebar" };
+  }
+  if (/保存|恢复|历史|冲突/.test(question)) return { id: "help:save-recovery", kind: "help", title: "保存、自动保存与恢复", helpTopicId: "save-recovery" };
+  if (/AI|模型|供应商|Codex/i.test(question)) return { id: "help:ai-providers", kind: "help", title: "供应商、请求参数与任务模型", helpTopicId: "ai-providers" };
+  return { id: "help:files-sidebar", kind: "help", title: "文件区、资料区和结构区", helpTopicId: "files-sidebar" };
+}
+
 function normalizeBrowserAiConfig(config = readJson("paperwriter.aiConfig", {})) {
   return normalizeBrowserAiConfigValue(config);
 }
@@ -67,6 +243,45 @@ function publicBrowserAiConfig(config = readJson("paperwriter.aiConfig", {})) {
 function createBrowserAiApi() {
   return {
     getAiConfig: async () => publicBrowserAiConfig(),
+    getHelpAssistantState: async () => browserHelpState(),
+    createHelpAssistantSession: async () => {
+      const state = browserHelpState();
+      if (state.sessions.length >= 50) throw new Error("AI精灵最多保留 50 个会话，请先删除旧会话");
+      const createdAt = Date.now();
+      const session = { id: browserHelpSessionId(), title: "新对话", createdAt, updatedAt: createdAt, messages: [] };
+      state.sessions.unshift(session);
+      state.activeSessionId = session.id;
+      return { ok: true, session, state: saveBrowserHelpState(state) };
+    },
+    setActiveHelpAssistantSession: async (sessionId) => {
+      const state = browserHelpState();
+      if (!state.sessions.some((session) => session.id === sessionId)) throw new Error("AI精灵会话不存在");
+      state.activeSessionId = sessionId;
+      return { ok: true, state: saveBrowserHelpState(state) };
+    },
+    renameHelpAssistantSession: async (payload = {}) => {
+      const state = browserHelpState();
+      const title = String(payload.title || "").trim().slice(0, 80);
+      if (!title) throw new Error("会话名称不能为空");
+      const session = state.sessions.find((item) => item.id === payload.sessionId);
+      if (!session) throw new Error("AI精灵会话不存在");
+      session.title = title;
+      session.updatedAt = Date.now();
+      return { ok: true, state: saveBrowserHelpState(state) };
+    },
+    deleteHelpAssistantSession: async (sessionId) => {
+      if ([...browserHelpAiRequests.values()].some((request) => request.sessionId === sessionId)) {
+        throw new Error("这个会话仍在生成，请先停止回答");
+      }
+      const state = browserHelpState();
+      state.sessions = state.sessions.filter((session) => session.id !== sessionId);
+      if (!state.sessions.length) {
+        const createdAt = Date.now();
+        state.sessions.push({ id: browserHelpSessionId(), title: "新对话", createdAt, updatedAt: createdAt, messages: [] });
+      }
+      if (!state.sessions.some((session) => session.id === state.activeSessionId)) state.activeSessionId = state.sessions[0].id;
+      return { ok: true, state: saveBrowserHelpState(state) };
+    },
     refreshCodexCliStatus: async () => ({ ...publicBrowserAiConfig(), ok: false, message: "Codex CLI 仅在桌面端可用" }),
     startCodexCliLogin: async () => ({ ...publicBrowserAiConfig(), ok: false, message: "Codex CLI 仅在桌面端可用" }),
     onCodexCliStatus: () => () => {},
@@ -278,6 +493,143 @@ function createBrowserAiApi() {
       }), 120 * (chunks.length + 1));
       return { ok: true, requestId };
     },
+    translateResearchContent: async (payload = {}) => {
+      const payloadKeys = new Set(["requestId", "kind", "page", "targetLanguage", "blocks"]);
+      const requestId = String(payload?.requestId || "");
+      const validRequestId = /^ai-research-translation-[a-z0-9-]{6,100}$/i.test(requestId);
+      const kind = String(payload?.kind || "");
+      const blocks = Array.isArray(payload?.blocks) ? payload.blocks : [];
+      const blockIds = new Set();
+      const invalidBlocks = !blocks.length
+        || blocks.length > 20_000
+        || blocks.some((block) => {
+          const invalid = !block
+            || typeof block !== "object"
+            || Array.isArray(block)
+            || Object.keys(block).some((key) => !["id", "text"].includes(key))
+            || typeof block.id !== "string"
+            || !/^[a-z0-9._:-]{1,100}$/i.test(block.id)
+            || blockIds.has(block.id)
+            || typeof block.text !== "string"
+            || !block.text.trim()
+            || block.text.length > 12_000;
+          if (!invalid) blockIds.add(block.id);
+          return invalid;
+        });
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)
+        || Object.keys(payload).some((key) => !payloadKeys.has(key))
+        || !validRequestId
+        || !["pdf", "docx", "markdown", "text", "table"].includes(kind)
+        || (kind === "pdf" && (!Number.isSafeInteger(payload.page) || payload.page <= 0))
+        || payload.targetLanguage !== "zh-CN"
+        || invalidBlocks) {
+        return { ok: false, requestId: validRequestId ? requestId : "", code: "AI_RESEARCH_TRANSLATION_PAYLOAD_INVALID", message: "资料翻译请求无效" };
+      }
+      if (blocks.reduce((total, block) => total + block.text.length, 0) > 200_000) {
+        return { ok: false, requestId, code: "AI_RESEARCH_TRANSLATION_TOO_LARGE", message: "当前资料超过 20 万字符，未发送给 AI" };
+      }
+      if (browserResearchTranslationRequests.has(requestId)) {
+        return { ok: false, requestId, code: "AI_RESEARCH_TRANSLATION_REQUEST_DUPLICATE", message: "资料翻译请求标识重复" };
+      }
+      const saved = normalizeBrowserAiConfig();
+      const assignment = saved.taskModels?.researchTranslation || {};
+      const explicit = Boolean(assignment.providerId || assignment.modelId);
+      const selected = browserTaskAiProviderConfig(saved, assignment);
+      if (!selected || selected.provider.transport === "codex-cli" || !selected.provider.apiKey || !selected.model.testedOk) {
+        return {
+          ok: false,
+          requestId,
+          code: explicit ? "AI_RESEARCH_TRANSLATION_MODEL_INVALID" : "AI_DEFAULT_MODEL_UNAVAILABLE",
+          message: explicit
+            ? "资料翻译模型已失效，请在“AI 配置 → 任务模型”中重新选择"
+            : "请先配置并测试默认模型",
+        };
+      }
+      const batches = browserResearchTranslationBatches(blocks);
+      browserResearchTranslationRequests.set(requestId, true);
+      emitBrowserAi("researchTranslationProgress", { requestId, completedBatches: 0, totalBatches: batches.length, message: `正在翻译 0/${batches.length} 批…` });
+      const translations = [];
+      for (let index = 0; index < batches.length; index += 1) {
+        await browserCollaborationDelay(90);
+        if (!browserResearchTranslationRequests.has(requestId)) {
+          return { ok: false, requestId, canceled: true, code: "AI_RESEARCH_TRANSLATION_CANCELED", message: "已停止资料翻译" };
+        }
+        translations.push(...batches[index].map((block) => ({
+          id: block.id,
+          text: /[A-Za-z]/.test(block.text) ? `【简体中文预览】${block.text}` : block.text,
+        })));
+        emitBrowserAi("researchTranslationProgress", { requestId, completedBatches: index + 1, totalBatches: batches.length, message: `正在翻译 ${index + 1}/${batches.length} 批…` });
+      }
+      browserResearchTranslationRequests.delete(requestId);
+      return {
+        ok: true,
+        requestId,
+        translations,
+        model: { providerId: selected.provider.provider, providerLabel: selected.provider.providerLabel, modelId: selected.model.id, modelName: selected.model.name },
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCost: 0 },
+      };
+    },
+    cancelResearchTranslation: async (requestId) => ({
+      ok: true,
+      canceled: browserResearchTranslationRequests.delete(String(requestId || "")),
+    }),
+    routeAiCollaboration: async (payload = {}) => {
+      const requestId = String(payload.requestId || browserCollaborationId());
+      const question = String(payload.question || "").trim();
+      if (!question) return { ok: false, message: "AI 协作问题为空" };
+      browserCollaborationRequests.set(requestId, { kind: "route" });
+      emitBrowserAi("collaborationEvent", { requestId, type: "routing", message: "正在判断回答方式" });
+      const route = browserCollaborationRoute(question);
+      browserCollaborationRequests.delete(requestId);
+      return { ok: true, requestId, ...route, model: { modelName: "浏览器预览" } };
+    },
+    planAiCollaboration: async (payload = {}) => {
+      const requestId = String(payload.requestId || browserCollaborationId());
+      if (!payload.current?.documentId || !payload.current?.manifest?.documentFingerprint) {
+        return { ok: false, message: "当前信笺快照无效" };
+      }
+      browserCollaborationRequests.set(requestId, { kind: "plan" });
+      const startedAt = Date.now();
+      emitBrowserAi("collaborationEvent", { requestId, type: "planning", message: "正在整理协作请求" });
+      emitBrowserAi("collaborationEvent", { requestId, type: "waiting-model", message: "正在等待 AI 返回修改方案" });
+      await browserCollaborationDelay(180);
+      if (!browserCollaborationRequests.has(requestId)) return { ok: false, canceled: true, message: "已停止 AI 协作" };
+      emitBrowserAi("collaborationEvent", { requestId, type: "receiving-model", message: "AI 已开始返回，正在接收修改方案" });
+      await browserCollaborationDelay(240);
+      if (!browserCollaborationRequests.has(requestId)) return { ok: false, canceled: true, message: "已停止 AI 协作" };
+      emitBrowserAi("collaborationEvent", { requestId, type: "validating", message: "AI 返回完成，正在本地检查方案" });
+      await browserCollaborationDelay(80);
+      const proposal = browserCollaborationProposal(payload);
+      browserCollaborationRequests.delete(requestId);
+      return {
+        ok: true,
+        requestId,
+        proposal,
+        model: { modelName: "浏览器预览" },
+        timing: { totalMs: Date.now() - startedAt, modelMs: 420, modelRequests: 1, toolRounds: 0 },
+      };
+    },
+    cancelAiCollaboration: async (requestId) => ({
+      ok: true,
+      canceled: browserCollaborationRequests.delete(String(requestId || "")),
+    }),
+    validateAiCollaborationProposal: async () => ({ ok: true, stale: false, browserOnly: true }),
+    prepareAiCollaborationCommit: async (payload = {}) => {
+      if ((payload.outputs || []).length) {
+        return { ok: false, message: "浏览器预览不能创建工作区派生信笺，请在桌面端提交" };
+      }
+      const commitId = browserCollaborationId("browser-commit");
+      browserCollaborationCommits.set(commitId, { createdAt: Date.now() });
+      return { ok: true, commitId, outputs: [] };
+    },
+    commitAiCollaboration: async (commitId) => {
+      const committed = browserCollaborationCommits.delete(String(commitId || ""));
+      return committed ? { ok: true, files: [] } : { ok: false, message: "协作提交已失效" };
+    },
+    abortAiCollaborationCommit: async (commitId) => ({
+      ok: true,
+      aborted: browserCollaborationCommits.delete(String(commitId || "")),
+    }),
     generateSelectionAi: async (payload = {}) => {
       const validated = validateSelectionAiPayload(payload);
       if (!validated.ok) return validated;
@@ -357,6 +709,97 @@ function createBrowserAiApi() {
         },
       };
     },
+    generateHelpAssistant: async (payload = {}) => {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)
+        || Object.keys(payload).some((key) => !["requestId", "sessionId", "question"].includes(key))) {
+        return { ok: false, code: "AI_HELP_PAYLOAD_INVALID", message: "AI精灵请求包含不允许的字段" };
+      }
+      const requestId = String(payload.requestId || "");
+      const sessionId = String(payload.sessionId || "");
+      const question = String(payload.question || "").trim();
+      if (!/^ai-help-[a-z0-9-]{6,100}$/i.test(requestId) || !question || question.length > 8000) {
+        return { ok: false, code: "AI_HELP_PAYLOAD_INVALID", message: "AI精灵请求无效" };
+      }
+      if (browserHelpAiRequests.size) return { ok: false, code: "AI_HELP_REQUEST_LIMIT", message: "AI精灵已有回答正在生成" };
+      const saved = normalizeBrowserAiConfig();
+      const assignment = saved.taskModels?.helpAssistant || {};
+      const explicit = Boolean(assignment.providerId || assignment.modelId);
+      const selected = browserTaskAiProviderConfig(saved, assignment);
+      if (!selected || selected.provider.transport === "codex-cli" || !selected.provider.apiKey || !selected.model.testedOk) {
+        return {
+          ok: false,
+          code: explicit ? "AI_HELP_MODEL_INVALID" : "AI_DEFAULT_MODEL_UNAVAILABLE",
+          message: explicit
+            ? "AI精灵模型已失效，请在“AI 配置 → 任务模型”中重新选择"
+            : "请先配置并测试默认模型",
+        };
+      }
+      const state = browserHelpState();
+      const session = state.sessions.find((item) => item.id === sessionId);
+      if (!session) return { ok: false, code: "AI_HELP_SESSION_MISSING", message: "AI精灵会话不存在" };
+      if (session.messages.length + 2 > 200) return { ok: false, code: "AI_HELP_MESSAGE_LIMIT", message: "当前会话已达到 200 条消息，请新建会话" };
+      const createdAt = Date.now();
+      const messageId = `assistant-${createdAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const source = browserHelpSource(question);
+      const model = { providerId: selected.provider.provider, providerLabel: selected.provider.providerLabel, modelId: selected.model.id, modelName: selected.model.name };
+      session.messages.push(
+        { id: `user-${createdAt.toString(36)}`, role: "user", content: question, status: "done", createdAt, sources: [], model: null },
+        { id: messageId, role: "assistant", content: "", status: "streaming", createdAt: createdAt + 1, sources: [source], model },
+      );
+      if (session.messages.length === 2) session.title = question.length > 24 ? `${question.slice(0, 24)}…` : question;
+      session.updatedAt = createdAt;
+      state.activeSessionId = sessionId;
+      saveBrowserHelpState(state);
+      const productOverviewQuestion = /笺间.*(?:是什么|做什么|干嘛|用途)|(?:软件|应用).*(?:是什么|做什么|干嘛|用途)|产品介绍/.test(question);
+      const chunks = productOverviewQuestion
+        ? [
+          "笺间是一款面向 Windows 的本地优先写作软件，",
+          "适合长文、日记、复盘、论文和资料整理。\n\n",
+          "它把信笺写作、资料阅读检索、版本恢复、导入导出和多种 AI 写作能力放在同一个桌面工作区中。",
+        ]
+        : ["这是 AI精灵的浏览器预览回答。", "\n\n", "桌面版会把每个问题交给已配置的模型，并用内置帮助文档和代码核对知识进行 RAG 增强。"];
+      const request = { sessionId, messageId, timers: [], output: "" };
+      chunks.forEach((delta, index) => {
+        request.timers.push(window.setTimeout(() => {
+          if (!browserHelpAiRequests.has(requestId)) return;
+          request.output += delta;
+          emitBrowserAi("helpChunk", { requestId, sessionId, messageId, delta });
+        }, 120 * (index + 1)));
+      });
+      request.timers.push(window.setTimeout(() => {
+        if (!browserHelpAiRequests.has(requestId)) return;
+        browserHelpAiRequests.delete(requestId);
+        const nextState = browserHelpState();
+        const nextSession = nextState.sessions.find((item) => item.id === sessionId);
+        const assistant = nextSession?.messages.find((message) => message.id === messageId);
+        if (assistant) {
+          assistant.content = request.output;
+          assistant.status = "done";
+          nextSession.updatedAt = Date.now();
+          saveBrowserHelpState(nextState);
+        }
+        emitBrowserAi("helpDone", { requestId, sessionId, messageId, content: request.output, sources: [source], model });
+      }, 120 * (chunks.length + 1)));
+      browserHelpAiRequests.set(requestId, request);
+      return { ok: true, requestId, sessionId, messageId, sources: [source], model, state: browserHelpState() };
+    },
+    cancelHelpAssistant: async (requestId) => {
+      const request = browserHelpAiRequests.get(requestId);
+      if (!request) return { ok: true, canceled: false };
+      request.timers.forEach((timer) => window.clearTimeout(timer));
+      browserHelpAiRequests.delete(requestId);
+      const state = browserHelpState();
+      const session = state.sessions.find((item) => item.id === request.sessionId);
+      const assistant = session?.messages.find((message) => message.status === "streaming");
+      if (assistant) {
+        assistant.content = request.output || "已停止生成";
+        assistant.status = "stopped";
+        session.updatedAt = Date.now();
+        saveBrowserHelpState(state);
+        emitBrowserAi("helpError", { requestId, sessionId: request.sessionId, messageId: assistant.id, content: request.output, message: "已停止生成", aborted: true, sources: assistant.sources, model: assistant.model });
+      }
+      return { ok: true, canceled: true };
+    },
     resolveAiApply: async (payload = {}) => ({
       ok: true,
       raw: {
@@ -382,7 +825,7 @@ function createBrowserAiApi() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${payload.title || "AI问答"}.md`;
+      link.download = `${payload.title || "AI协作"}.md`;
       link.click();
       URL.revokeObjectURL(url);
       return { canceled: false, path: link.download };
@@ -398,6 +841,26 @@ function createBrowserAiApi() {
     onAiError: (callback) => {
       browserAiListeners.error.add(callback);
       return () => browserAiListeners.error.delete(callback);
+    },
+    onAiCollaborationEvent: (callback) => {
+      browserAiListeners.collaborationEvent.add(callback);
+      return () => browserAiListeners.collaborationEvent.delete(callback);
+    },
+    onHelpAssistantChunk: (callback) => {
+      browserAiListeners.helpChunk.add(callback);
+      return () => browserAiListeners.helpChunk.delete(callback);
+    },
+    onHelpAssistantDone: (callback) => {
+      browserAiListeners.helpDone.add(callback);
+      return () => browserAiListeners.helpDone.delete(callback);
+    },
+    onHelpAssistantError: (callback) => {
+      browserAiListeners.helpError.add(callback);
+      return () => browserAiListeners.helpError.delete(callback);
+    },
+    onResearchTranslationProgress: (callback) => {
+      browserAiListeners.researchTranslationProgress.add(callback);
+      return () => browserAiListeners.researchTranslationProgress.delete(callback);
     },
   };
 }
