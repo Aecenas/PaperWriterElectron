@@ -13,7 +13,7 @@ const [topNav, dialog, app, styles, taskModel, workspaceStyles] = await Promise.
 ]);
 
 test("help is one two-item menu and preserves the existing help center entry", () => {
-  const menu = topNav.slice(topNav.indexOf('menuId="help"'), topNav.indexOf('ref={settingsTriggerRef}'));
+  const menu = topNav.slice(topNav.indexOf('menuId="help"'), topNav.indexOf('menuId="settings"'));
   assert.match(menu, /label="帮助文档"/);
   assert.match(menu, /label="AI精灵"/);
   assert.match(menu, /showDisclosure=\{false\}/);
@@ -21,7 +21,7 @@ test("help is one two-item menu and preserves the existing help center entry", (
   assert.doesNotMatch(menu, /onClick=\{\(\) => runMenuAction\(onOpenHelp\)\}[\s\S]*?<span>帮助<\/span>/);
   assert.match(app, /onOpenHelpAssistant=\{handleOpenHelpAssistant\}/);
   assert.match(app, /initialTopicId=\{helpTargetTopicId\}/);
-  assert.match(workspaceStyles, /#nav-menu-interchange,\s*#nav-menu-help\{width:268px\}/);
+  assert.match(workspaceStyles, /#nav-menu-interchange,\s*#nav-menu-help,\s*#nav-menu-settings\{width:268px\}/);
   assert.match(workspaceStyles, /#nav-menu-help \.nav-menu-item\.with-description/);
 });
 

@@ -32,6 +32,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PackageOpen,
+  Palette,
   Plus,
   Quote,
   Redo2,
@@ -293,17 +294,18 @@ export function TopNav({
           <MenuItem icon={BookOpenText} label="帮助文档" description="查看功能说明与操作步骤" onClick={() => runMenuAction(onOpenHelp)} />
           <MenuItem icon={Sparkles} label="AI精灵" description="询问笺间功能与使用问题" onClick={() => runMenuAction(onOpenHelpAssistant)} />
         </MenuButton>
-        <button
-          ref={settingsTriggerRef}
-          type="button"
-          className="nav-menu-trigger settings-feature-trigger"
-          title="设置"
-          aria-label="打开设置"
-          onClick={() => runMenuAction(() => onOpenSettings?.())}
+        <MenuButton
+          icon={Settings}
+          label="设置"
+          menuId="settings"
+          openMenu={openMenu}
+          onOpenMenu={setOpenMenu}
+          triggerRef={settingsTriggerRef}
+          showDisclosure={false}
         >
-          <Settings size={19} strokeWidth={1.9} aria-hidden="true" />
-          <span>设置</span>
-        </button>
+          <MenuItem icon={Sparkles} label="AI 配置" description="管理供应商、模型与连接参数" onClick={() => runMenuAction(() => onOpenSettings?.("ai"))} />
+          <MenuItem icon={Palette} label="模板配置" description="管理模板、分组与默认排版" onClick={() => runMenuAction(() => onOpenSettings?.("template"))} />
+        </MenuButton>
       </div>
 
       <div className="nav-center">

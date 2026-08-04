@@ -391,18 +391,23 @@ function createAiConfigRuntime({
           )
           : [...previousModels, nextModel]
       );
-    const nextBaseUrl = patch.baseUrl
-      ? normalizeProviderBaseUrl(patch.baseUrl)
-      : previousProviderConfig.baseUrl;
+    const isCodexProvider = previousProviderConfig.transport === "codex-cli";
+    const nextBaseUrl = isCodexProvider
+      ? ""
+      : (
+        patch.baseUrl
+          ? normalizeProviderBaseUrl(patch.baseUrl)
+          : previousProviderConfig.baseUrl
+      );
     const patchedApiKey = typeof patch.apiKey === "string"
       ? patch.apiKey.slice(0, 16384).trim()
       : "";
     const explicitApiKey = Boolean(patchedApiKey);
-    const canReuseApiKey = apiKeyCanBeReused(
+    const canReuseApiKey = isCodexProvider || apiKeyCanBeReused(
       previousProviderConfig.baseUrl,
       nextBaseUrl,
     );
-    const resetConnectionTest = Boolean(
+    const resetConnectionTest = !isCodexProvider && Boolean(
       patch.clearApiKey
       || patch.resetTest
       || !canReuseApiKey
@@ -426,13 +431,17 @@ function createAiConfigRuntime({
         }
         : model;
     });
-    const apiKey = patch.clearApiKey
-      || (!canReuseApiKey && !explicitApiKey)
+    const apiKey = isCodexProvider
       ? ""
       : (
-        explicitApiKey
-          ? patchedApiKey
-          : previousProviderConfig.apiKey
+        patch.clearApiKey
+        || (!canReuseApiKey && !explicitApiKey)
+          ? ""
+          : (
+            explicitApiKey
+              ? patchedApiKey
+              : previousProviderConfig.apiKey
+          )
       );
     const next = normalizeAiConfig({
       ...existing,

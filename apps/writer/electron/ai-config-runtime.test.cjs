@@ -443,6 +443,38 @@ test("provider create, delete, and save mutations keep public result and audit s
   ]);
 });
 
+test("Codex saves ignore display-only Base URLs and retain model availability", async () => {
+  const harness = createHarness();
+  harness.state.apiKeyReusable = false;
+  harness.state.config.providers.codex.models[0] = {
+    ...harness.state.config.providers.codex.models[0],
+    reasoningEffort: "low",
+    testedOk: true,
+    testedAt: "2026-07-25T12:00:00.000Z",
+    testMessage: "Codex CLI 可用",
+  };
+
+  const saved = await harness.runtime.facade.saveConfig({
+    provider: "codex",
+    modelId: "codex:old",
+    modelName: "Old",
+    model: "old",
+    models: [{
+      ...harness.state.config.providers.codex.models[0],
+      reasoningEffort: "medium",
+    }],
+    baseUrl: "本地 Codex CLI",
+    activate: true,
+  });
+
+  assert.equal(saved.activeProvider, "codex");
+  assert.equal(saved.activeModelId, "codex:old");
+  assert.equal(saved.providers.codex.baseUrl, "");
+  assert.equal(saved.providers.codex.models[0].reasoningEffort, "medium");
+  assert.equal(saved.providers.codex.models[0].testedOk, true);
+  assert.equal(saved.providers.codex.models[0].testMessage, "Codex CLI 可用");
+});
+
 test("selectionChat assignments save independently, clear to default, and reject stale models", async () => {
   const harness = createHarness();
   harness.state.config.providers.openai.models[0].testedOk = true;

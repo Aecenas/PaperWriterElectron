@@ -24,7 +24,7 @@ export const AI_PROVIDER_OPTIONS = [
     protocol: "",
     builtin: true,
     model: "",
-    baseUrl: "本地 Codex CLI",
+    baseUrl: "",
   },
 ];
 export const AI_PROTOCOL_OPTIONS = [
@@ -109,6 +109,12 @@ export function getAiProviderDefaults(provider, config = {}) {
     model: "",
     baseUrl: config.baseUrl || protocolDefaults.baseUrl,
   };
+}
+
+export function getAiProviderSaveBaseUrl(providerConfig) {
+  return providerConfig?.transport === "codex-cli"
+    ? ""
+    : String(providerConfig?.baseUrl || "");
 }
 
 export function createAiModelId(provider, model = "") {
@@ -220,7 +226,7 @@ export function normalizePublicAiProviderConfig(provider, config = {}) {
     transport: defaults.transport || config.transport || "http",
     protocol: defaults.protocol,
     builtin: defaults.builtin,
-    baseUrl: config.baseUrl || defaults.baseUrl,
+    baseUrl: isCodex ? "" : (config.baseUrl || defaults.baseUrl),
     hasApiKey: Boolean(config.hasApiKey),
     apiKeyLast4: config.apiKeyLast4 || "",
     activeModelId,

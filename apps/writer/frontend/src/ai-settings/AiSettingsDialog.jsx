@@ -24,6 +24,7 @@ import {
   formatAiProviderUpdatedAt,
   getAiProviderConnectionMeta,
   getAiProviderDefaults,
+  getAiProviderSaveBaseUrl,
   getTestedAiProviders,
   normalizePublicAiConfig,
   normalizePublicAiModelConfig,
@@ -243,7 +244,7 @@ export function AiSettingsDialog({ open, embedded = false, initialPanel = "provi
         modelName: selectedModel?.name,
         model: selectedModel?.model,
         models: selectedDraft.models,
-        baseUrl: selectedDraft.baseUrl,
+        baseUrl: getAiProviderSaveBaseUrl(selectedDraft),
         apiKey: apiKeys[selectedProvider] || "",
         resetTest: !selectedModel?.testedOk && !selectedModel?.testedAt,
         activate: false,
@@ -703,6 +704,7 @@ export function AiSettingsDialog({ open, embedded = false, initialPanel = "provi
           selectedModel={selectedModel}
           selectedProvider={selectedProvider}
           selectedProviderIcon={selectedProviderIcon}
+          status={status}
           setDefaultModel={setDefaultModel}
           setDeleteConfirm={setDeleteConfirm}
           setSelectedModelId={setSelectedModelId}

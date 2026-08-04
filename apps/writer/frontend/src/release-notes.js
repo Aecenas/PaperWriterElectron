@@ -8,6 +8,20 @@ export const RELEASE_PHASE_DEFINITIONS = [
 
 export const RELEASE_NOTES = [
   {
+    version: "1.1.6",
+    phaseId: "professional-creation",
+    scale: "minor",
+    date: "2026-08-04",
+    title: "Codex 设置修复与入口精简",
+    changes: [
+      "修复 Codex CLI 模型的“设为默认”和逐模型推理强度无法保存、点击后又被刷新覆盖的问题；本地 CLI 的展示文字不再误作为 Base URL 提交。",
+      "加固 Codex CLI 配置保存边界：主进程会忽略不适用的 HTTP 地址和 API Key 逻辑，保存模型选择时不再错误清除模型可用状态。",
+      "AI 配置操作新增就地成功或失败反馈，模型设置是否已经落盘现在可以直接确认。",
+      "顶部“设置”改为轻量菜单，可一步进入 AI 配置或模板配置；写作检查继续从结构区进入，配置备份与迁移继续由“出入”菜单管理。",
+      "同步更新帮助文档、AI精灵离线知识库和相关浏览器回归测试，使设置入口说明与当前界面一致。",
+    ],
+  },
+  {
     version: "1.1.5",
     phaseId: "professional-creation",
     scale: "major",

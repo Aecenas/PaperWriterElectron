@@ -41,6 +41,7 @@ export function AiProviderPanel({
   selectedModel,
   selectedProvider,
   selectedProviderIcon,
+  status,
   setDefaultModel,
   setDeleteConfirm,
   setSelectedModelId,
@@ -77,6 +78,7 @@ export function AiProviderPanel({
           </button>
         </div>
       </header>
+      {status ? <p className={`ai-provider-feedback ${status.tone}`} aria-live="polite">{status.message}</p> : null}
       {selectedIsCodex ? (
         <>
           <section className="ai-settings-section ai-codex-status-section">

@@ -25,11 +25,10 @@ test("dialog scrims default to clear and require an explicit large opt-in for bl
 });
 
 test("only full-context dialogs opt into the large blur policy", async () => {
-  const [helpCenter, chooser, releaseNotes, settingsCenter, templateDialog, aiSettingsDialog] = await Promise.all([
+  const [helpCenter, chooser, releaseNotes, templateDialog, aiSettingsDialog] = await Promise.all([
     source("./app-shell/HelpCenter.jsx"),
     source("./AiModeChooser.jsx"),
     source("./ReleaseNotesDialog.jsx"),
-    source("./SettingsCenter.jsx"),
     source("./templates/LetterTemplateDialog.jsx"),
     source("./ai-settings/AiSettingsDialog.jsx"),
   ]);
@@ -40,8 +39,6 @@ test("only full-context dialogs opt into the large blur policy", async () => {
   assert.match(aiSettingsDialog, /ai-settings-overlay dialog-scrim dialog-scrim--large/);
   assert.match(helpCenter, /help-center-overlay dialog-scrim dialog-scrim--large/);
   assert.match(helpCenter, /help-image-preview-overlay dialog-scrim dialog-scrim--large/);
-  assert.match(settingsCenter, /settings-center-overlay dialog-scrim"/);
-  assert.doesNotMatch(settingsCenter, /settings-center-overlay dialog-scrim dialog-scrim--large/);
 });
 
 test("compact dialogs, nested dialogs, palettes and prompts all use the clear scrim", async () => {

@@ -19,7 +19,7 @@ const knowledge = JSON.parse(fs.readFileSync(
 
 test("compiled help knowledge contains all user topics plus code-derived detail entries", () => {
   assert.equal(knowledge.schemaVersion, 1);
-  assert.equal(knowledge.appVersion, "1.1.5");
+  assert.equal(knowledge.appVersion, "1.1.6");
   assert.equal(knowledge.entries.filter((entry) => entry.kind === "help").length, 29);
   assert.ok(knowledge.entries.filter((entry) => entry.kind === "detail").length >= 15);
   assert.ok(knowledge.entries.some((entry) => entry.id === "detail:research-translation"));
@@ -46,7 +46,7 @@ test("Chinese aliases and n-grams rank code-derived recovery rules without an on
 test("controlled prompts use retrieval only as RAG evidence and omit maintenance references", () => {
   const selected = retrieveKnowledge(knowledge, "AI精灵会读取正文和资料区吗？");
   const messages = buildHelpAssistantMessages({
-    appVersion: "1.1.5",
+    appVersion: "1.1.6",
     modelLabel: "测试供应商 / 测试模型",
     question: "AI精灵会读取正文和资料区吗？",
     history: [

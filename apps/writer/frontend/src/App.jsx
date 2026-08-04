@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { bridge } from "./bridge.js";
 import AiModeChooser from "./AiModeChooser.jsx";
-import SettingsCenter from "./SettingsCenter.jsx";
 import { DocumentFindWidget, ResearchSearchPalette, WorkspaceSearchPalette } from "./WorkspaceSearchPanel.jsx";
 import "./workspace-features.css";
 import ReleaseNotesDialog from "./ReleaseNotesDialog.jsx";
@@ -442,7 +441,6 @@ export default function App() {
     setManualFallbackAiBlockIndexes,
   } = useAiApplyState();
   const [settingsDialog, setSettingsDialog] = useState({
-    open: false,
     section: "",
     targetTabId: "",
     aiInitialPanel: "provider",
@@ -1138,24 +1136,13 @@ export default function App() {
     setPromptDialog,
   });
 
-  const openSettings = useCallback(() => {
-    setAiModeChooserOpen(false);
-    setSettingsDialog({
-      open: true,
-      section: "",
-      targetTabId: splitPaneActive && rightSplitTabId ? rightSplitTabId : activeTabIdRef.current,
-      aiInitialPanel: "provider",
-      aiInitialTaskId: "",
-    });
-  }, [rightSplitTabId, splitPaneActive]);
-
   const openSettingsSection = useCallback((section) => {
+    setAiModeChooserOpen(false);
     if (section === "writing") {
       setWritingAssistanceDraft(writingAssistanceConfig);
     }
     setSettingsDialog((current) => ({
       ...current,
-      open: false,
       section: ["ai", "template", "writing", "profile"].includes(section)
         ? section
         : "ai",
@@ -1168,7 +1155,6 @@ export default function App() {
   const openAiSettings = useCallback((request = {}) => {
     setAiModeChooserOpen(false);
     setSettingsDialog({
-      open: false,
       section: "ai",
       targetTabId: splitPaneActive && rightSplitTabId ? rightSplitTabId : activeTabIdRef.current,
       aiInitialPanel: request?.panel === "tasks" ? "tasks" : "provider",
@@ -1178,7 +1164,7 @@ export default function App() {
     });
   }, [rightSplitTabId, splitPaneActive]);
   const closeSettings = useCallback(() => {
-    setSettingsDialog((current) => ({ ...current, open: false, section: "" }));
+    setSettingsDialog((current) => ({ ...current, section: "" }));
   }, []);
 
   const {
@@ -4877,7 +4863,6 @@ export default function App() {
     || confirmDialog
     || promptDialog
     || linkDialog
-    || settingsDialog.open
     || Boolean(settingsDialog.section)
     || tabTemplateDialog.open
     || helpOpen
@@ -4921,7 +4906,7 @@ export default function App() {
         onOpenCitationPicker={handleOpenCitationPicker}
         onOpenHelp={handleOpenHelpCenter}
         onOpenHelpAssistant={handleOpenHelpAssistant}
-        onOpenSettings={openSettings}
+        onOpenSettings={openSettingsSection}
         helpTriggerRef={helpTriggerRef}
         settingsTriggerRef={settingsTriggerRef}
         elementsTriggerRef={elementsTriggerRef}
@@ -5607,12 +5592,6 @@ export default function App() {
         onExitMode={requestExitAiMode}
         onOpenSettings={openAiSettings}
         onClose={() => setAiModeChooserOpen(false)}
-      />
-      <SettingsCenter
-        open={settingsDialog.open}
-        anchorRef={settingsTriggerRef}
-        onSelectSection={openSettingsSection}
-        onClose={closeSettings}
       />
       <AiSettingsDialog
         open={settingsDialog.section === "ai"}

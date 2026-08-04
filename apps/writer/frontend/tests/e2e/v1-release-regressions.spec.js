@@ -387,9 +387,8 @@ test.describe("1.0.0 release regressions", () => {
       aiConfig: taskModelConfig,
     });
 
-    await page.getByRole("button", { name: "打开设置" }).click();
-    const settingsCenter = page.getByRole("dialog", { name: "设置" });
-    await settingsCenter.getByRole("button", { name: /AI 配置/ }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByRole("menuitem", { name: /AI 配置/ }).click();
     let aiSettings = page.locator(".ai-settings-dialog");
     await aiSettings.getByRole("button", { name: /任务模型/ }).click();
 
@@ -450,10 +449,8 @@ test.describe("1.0.0 release regressions", () => {
     await expect(taskHeaders.nth(1)).toHaveAttribute("aria-expanded", "true");
 
     await aiSettings.getByRole("button", { name: "关闭 AI 设置" }).click();
-    await page.getByRole("button", { name: "打开设置" }).click();
-    await page.getByRole("dialog", { name: "设置" })
-      .getByRole("button", { name: /AI 配置/ })
-      .click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByRole("menuitem", { name: /AI 配置/ }).click();
     aiSettings = page.locator(".ai-settings-dialog");
     await aiSettings.getByRole("button", { name: /任务模型/ }).click();
     const reopenedTaskHeaders = aiSettings.locator(".ai-task-model-summary");

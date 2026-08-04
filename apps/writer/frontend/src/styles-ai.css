@@ -736,6 +736,20 @@
   color: #a24e35;
 }
 
+.ai-provider-feedback {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.ai-provider-feedback.success {
+  color: #287947;
+}
+
+.ai-provider-feedback.warning {
+  color: #a24e35;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ai-task-model-chevron,
   .ai-task-model-body-shell,

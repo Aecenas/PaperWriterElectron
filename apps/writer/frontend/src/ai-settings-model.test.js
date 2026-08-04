@@ -6,6 +6,7 @@ import {
   createAiModelKey,
   getAiProviderConnectionMeta,
   getAiProviderRuntimeConfig,
+  getAiProviderSaveBaseUrl,
   getAiReasoningEffortOptions,
   getTestedAiProviders,
   normalizePublicAiConfig,
@@ -14,6 +15,7 @@ import {
 
 test("AI settings model preserves the built-in provider and legacy config contract", () => {
   assert.deepEqual(AI_PROVIDER_OPTIONS.map((provider) => provider.id), ["gemini", "deepseek", "codex-cli"]);
+  assert.equal(AI_PROVIDER_OPTIONS.find((provider) => provider.id === "codex-cli")?.baseUrl, "");
 
   const normalized = normalizePublicAiConfig({
     provider: "deepseek",
@@ -32,6 +34,32 @@ test("AI settings model preserves the built-in provider and legacy config contra
   assert.equal(normalized.hasApiKey, true);
   assert.equal(normalized.testedOk, true);
   assert.deepEqual(Object.keys(normalized.providers), ["gemini", "deepseek", "codex-cli"]);
+});
+
+test("Codex CLI keeps display copy out of persisted Base URL values", () => {
+  const normalized = normalizePublicAiConfig({
+    activeProvider: "codex-cli",
+    activeModelId: "gpt-5.6-sol",
+    providers: {
+      "codex-cli": {
+        transport: "codex-cli",
+        baseUrl: "本地 Codex CLI",
+        activeModelId: "gpt-5.6-sol",
+        models: [{
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6-Sol",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "low",
+          testedOk: true,
+        }],
+      },
+    },
+  });
+
+  const codex = normalized.providers["codex-cli"];
+  assert.equal(codex.baseUrl, "");
+  assert.equal(getAiProviderSaveBaseUrl(codex), "");
+  assert.equal(getAiProviderSaveBaseUrl({ transport: "http", baseUrl: "https://example.com/v1" }), "https://example.com/v1");
 });
 
 test("custom provider models, task overrides and runtime selection round-trip unchanged", () => {

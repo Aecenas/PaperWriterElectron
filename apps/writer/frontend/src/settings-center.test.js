@@ -4,10 +4,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readAppStylesSync } from "./style-test-utils.js";
 
-const source = fs.readFileSync(fileURLToPath(new URL("./SettingsCenter.jsx", import.meta.url)), "utf8");
-const css = fs.readFileSync(fileURLToPath(new URL("./settings-center.css", import.meta.url)), "utf8");
 const appCss = readAppStylesSync();
 const appSource = fs.readFileSync(fileURLToPath(new URL("./App.jsx", import.meta.url)), "utf8");
+const workspaceStyles = fs.readFileSync(fileURLToPath(new URL("./workspace-features.css", import.meta.url)), "utf8");
 const templateDialogSource = fs.readFileSync(fileURLToPath(new URL("./templates/LetterTemplateDialog.jsx", import.meta.url)), "utf8");
 const aiSettingsSource = [
   "./ai-settings/AiSettingsDialog.jsx",
@@ -20,61 +19,38 @@ const aiSettingsModelSource = fs.readFileSync(fileURLToPath(new URL("./ai-settin
 const uiInteractionsSource = fs.readFileSync(fileURLToPath(new URL("./ui-interactions.js", import.meta.url)), "utf8");
 const topNavSource = fs.readFileSync(fileURLToPath(new URL("./app-shell/TopNav.jsx", import.meta.url)), "utf8");
 
-test("settings center only launches settings while migration lives in Export", () => {
-  assert.match(source, /AI 配置/);
-  assert.match(source, /模板配置/);
-  assert.doesNotMatch(source, /写作检查/);
-  assert.doesNotMatch(source, /备份与迁移/);
-  assert.match(source, /onSelectSection\?\.\(destination\.id\)/);
-  assert.match(source, /id: "ai"/);
-  assert.match(source, /id: "template"/);
-  assert.doesNotMatch(source, /id: "writing"/);
-  assert.doesNotMatch(source, /id: "profile"/);
+test("settings is a two-item toolbar menu while migration lives in Export", () => {
+  const settingsMenu = topNavSource.slice(topNavSource.indexOf('menuId="settings"'), topNavSource.indexOf("</MenuButton>", topNavSource.indexOf('menuId="settings"')));
+  assert.match(settingsMenu, /label="AI 配置"/);
+  assert.match(settingsMenu, /label="模板配置"/);
+  assert.match(settingsMenu, /showDisclosure=\{false\}/);
+  assert.equal((settingsMenu.match(/<MenuItem/g) || []).length, 2);
+  assert.doesNotMatch(settingsMenu, /写作检查|备份与迁移/);
+  assert.match(settingsMenu, /onOpenSettings\?\.\("ai"\)/);
+  assert.match(settingsMenu, /onOpenSettings\?\.\("template"\)/);
   assert.match(topNavSource, /label="备份与迁移"/);
   assert.match(topNavSource, /runMenuAction\(onOpenProfileMigration\)/);
-  assert.doesNotMatch(source, /aiContent|templateContent|onSectionChange|activeSection/);
-  assert.doesNotMatch(source, /settings-center-sidebar|settings-center-content/);
 });
 
-test("settings launcher remains an accessible, dismissible focus-trapped modal", () => {
-  assert.match(source, /role="dialog"/);
-  assert.match(source, /aria-modal="true"/);
-  assert.match(source, /aria-labelledby="settings-center-title"/);
-  assert.match(source, /event\.key === "Escape"/);
-  assert.match(source, /event\.key !== "Tab"/);
-  assert.match(source, /event\.target === event\.currentTarget/);
-  assert.match(source, /anchorRef\?\.current \|\| previouslyFocusedRef\.current/);
-  assert.match(source, /firstDestinationRef\.current\?\.focus/);
-  assert.match(source, /destinationSelectedRef\.current = true/);
-  assert.match(source, /if \(!destinationSelectedRef\.current\)/);
+test("settings menu reuses the descriptive warm-paper menu presentation", () => {
+  assert.match(workspaceStyles, /#nav-menu-interchange,\s*#nav-menu-help,\s*#nav-menu-settings\{width:268px\}/);
+  assert.match(workspaceStyles, /#nav-menu-settings \.nav-menu-item\.with-description/);
+  assert.match(workspaceStyles, /#nav-menu-settings \.nav-menu-item:focus-visible/);
 });
 
-test("settings launcher uses responsive cards without compact-dialog backdrop blur", () => {
-  assert.match(css, /backdrop-filter:\s*none/);
-  assert.match(css, /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
-  assert.match(css, /\.settings-center-destination:focus-visible/);
-  assert.match(css, /min-height:\s*188px/);
-  assert.match(css, /@media \(max-width: 620px\)/);
-  assert.match(css, /grid-template-columns:\s*minmax\(0, 1fr\)/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.doesNotMatch(css, /settings-embedded|settings-center-navigation/);
-});
-
-test("the launcher exits before opening a standalone second-level panel", () => {
-  assert.match(appSource, /const \[settingsDialog, setSettingsDialog\] = useState\(\{[\s\S]*?open: false,[\s\S]*?section: "",[\s\S]*?targetTabId: "",[\s\S]*?aiInitialPanel: "provider"/);
-  assert.match(appSource, /const openSettings = useCallback\(\(\) => \{[\s\S]*?open: true,[\s\S]*?section: ""/);
-  assert.match(appSource, /const openSettingsSection = useCallback\(\(section\) => \{[\s\S]*?open: false,[\s\S]*?section: \["ai", "template", "writing", "profile"\]\.includes\(section\)[\s\S]*?\? section[\s\S]*?: "ai"/);
-  assert.match(appSource, /onSelectSection=\{openSettingsSection\}/);
+test("settings menu opens standalone second-level panels directly", () => {
+  assert.match(appSource, /const \[settingsDialog, setSettingsDialog\] = useState\(\{[\s\S]*?section: "",[\s\S]*?targetTabId: "",[\s\S]*?aiInitialPanel: "provider"/);
+  assert.doesNotMatch(appSource, /import SettingsCenter|<SettingsCenter|settingsDialog\.open|const openSettings =/);
+  assert.match(appSource, /onOpenSettings=\{openSettingsSection\}/);
+  assert.match(appSource, /const openSettingsSection = useCallback\(\(section\) => \{[\s\S]*?section: \["ai", "template", "writing", "profile"\]\.includes\(section\)[\s\S]*?\? section[\s\S]*?: "ai"/);
   assert.match(appSource, /<AiSettingsDialog[\s\S]*?open=\{settingsDialog\.section === "ai"\}[\s\S]*?returnFocusRef=\{settingsTriggerRef\}/);
   assert.match(appSource, /settingsDialog\.section === "template"[\s\S]*?<LetterTemplateDialog[\s\S]*?mode="manage"[\s\S]*?returnFocusRef=\{settingsTriggerRef\}/);
-  const settingsRender = appSource.slice(appSource.indexOf("<SettingsCenter"), appSource.indexOf("<HelpCenterDialog"));
-  assert.doesNotMatch(settingsRender, /\bembedded\b|aiContent|templateContent|onSectionChange/);
   assert.match(appSource, /targetTabId: current\.targetTabId[\s\S]*?activeTabIdRef\.current/);
   assert.match(templateDialogSource, /selectionOnly \|\| manageOnly \? "" : selectedLetterTemplate\.id/);
   assert.match(templateDialogSource, /manageOnly \? SYSTEM_TEMPLATE_GROUPS\[0\]\.id : getLetterTemplateGroupId\(selectedLetterTemplate\)/);
   assert.match(appSource, /document=\{\{ letterTemplateId: newDocumentTemplateId \}\}/);
   assert.doesNotMatch(appSource, /const settingsTemplateDocument/);
-  assert.match(appSource, /\{ \.\.\.current, open: false, section: "" \}/);
+  assert.match(appSource, /\{ \.\.\.current, section: "" \}/);
 });
 
 test("writing check settings open from the structure check pane instead of the settings launcher", () => {
@@ -125,6 +101,13 @@ test("AI settings separates base models from a data-driven task-model page", () 
   assert.match(aiSettingsSource, /原任务模型已失效，请重新选择/);
   assert.doesNotMatch(aiSettingsSource, /<optgroup/);
   assert.doesNotMatch(aiSettingsSource, /ai-apply-resolver-section/);
+});
+
+test("Codex model saves omit display-only Base URLs and surface action feedback", () => {
+  assert.match(aiSettingsModelSource, /id: "codex-cli"[\s\S]*?baseUrl: ""/);
+  assert.match(aiSettingsModelSource, /export function getAiProviderSaveBaseUrl/);
+  assert.match(aiSettingsSource, /baseUrl: getAiProviderSaveBaseUrl\(selectedDraft\)/);
+  assert.match(aiSettingsSource, /className=\{`ai-provider-feedback \$\{status\.tone\}`\}/);
 });
 
 test("task-model navigation is divided, responsive and keyboard-visible", () => {
