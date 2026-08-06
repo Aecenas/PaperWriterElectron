@@ -162,7 +162,7 @@ cd apps\writer\electron
 npm run release:prepare
 ```
 
-`release:prepare` 会依次执行 Electron 语法与生成物检查、Electron 单元/契约测试、递归前端单元测试、生产构建、bundle budget、Playwright E2E、真实 Electron preload/IPC 与关闭握手 smoke；`pack`、`dist`、`publish` 均不能绕过该门禁。
+`release:prepare` 会依次执行 Electron 语法与生成物检查、Electron 单元/契约测试、递归前端单元测试、生产构建、bundle budget、Playwright E2E、真实 Electron preload/IPC 与关闭握手 smoke；`pack`、`dist`、`publish` 均不能绕过该门禁。`dist` 显式禁用 electron-builder 的 tag 自动发布，只有 `publish` 命令可以直接上传。
 
 最后执行启动器检查：
 

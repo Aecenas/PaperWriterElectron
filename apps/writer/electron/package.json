@@ -15,7 +15,7 @@
     "release:check": "npm run check && npm test && npm --prefix ../frontend test",
     "release:prepare": "npm run release:check && npm run frontend:build && npm --prefix ../frontend run check:bundle && npm --prefix ../frontend run test:e2e:only && npm --prefix ../frontend run test:electron-smoke && node build-preload.cjs",
     "test:packaged-smoke": "node ../frontend/scripts/packaged-electron-smoke.mjs ../../release/win-unpacked/笺间.exe",
-    "dist": "npm run release:prepare && electron-builder --win nsis --x64",
+    "dist": "npm run release:prepare && electron-builder --win nsis --x64 --publish never",
     "pack": "npm run release:prepare && electron-builder --win dir --x64",
     "publish": "npm run release:prepare && electron-builder --win nsis --x64 --publish always"
   },
