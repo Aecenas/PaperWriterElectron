@@ -33,7 +33,7 @@
     "pdfjs-dist": "^5.4.624"
   },
   "devDependencies": {
-    "electron": "^41.10.4",
+    "electron": "^43.2.0",
     "electron-builder": "^26.15.3"
   },
   "productName": "笺间",
