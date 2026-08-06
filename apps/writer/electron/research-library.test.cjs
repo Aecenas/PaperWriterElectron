@@ -341,15 +341,14 @@ test("watch replaces the active watcher and emits only safe relative changes", a
 }));
 
 test("a slower research watch request cannot replace a newer watcher", async () => {
-  let delayedRoot = "";
-  let delayNextRootStat = false;
+  let delayNextStat = false;
   const firstBlocked = deferred();
   const releaseFirst = deferred();
   const delayedFs = {
     ...fs,
     async lstat(targetPath) {
-      if (delayNextRootStat && delayedRoot && path.resolve(targetPath) === path.resolve(delayedRoot)) {
-        delayNextRootStat = false;
+      if (delayNextStat) {
+        delayNextStat = false;
         firstBlocked.resolve();
         await releaseFirst.promise;
       }
@@ -358,7 +357,6 @@ test("a slower research watch request cannot replace a newer watcher", async () 
   };
 
   await withLibrary(async ({ rootPath, manager }) => {
-    delayedRoot = rootPath;
     const selected = await manager.selectRoot(rootPath);
     const watchers = [];
     const createWatcher = (label) => (_root, _options, listener) => {
@@ -371,7 +369,7 @@ test("a slower research watch request cannot replace a newer watcher", async () 
       return emitter;
     };
 
-    delayNextRootStat = true;
+    delayNextStat = true;
     const older = manager.watchLibrary(selected.libraryId, { watchFactory: createWatcher("older") });
     await firstBlocked.promise;
     await manager.watchLibrary(selected.libraryId, { watchFactory: createWatcher("newer") });
@@ -384,15 +382,14 @@ test("a slower research watch request cannot replace a newer watcher", async () 
 });
 
 test("closing research watching invalidates a request still resolving its library", async () => {
-  let delayedRoot = "";
-  let delayNextRootStat = false;
+  let delayNextStat = false;
   const requestBlocked = deferred();
   const releaseRequest = deferred();
   const delayedFs = {
     ...fs,
     async lstat(targetPath) {
-      if (delayNextRootStat && delayedRoot && path.resolve(targetPath) === path.resolve(delayedRoot)) {
-        delayNextRootStat = false;
+      if (delayNextStat) {
+        delayNextStat = false;
         requestBlocked.resolve();
         await releaseRequest.promise;
       }
@@ -401,10 +398,9 @@ test("closing research watching invalidates a request still resolving its librar
   };
 
   await withLibrary(async ({ rootPath, manager }) => {
-    delayedRoot = rootPath;
     const selected = await manager.selectRoot(rootPath);
     const watchers = [];
-    delayNextRootStat = true;
+    delayNextStat = true;
     const pending = manager.watchLibrary(selected.libraryId, {
       watchFactory: (...args) => {
         watchers.push(args);
