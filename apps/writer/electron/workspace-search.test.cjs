@@ -128,7 +128,7 @@ test("open unsaved documents override the disk index without expanding workspace
     await writePaper(target, { title: "覆盖", html: "<p>磁盘内容</p>" });
     const index = createWorkspaceSearchIndex({ rootPath: directory });
     await index.initialize();
-    const override = [{ path: target, document: { title: "覆盖", html: "<p>未保存的新内容</p>" } }];
+    const override = [{ path: await fs.realpath(target), document: { title: "覆盖", html: "<p>未保存的新内容</p>" } }];
     assert.equal((await index.search("磁盘内容", { overrides: override })).results.length, 0);
     assert.equal((await index.search("新内容", { overrides: override })).results.length, 1);
     const outside = [{ path: path.join(os.tmpdir(), "外部.letterpaper"), document: { html: "<p>范围外秘密</p>" } }];
