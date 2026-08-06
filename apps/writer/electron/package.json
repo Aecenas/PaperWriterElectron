@@ -1,6 +1,6 @@
 {
   "name": "paperwriter-electron",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "private": false,
   "license": "MIT",
   "main": "main.cjs",
@@ -10,11 +10,14 @@
     "dev": "node build-preload.cjs && electron .",
     "dev:vite": "node build-preload.cjs && node dev-vite.cjs",
     "check": "node ../knowledge/build-knowledge.cjs --check && node build-preload.cjs --check && node check-cjs.cjs",
-    "test": "node --test *.test.cjs",
+    "test": "node run-tests.cjs",
     "frontend:build": "npm --prefix ../frontend run build",
-    "dist": "npm run frontend:build && node build-preload.cjs && electron-builder --win nsis --x64",
-    "pack": "npm run frontend:build && node build-preload.cjs && electron-builder --win dir --x64",
-    "publish": "npm run frontend:build && node build-preload.cjs && electron-builder --win nsis --x64 --publish always"
+    "release:check": "npm run check && npm test && npm --prefix ../frontend test",
+    "release:prepare": "npm run release:check && npm run frontend:build && npm --prefix ../frontend run check:bundle && npm --prefix ../frontend run test:e2e:only && npm --prefix ../frontend run test:electron-smoke && node build-preload.cjs",
+    "test:packaged-smoke": "node ../frontend/scripts/packaged-electron-smoke.mjs ../../release/win-unpacked/笺间.exe",
+    "dist": "npm run release:prepare && electron-builder --win nsis --x64",
+    "pack": "npm run release:prepare && electron-builder --win dir --x64",
+    "publish": "npm run release:prepare && electron-builder --win nsis --x64 --publish always"
   },
   "dependencies": {
     "@citation-js/core": "^0.8.2",
@@ -22,7 +25,6 @@
     "@citation-js/plugin-csl": "^0.8.2",
     "@citation-js/plugin-ris": "^0.8.2",
     "citeproc": "^2.4.63",
-    "diff": "^8.0.2",
     "docx": "^9.7.1",
     "electron-updater": "^6.8.9",
     "iconv-lite": "^0.7.3",
@@ -31,7 +33,7 @@
     "pdfjs-dist": "^5.4.624"
   },
   "devDependencies": {
-    "electron": "^41.5.0",
+    "electron": "^41.10.4",
     "electron-builder": "^26.15.3"
   },
   "productName": "笺间",
@@ -59,12 +61,22 @@
       "output": "../../release"
     },
     "files": [
-      "**/*",
+      "package.json",
+      "*.cjs",
+      "!*.test.cjs",
+      "!build-preload.cjs",
+      "!check-cjs.cjs",
+      "!dev-vite.cjs",
+      "!run-tests.cjs",
+      "!preload-src/**/*",
+      "!**/*.map",
+      "assets/**/*",
       {
         "from": "../frontend/dist",
         "to": "frontend/dist",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/*.map"
         ]
       },
       {

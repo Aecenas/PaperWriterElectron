@@ -67,9 +67,12 @@ function createHarness(options = {}) {
     getMainWindow() {
       return mainWindow;
     },
-    imageExtensions: ["png", "jpg", "svg"],
+    imageExtensions: ["png", "jpg"],
     audioExtensions: ["mp3", "wav"],
     videoExtensions: ["mp4", "webm"],
+    imageMaxBytes: 32 * 1024 * 1024,
+    imageMaxDimension: 16_384,
+    imageMaxPixels: 40_000_000,
     audioMaxBytes: 20 * 1024 * 1024,
     videoMaxBytes: 100 * 1024 * 1024,
     path,
@@ -77,7 +80,10 @@ function createHarness(options = {}) {
       async stat(filePath) {
         calls.stats.push(filePath);
         if (options.statError) throw options.statError;
-        return { size: options.statSize || 1024 };
+        return {
+          size: options.statSize || 1024,
+          isFile: () => options.statIsFile !== false,
+        };
       },
     },
     assetsFacade: {
@@ -141,12 +147,19 @@ test("image picker stages only an allowlisted native-selected image without expo
     {
       title: "选择图片",
       properties: ["openFile"],
-      filters: [{ name: "Images", extensions: ["png", "jpg", "svg"] }],
+      filters: [{ name: "Images", extensions: ["png", "jpg"] }],
     },
   ]]);
   assert.deepEqual(harness.calls.stages, [[
     "C:\\private\\Hero.PNG",
-    { mime: "image/png", name: "Hero.PNG" },
+    {
+      mime: "image/png",
+      name: "Hero.PNG",
+      maxBytes: 32 * 1024 * 1024,
+      validateImage: true,
+      maxImageDimension: 16_384,
+      maxImagePixels: 40_000_000,
+    },
   ]]);
   assert.deepEqual(result, {
     canceled: false,
@@ -190,6 +203,30 @@ test("image picker preserves cancellation, extension rejection, and unavailable-
     unavailable.handlers.get("asset:pick-image")(),
     /图片暂存服务尚未就绪，请重启应用后重试/,
   );
+});
+
+test("image picker rejects oversized or non-file input before staging", async () => {
+  const oversized = createHarness({
+    statSize: (32 * 1024 * 1024) + 1,
+  });
+  assert.deepEqual(
+    await oversized.handlers.get("asset:pick-image")(),
+    {
+      canceled: false,
+      error: "too-large",
+      kind: "image",
+      size: (32 * 1024 * 1024) + 1,
+      maxBytes: 32 * 1024 * 1024,
+    },
+  );
+  assert.deepEqual(oversized.calls.stages, []);
+
+  const notAFile = createHarness({ statIsFile: false });
+  assert.deepEqual(
+    await notAFile.handlers.get("asset:pick-image")(),
+    { canceled: false, error: "read-failed", kind: "image" },
+  );
+  assert.deepEqual(notAFile.calls.stages, []);
 });
 
 test("audio and video pickers enforce independent extension and byte limits", async () => {
@@ -252,7 +289,11 @@ test("media picker stages bounded content and maps read or staging failures", as
   );
   assert.deepEqual(harness.calls.stages, [[
     "C:\\media\\song.mp3",
-    { mime: "audio/mpeg", name: "song.mp3" },
+    {
+      mime: "audio/mpeg",
+      name: "song.mp3",
+      maxBytes: 20 * 1024 * 1024,
+    },
   ]]);
 
   const failed = createHarness({

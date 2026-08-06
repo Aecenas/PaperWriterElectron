@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
+import { AI_ASSETS } from "./ai/assets.js";
 import {
   AI_PROVIDER_OPTIONS,
   AI_TASK_MODEL_DEFINITIONS,
@@ -12,10 +14,33 @@ import {
   normalizePublicAiConfig,
   normalizePublicAiTaskModelAssignment,
 } from "./ai-settings/model.js";
+import { AI_PROVIDER_ICON_ASSETS } from "./ai-settings/provider-icons.js";
 
 test("AI settings model preserves the built-in provider and legacy config contract", () => {
-  assert.deepEqual(AI_PROVIDER_OPTIONS.map((provider) => provider.id), ["gemini", "deepseek", "codex-cli"]);
+  const builtInProviderIds = [
+    "gemini",
+    "deepseek",
+    "qwen",
+    "kimi",
+    "zhipu",
+    "openai",
+    "claude",
+    "openrouter",
+    "codex-cli",
+  ];
+  assert.deepEqual(AI_PROVIDER_OPTIONS.map((provider) => provider.id), builtInProviderIds);
   assert.equal(AI_PROVIDER_OPTIONS.find((provider) => provider.id === "codex-cli")?.baseUrl, "");
+  assert.deepEqual(
+    AI_PROVIDER_OPTIONS.slice(2, -1).map(({ id, protocol, model, baseUrl }) => ({ id, protocol, model, baseUrl })),
+    [
+      { id: "qwen", protocol: "openai", model: "qwen3.7-plus", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+      { id: "kimi", protocol: "openai", model: "kimi-k2.6", baseUrl: "https://api.moonshot.cn/v1" },
+      { id: "zhipu", protocol: "openai", model: "glm-5.2", baseUrl: "https://open.bigmodel.cn/api/paas/v4" },
+      { id: "openai", protocol: "openai", model: "gpt-5.6-terra", baseUrl: "https://api.openai.com/v1" },
+      { id: "claude", protocol: "anthropic", model: "claude-sonnet-5", baseUrl: "https://api.anthropic.com/v1" },
+      { id: "openrouter", protocol: "openai", model: "openrouter/auto", baseUrl: "https://openrouter.ai/api/v1" },
+    ],
+  );
 
   const normalized = normalizePublicAiConfig({
     provider: "deepseek",
@@ -33,7 +58,19 @@ test("AI settings model preserves the built-in provider and legacy config contra
   assert.equal(normalized.providerLabel, "DeepSeek");
   assert.equal(normalized.hasApiKey, true);
   assert.equal(normalized.testedOk, true);
-  assert.deepEqual(Object.keys(normalized.providers), ["gemini", "deepseek", "codex-cli"]);
+  assert.deepEqual(Object.keys(normalized.providers), builtInProviderIds);
+});
+
+test("every built-in HTTP provider uses a bundled official icon in settings and selectors", () => {
+  const httpProviderIds = AI_PROVIDER_OPTIONS
+    .filter((provider) => provider.transport !== "codex-cli")
+    .map((provider) => provider.id);
+  assert.deepEqual(Object.keys(AI_PROVIDER_ICON_ASSETS), httpProviderIds);
+  for (const providerId of httpProviderIds) {
+    const iconUrl = AI_PROVIDER_ICON_ASSETS[providerId];
+    assert.equal(AI_ASSETS[providerId], iconUrl);
+    assert.ok(fs.existsSync(new URL(iconUrl)), `${providerId} icon is bundled`);
+  }
 });
 
 test("Codex CLI keeps display copy out of persisted Base URL values", () => {

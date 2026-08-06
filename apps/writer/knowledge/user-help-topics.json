@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "appVersion": "1.1.6",
+  "appVersion": "1.1.7",
   "topics": [
     {
       "sinceVersion": "1.1.1",
@@ -442,7 +442,7 @@
       "illustrationAlt": "AI 配置页面显示供应商模型、请求参数、选区问答、直接应用定位、资料翻译和 AI 起稿任务模型。",
       "illustrationCaption": "只有测试成功的模型可用于写作任务或设为任务专用模型。",
       "steps": [
-        "打开顶部__设置__菜单并选择__AI 配置__，再选择 Gemini、DeepSeek、Codex CLI 或自定义供应商。",
+        "打开顶部__设置__菜单并选择__AI 配置__，再选择 Gemini、DeepSeek、Qwen、Kimi、智谱 GLM、OpenAI、Claude、OpenRouter、Codex CLI 或自定义供应商。",
         "为 HTTP 模型填写模型标识和请求参数，测试成功后设为默认。",
         "打开__任务模型__，按需为选区问答、直接应用定位、资料翻译、AI 起稿或 AI精灵指定专用模型；未指定时跟随默认模型。"
       ],

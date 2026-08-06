@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  BROWSER_BUILTIN_PROVIDERS,
   MAX_BROWSER_AI_MODELS,
   MAX_BROWSER_AI_PROVIDERS,
   MAX_BROWSER_AI_REQUEST_PARAMS,
@@ -12,6 +13,24 @@ import {
   safeBrowserProviderId,
 } from "./browser-ai-config.js";
 import { browserBridge } from "./bridge.js";
+
+test("browser fallback exposes the same common built-in providers", () => {
+  assert.deepEqual(Object.keys(BROWSER_BUILTIN_PROVIDERS), [
+    "gemini",
+    "deepseek",
+    "qwen",
+    "kimi",
+    "zhipu",
+    "openai",
+    "claude",
+    "openrouter",
+    "codex-cli",
+  ]);
+  const normalized = normalizeBrowserAiConfig({});
+  assert.equal(normalized.providers.qwen.models[0].model, "qwen3.7-plus");
+  assert.equal(normalized.providers.kimi.models[0].model, "kimi-k2.6");
+  assert.equal(normalized.providers.claude.protocol, "anthropic");
+});
 
 test("rejects reserved or malformed provider ids before map insertion", () => {
   assert.equal(safeBrowserProviderId("custom-safe_1.2"), "custom-safe_1.2");

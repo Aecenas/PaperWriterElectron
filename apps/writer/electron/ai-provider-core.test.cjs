@@ -13,7 +13,7 @@ const {
   taskAiProviderConfig,
 } = require("./ai-provider-core.cjs");
 
-test("uses each built-in resolver's full output allowance and forces JSON mode only for built-ins", () => {
+test("uses Gemini and DeepSeek resolver limits without forcing JSON on other built-ins", () => {
   assert.deepEqual(aiApplyResolverRequestParams("deepseek", "openai", {
     max_tokens: 384000,
     response_format: { type: "text" },
@@ -32,6 +32,14 @@ test("uses each built-in resolver's full output allowance and forces JSON mode o
     max_tokens: 1024,
     temperature: 0.2,
   });
+  assert.deepEqual(aiApplyResolverRequestParams("qwen", "openai", { max_tokens: 4096, temperature: 0.2 }), {
+    max_tokens: 1024,
+    temperature: 0.2,
+  });
+  assert.deepEqual(aiApplyResolverRequestParams("openai", "openai", { response_format: { type: "text" } }), {
+    max_tokens: 1024,
+    response_format: { type: "text" },
+  });
   assert.deepEqual(aiApplyResolverRequestParams("custom-anthropic", "anthropic", { max_tokens: 512 }), {
     max_tokens: 512,
   });
@@ -46,7 +54,24 @@ test("migrates legacy provider config and keeps built-ins", () => {
   });
   assert.equal(config.activeProvider, "deepseek");
   assert.equal(config.providers.deepseek.models[0].model, "deepseek-chat");
-  assert.ok(config.providers.gemini);
+  assert.deepEqual(Object.keys(config.providers), [
+    "gemini",
+    "deepseek",
+    "qwen",
+    "kimi",
+    "zhipu",
+    "openai",
+    "claude",
+    "openrouter",
+    "codex-cli",
+  ]);
+  assert.equal(config.providers.qwen.models[0].model, "qwen3.7-plus");
+  assert.equal(config.providers.kimi.models[0].model, "kimi-k2.6");
+  assert.equal(config.providers.zhipu.models[0].model, "glm-5.2");
+  assert.equal(config.providers.openai.models[0].model, "gpt-5.6-terra");
+  assert.equal(config.providers.claude.models[0].model, "claude-sonnet-5");
+  assert.equal(config.providers.claude.protocol, "anthropic");
+  assert.equal(config.providers.openrouter.models[0].model, "openrouter/auto");
   assert.ok(config.providers["codex-cli"]);
   assert.equal(config.providers["codex-cli"].transport, "codex-cli");
   assert.deepEqual(config.providers["codex-cli"].models, []);
@@ -214,6 +239,28 @@ test("builds OpenAI-compatible chat completion requests", () => {
   assert.equal(request.body.stream, true);
   assert.equal("reasoning_effort" in request.body, false);
   assert.equal("stream_options" in request.body, false);
+});
+
+test("adds streaming usage only for built-ins whose official API supports it", () => {
+  const openAi = buildAiRequest({
+    provider: "openai",
+    protocol: "openai",
+    builtin: true,
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "key",
+    model: "gpt-5.6-terra",
+  }, [{ role: "user", content: "你好" }], { stream: true });
+  assert.deepEqual(openAi.body.stream_options, { include_usage: true });
+
+  const kimi = buildAiRequest({
+    provider: "kimi",
+    protocol: "openai",
+    builtin: true,
+    baseUrl: "https://api.moonshot.cn/v1",
+    apiKey: "key",
+    model: "kimi-k2.6",
+  }, [{ role: "user", content: "你好" }], { stream: true });
+  assert.equal("stream_options" in kimi.body, false);
 });
 
 test("HTTP providers send only explicit request parameters and ignore legacy reasoning effort", () => {

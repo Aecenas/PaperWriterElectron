@@ -32,3 +32,13 @@ test("the modular style fragments retain legacy anchors and scoped feature style
   assert.match(selectionAi, /\.selection-ai-popover\s*\{/);
   assert.doesNotMatch(cascade, /@import\s+/);
 });
+
+test("bundled Chinese fonts use full-coverage WOFF2 assets instead of raw TTF files", async () => {
+  const foundation = await readFile(
+    new URL("./styles-foundation.css", import.meta.url),
+    "utf8",
+  );
+  assert.match(foundation, /NotoSerifSC-VF\.woff2[^;]*format\("woff2"\)/);
+  assert.match(foundation, /LXGWWenKaiScreen\.woff2[^;]*format\("woff2"\)/);
+  assert.doesNotMatch(foundation, /assets\/fonts\/[^)]+\.ttf/);
+});

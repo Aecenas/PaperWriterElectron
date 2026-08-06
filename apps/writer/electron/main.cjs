@@ -12,6 +12,15 @@ const JSZip = require("jszip");
 const mammoth = require("mammoth");
 const docx = require("docx");
 const iconvLite = require("iconv-lite");
+
+if (!app.isPackaged && process.env.PAPERWRITER_SMOKE_TEST === "1") {
+  const smokeUserDataDir = String(process.env.PAPERWRITER_SMOKE_USER_DATA_DIR || "");
+  if (!smokeUserDataDir || !path.isAbsolute(smokeUserDataDir)) {
+    throw new Error("PAPERWRITER_SMOKE_USER_DATA_DIR 必须是绝对路径");
+  }
+  app.setPath("userData", path.resolve(smokeUserDataDir));
+}
+
 const { registerAiConfigIpcHandlers } = require("./ai-config-ipc.cjs");
 const { registerAiGenerationIpcHandlers } = require("./ai-generation-ipc.cjs");
 const { registerAiCollaborationIpcHandlers } = require("./ai-collaboration-ipc.cjs");
@@ -24,7 +33,10 @@ const { registerProfileIpcHandlers } = require("./profile-ipc.cjs");
 const { registerWritingAssistanceIpcHandlers } = require("./writing-assistance-ipc.cjs");
 const { registerApplicationIpcHandlers } = require("./application-ipc.cjs");
 const { registerAutosaveIpcHandlers } = require("./autosave-ipc.cjs");
-const { registerDiagnosticsIpcHandlers } = require("./diagnostics-ipc.cjs");
+const {
+  registerDiagnosticsIpcHandlers,
+  sanitizeDebugLogData,
+} = require("./diagnostics-ipc.cjs");
 const { registerDocumentOpenIpcHandlers } = require("./document-open-ipc.cjs");
 const { registerDocumentOutputIpcHandlers } = require("./document-output-ipc.cjs");
 const { registerDocumentSaveIpcHandlers } = require("./document-save-ipc.cjs");
@@ -57,6 +69,7 @@ const {
   registerUpdateEvents,
 } = require("./update-runtime.cjs");
 const { createWorkspaceRuntime } = require("./workspace-runtime.cjs");
+const { createUnresponsiveCloseGuard } = require("./unresponsive-close-guard.cjs");
 const {
   ASSET_PROTOCOL,
   createDocumentAssetRegistry,
@@ -145,7 +158,12 @@ const FRONTEND_URL = (() => {
   }
 })();
 const APP_ICON = path.resolve(__dirname, "assets", process.platform === "win32" ? "app-icon.ico" : "app-icon.png");
-const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"];
+// AVIF stays disabled until the primary item and its coded dimensions can be
+// verified without decoding attacker-controlled image data.
+const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+const IMAGE_MAX_BYTES = 32 * 1024 * 1024;
+const IMAGE_MAX_DIMENSION = 16_384;
+const IMAGE_MAX_PIXELS = 40_000_000;
 const AUDIO_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "m4a", "aac", "flac"];
@@ -180,6 +198,7 @@ let closeRequestInFlight = false;
 let forceCloseWindow = false;
 let closeAttentionActive = false;
 let rendererCanConfirmClose = false;
+let unresponsiveCloseGuard = null;
 let pendingUpdateInstall = false;
 let downloadGuardInstalled = false;
 let compositionShutdownComplete = false;
@@ -464,6 +483,7 @@ const researchRuntime = createResearchRuntime({
   WebContentsView,
   session,
   shell,
+  dialog,
   getWindow: () => mainWindow,
   getActiveWorkspaceRoot: workspaceRuntime.getActiveRoot,
   emitRendererEvent: (channel, payload) => {
@@ -499,11 +519,7 @@ protocol.registerSchemesAsPrivileged([{
 }]);
 
 function aiDebugLogPath() {
-  return path.join(path.dirname(app.getPath("exe")), "ai-debug.log");
-}
-
-function fallbackAiDebugLogPath() {
-  return path.join(app.getPath("userData"), "ai-debug.log");
+  return path.join(app.getPath("userData"), "Logs", "ai-debug.log");
 }
 
 function isResolvedPathInside(rootPath, targetPath) {
@@ -526,7 +542,9 @@ async function writeAiDebugLog(event, data = {}) {
     } catch {
       // No existing log yet.
     }
-    let safeData = fallbackReason ? { ...data, fallbackReason } : data;
+    let safeData = sanitizeDebugLogData(
+      fallbackReason ? { ...data, fallbackReason } : data,
+    );
     try {
       if (Buffer.byteLength(JSON.stringify(safeData), "utf8") > AI_DEBUG_LOG_ENTRY_MAX_BYTES) {
         safeData = { truncated: true, message: "debug payload exceeded 64 KiB" };
@@ -546,13 +564,9 @@ async function writeAiDebugLog(event, data = {}) {
 
   try {
     return await writeLog(aiDebugLogPath());
-  } catch (error) {
-    try {
-      return await writeLog(fallbackAiDebugLogPath(), error?.message || "install-dir-write-failed");
-    } catch {
-      // Debug logging must never break user workflows.
-      return "";
-    }
+  } catch {
+    // Debug logging must never break user workflows.
+    return "";
   }
 }
 
@@ -913,6 +927,7 @@ function revealCloseConfirmation() {
 
 function markRendererUnavailable(reason, details = {}) {
   rendererCanConfirmClose = false;
+  unresponsiveCloseGuard?.dispose();
   void writeAiDebugLog("renderer:unavailable", { reason, ...details }).catch(() => {});
   if (!closeRequestInFlight || !mainWindow || mainWindow.isDestroyed()) return;
   // The user already requested a close, but an unavailable renderer cannot
@@ -923,7 +938,14 @@ function markRendererUnavailable(reason, details = {}) {
   mainWindow.close();
 }
 
+function setCloseRequestInFlight(value) {
+  closeRequestInFlight = Boolean(value);
+  if (!closeRequestInFlight) unresponsiveCloseGuard?.closeSettled();
+}
+
 function createWindow() {
+  unresponsiveCloseGuard?.dispose();
+  unresponsiveCloseGuard = null;
   closeRequestInFlight = false;
   forceCloseWindow = false;
   closeAttentionActive = false;
@@ -950,6 +972,18 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       spellcheck: true,
+    },
+  });
+  unresponsiveCloseGuard = createUnresponsiveCloseGuard({
+    getWindow: () => mainWindow,
+    isCloseRequestInFlight: () => closeRequestInFlight,
+    showMessageBox: (window, options) => dialog.showMessageBox(window, options),
+    writeDebugLog: writeAiDebugLog,
+    forceClose: () => {
+      if (!mainWindow || mainWindow.isDestroyed() || !closeRequestInFlight) return;
+      setCloseRequestInFlight(false);
+      forceCloseWindow = true;
+      mainWindow.close();
     },
   });
   removeSpellingContextMenu?.();
@@ -1015,6 +1049,7 @@ function createWindow() {
       return;
     }
     closeRequestInFlight = true;
+    unresponsiveCloseGuard?.closeRequested();
     revealCloseConfirmation();
     mainWindow.webContents.send("app:close-request", {
       requestedAt: Date.now(),
@@ -1022,10 +1057,12 @@ function createWindow() {
     });
   });
   mainWindow.on("unresponsive", () => {
-    markRendererUnavailable("unresponsive");
+    void writeAiDebugLog("renderer:unresponsive").catch(() => {});
+    unresponsiveCloseGuard?.markUnresponsive();
   });
   mainWindow.on("responsive", () => {
     rendererCanConfirmClose = true;
+    unresponsiveCloseGuard?.markResponsive();
   });
   mainWindow.on("focus", () => {
     stopCloseAttention();
@@ -1041,6 +1078,8 @@ function createWindow() {
     sendRendererEvent(mainWindow?.webContents, "window:fullscreen-changed", { fullscreen: false });
   });
   mainWindow.on("closed", () => {
+    unresponsiveCloseGuard?.dispose();
+    unresponsiveCloseGuard = null;
     closeAttentionActive = false;
     rendererCanConfirmClose = false;
     researchRuntime.destroyWebViews();
@@ -1136,7 +1175,7 @@ registerApplicationIpcHandlers({
   getUpdateState: () => updateState,
   emitUpdateState,
   getCloseRequestInFlight: () => closeRequestInFlight,
-  setCloseRequestInFlight: (value) => { closeRequestInFlight = value; },
+  setCloseRequestInFlight,
   getPendingUpdateInstall: () => pendingUpdateInstall,
   setPendingUpdateInstall: (value) => { pendingUpdateInstall = value; },
   setForceCloseWindow: (value) => { forceCloseWindow = value; },
@@ -1358,6 +1397,9 @@ registerResourceIpcHandlers({
   imageExtensions: IMAGE_EXTENSIONS,
   audioExtensions: AUDIO_EXTENSIONS,
   videoExtensions: VIDEO_EXTENSIONS,
+  imageMaxBytes: IMAGE_MAX_BYTES,
+  imageMaxDimension: IMAGE_MAX_DIMENSION,
+  imageMaxPixels: IMAGE_MAX_PIXELS,
   audioMaxBytes: AUDIO_MAX_BYTES,
   videoMaxBytes: VIDEO_MAX_BYTES,
   path,

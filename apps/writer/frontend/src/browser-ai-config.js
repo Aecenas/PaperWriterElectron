@@ -11,6 +11,12 @@ export const BROWSER_AI_PROTOCOLS = Object.freeze({
 export const BROWSER_BUILTIN_PROVIDERS = Object.freeze({
   gemini: { providerLabel: "Gemini", transport: "http", protocol: "openai", model: "gemini-3.1-pro-preview", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", builtin: true },
   deepseek: { providerLabel: "DeepSeek", transport: "http", protocol: "openai", model: "deepseek-v4-flash", baseUrl: "https://api.deepseek.com", builtin: true },
+  qwen: { providerLabel: "Qwen", transport: "http", protocol: "openai", model: "qwen3.7-plus", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", builtin: true },
+  kimi: { providerLabel: "Kimi", transport: "http", protocol: "openai", model: "kimi-k2.6", baseUrl: "https://api.moonshot.cn/v1", builtin: true },
+  zhipu: { providerLabel: "智谱 GLM", transport: "http", protocol: "openai", model: "glm-5.2", baseUrl: "https://open.bigmodel.cn/api/paas/v4", builtin: true },
+  openai: { providerLabel: "OpenAI", transport: "http", protocol: "openai", model: "gpt-5.6-terra", baseUrl: "https://api.openai.com/v1", builtin: true },
+  claude: { providerLabel: "Claude", transport: "http", protocol: "anthropic", model: "claude-sonnet-5", baseUrl: "https://api.anthropic.com/v1", builtin: true },
+  openrouter: { providerLabel: "OpenRouter", transport: "http", protocol: "openai", model: "openrouter/auto", baseUrl: "https://openrouter.ai/api/v1", builtin: true },
   "codex-cli": { providerLabel: "Codex CLI", transport: "codex-cli", protocol: "", model: "", baseUrl: "", builtin: true },
 });
 

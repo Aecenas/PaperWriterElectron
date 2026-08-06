@@ -3825,7 +3825,7 @@ export default function App() {
       return;
     }
     if (result?.error === "unsupported-type") {
-      showStatus("不支持这种图片格式，请选择 PNG、JPEG、GIF、WebP、BMP、SVG 或 AVIF", "warning");
+      showStatus("不支持这种图片格式，请选择 PNG、JPEG、GIF、WebP 或 BMP", "warning");
       return;
     }
     const src = normalizeImageSource(result?.src || result?.dataUrl);

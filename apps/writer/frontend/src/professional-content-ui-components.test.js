@@ -30,9 +30,11 @@ test("formula UI provides inline/block editing, live KaTeX preview, numbering, l
 });
 
 test("Mermaid dialog shares the strict sanitized renderer and keeps source available after errors", async () => {
-  const [dialog, extension] = await Promise.all([
+  const [dialog, extension, isolatedSvg, packageLock] = await Promise.all([
     read("./professional-content/MermaidDialog.jsx"),
     read("./editor/professional-content-extensions.js"),
+    read("./editor/MermaidSvg.js"),
+    read("../package-lock.json"),
   ]);
 
   assert.match(dialog, /renderMermaidSafely/);
@@ -47,6 +49,21 @@ test("Mermaid dialog shares the strict sanitized renderer and keeps source avail
   assert.match(extension, /securityLevel:\s*"strict"/);
   assert.match(extension, /DOMPurify\.sanitize/);
   assert.match(extension, /FORBID_TAGS/);
+  assert.match(extension, /createElement\(MermaidSvg/);
+  assert.doesNotMatch(dialog, /dangerouslySetInnerHTML/);
+  assert.match(dialog, /<MermaidSvg/);
+  assert.match(isolatedSvg, /attachShadow/);
+  assert.match(isolatedSvg, /DOMParser/);
+  assert.doesNotMatch(isolatedSvg, /dangerouslySetInnerHTML/);
+  const locked = JSON.parse(packageLock);
+  const mermaidVersion = locked.packages["node_modules/mermaid"].version
+    .split(".")
+    .map(Number);
+  assert.equal(
+    mermaidVersion[0] > 11 || (mermaidVersion[0] === 11 && mermaidVersion[1] >= 15),
+    true,
+    "Mermaid must include the Gantt infinite-loop and CSS injection fixes",
+  );
   assert.match(extension, /PAPER_MERMAID_EDIT_REQUEST_EVENT/);
   assert.match(extension, /复制 Mermaid 图引用/);
   assert.match(extension, /编辑 Mermaid 图/);

@@ -47,7 +47,7 @@ const SAFE_DATA_TYPES = new Set([
   "paper-bookmark",
 ]);
 const SAFE_IMAGE_MIMES = new Set([
-  "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif",
+  "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
 ]);
 const FORMAT_ALIASES = Object.freeze({ md: "markdown", markdown: "markdown", html: "html", htm: "html", txt: "txt", text: "txt", docx: "docx" });
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -186,14 +186,13 @@ function sniffImageMime(buffer) {
   if (bytes.length >= 6 && /^(?:GIF87a|GIF89a)$/.test(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
   if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
   if (bytes.length >= 2 && bytes.subarray(0, 2).toString("ascii") === "BM") return "image/bmp";
-  if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp" && /^(?:avif|avis)$/.test(bytes.subarray(8, 12).toString("ascii"))) return "image/avif";
   return "";
 }
 
 function extensionForMime(mime) {
   return ({
     "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp",
-    "image/bmp": ".bmp", "image/avif": ".avif",
+    "image/bmp": ".bmp",
   })[String(mime || "").toLowerCase()] || ".bin";
 }
 
@@ -257,7 +256,7 @@ async function materializeImportedImage(sourceValue, {
   if (/^data:/i.test(source)) {
     try {
       const decoded = decodeImageDataUrl(source, limits.maxAssetBytes);
-      if (!decoded) throw new Error("仅支持安全的 PNG、JPEG、GIF、WebP、BMP 或 AVIF 图片");
+      if (!decoded) throw new Error("仅支持安全的 PNG、JPEG、GIF、WebP 或 BMP 图片");
       budget.add(decoded.buffer.length);
       return `data:${decoded.mime};base64,${decoded.buffer.toString("base64")}`;
     } catch (error) {

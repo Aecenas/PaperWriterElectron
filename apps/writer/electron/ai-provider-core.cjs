@@ -11,6 +11,42 @@ const BUILTIN_AI_PROVIDERS = {
     baseUrl: "https://api.deepseek.com",
     model: "deepseek-v4-flash",
   },
+  qwen: {
+    label: "Qwen",
+    protocol: "openai",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    model: "qwen3.7-plus",
+  },
+  kimi: {
+    label: "Kimi",
+    protocol: "openai",
+    baseUrl: "https://api.moonshot.cn/v1",
+    model: "kimi-k2.6",
+  },
+  zhipu: {
+    label: "智谱 GLM",
+    protocol: "openai",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    model: "glm-5.2",
+  },
+  openai: {
+    label: "OpenAI",
+    protocol: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-5.6-terra",
+  },
+  claude: {
+    label: "Claude",
+    protocol: "anthropic",
+    baseUrl: "https://api.anthropic.com/v1",
+    model: "claude-sonnet-5",
+  },
+  openrouter: {
+    label: "OpenRouter",
+    protocol: "openai",
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "openrouter/auto",
+  },
   "codex-cli": {
     label: "Codex CLI",
     transport: "codex-cli",
@@ -37,6 +73,11 @@ const RESERVED_PROVIDER_IDS = new Set(["__proto__", "prototype", "constructor", 
 const STANDARD_AI_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
 const DANGEROUS_AI_REQUEST_PARAM_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const RESERVED_AI_REQUEST_PARAM_KEYS = new Set(["model", "messages", "system", "stream", "stream_options"]);
+const BUILTIN_JSON_RESOLVER_MAX_TOKENS = Object.freeze({
+  gemini: 65_536,
+  deepseek: 384_000,
+});
+const BUILTIN_OPENAI_STREAM_USAGE_PROVIDERS = new Set(["gemini", "deepseek", "openai"]);
 
 function hasOwn(object, key) {
   return Boolean(object && Object.prototype.hasOwnProperty.call(object, key));
@@ -115,10 +156,8 @@ function mergeAiRequestParams(modelParams, taskParams) {
 
 function aiApplyResolverRequestParams(provider, protocol, requestParams) {
   const normalized = normalizeAiRequestParams(requestParams);
-  const builtInJsonResolver = protocol === "openai" && hasOwn(BUILTIN_AI_PROVIDERS, provider);
-  const builtInMaximum = provider === "gemini"
-    ? 65_536
-    : (provider === "deepseek" ? 384_000 : null);
+  const builtInMaximum = BUILTIN_JSON_RESOLVER_MAX_TOKENS[provider];
+  const builtInJsonResolver = protocol === "openai" && Number.isFinite(builtInMaximum);
   const requestedMaximum = Number(normalized.max_tokens);
   const maxTokens = builtInJsonResolver
     ? builtInMaximum
@@ -521,7 +560,9 @@ function buildAiRequest(config, messages, { stream = false, test = false } = {})
       messages,
       ...(test ? { max_tokens: 8 } : {}),
       stream,
-      ...(stream && config.builtin ? { stream_options: { include_usage: true } } : {}),
+      ...(stream && config.builtin && BUILTIN_OPENAI_STREAM_USAGE_PROVIDERS.has(config.provider)
+        ? { stream_options: { include_usage: true } }
+        : {}),
     },
   };
 }

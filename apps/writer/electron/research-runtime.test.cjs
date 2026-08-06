@@ -76,6 +76,7 @@ function createHarness() {
     WebContentsView: function WebContentsView() {},
     session: { id: "session" },
     shell: { id: "shell" },
+    dialog: { id: "dialog" },
     getWindow: () => ({ id: "main-window" }),
     getActiveWorkspaceRoot: () => state.activeWorkspaceRoot,
     emitRendererEvent(channel, payload) {
@@ -153,6 +154,7 @@ test("initialization creates the library before web views and exposes only stabl
   const webOptions = harness.calls.webCreates[0];
   assert.equal(webOptions.session.id, "session");
   assert.equal(webOptions.shell.id, "shell");
+  assert.equal(webOptions.dialog.id, "dialog");
   assert.deepEqual(webOptions.getWindow(), { id: "main-window" });
   webOptions.sendState({ viewId: "view-1" });
   assert.deepEqual(harness.calls.emits, [[

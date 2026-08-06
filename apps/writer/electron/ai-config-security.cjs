@@ -1,9 +1,28 @@
 const { createHmac, randomBytes, timingSafeEqual } = require("node:crypto");
+const { lookup: dnsLookup } = require("node:dns/promises");
+const { BlockList, isIP } = require("node:net");
 
 const MAX_STORED_AI_PROVIDERS = 128;
 const MAX_ENCRYPTED_SECRET_CHARS = 128 * 1024;
 const MAX_API_KEY_CHARS = 16 * 1024;
 const AI_TEST_FINGERPRINT_KEY = randomBytes(32);
+const NON_PUBLIC_IPV4 = new BlockList();
+const NON_PUBLIC_IPV6 = new BlockList();
+
+for (const [address, prefix] of [
+  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10],
+  ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12],
+  ["192.0.0.0", 24], ["192.0.2.0", 24], ["192.168.0.0", 16],
+  ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24],
+  ["224.0.0.0", 4], ["240.0.0.0", 4],
+]) NON_PUBLIC_IPV4.addSubnet(address, prefix, "ipv4");
+
+for (const [address, prefix] of [
+  ["::", 128], ["::1", 128], ["::ffff:0:0", 96],
+  ["64:ff9b::", 96], ["100::", 64], ["2001::", 23],
+  ["2001:db8::", 32], ["2002::", 16], ["fc00::", 7],
+  ["fe80::", 10], ["ff00::", 8],
+]) NON_PUBLIC_IPV6.addSubnet(address, prefix, "ipv6");
 
 function apiKeyFingerprint(value) {
   const apiKey = typeof value === "string" ? value.slice(0, MAX_API_KEY_CHARS) : "";
@@ -125,11 +144,78 @@ function containsPlaintextSecrets(rawConfig) {
   return false;
 }
 
+function canonicalHostname(hostname) {
+  return String(hostname || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
+}
+
 function isLoopbackHostname(hostname) {
-  return hostname === "localhost"
-    || hostname === "::1"
-    || hostname === "[::1]"
-    || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  const normalized = canonicalHostname(hostname);
+  return normalized === "localhost"
+    || normalized === "::1"
+    || /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
+function isNonPublicIpAddress(address) {
+  const normalized = canonicalHostname(address).replace(/%.+$/, "");
+  const mappedIpv4 = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(normalized)?.[1];
+  if (mappedIpv4) return NON_PUBLIC_IPV4.check(mappedIpv4, "ipv4");
+  const family = isIP(normalized);
+  if (family === 4) return NON_PUBLIC_IPV4.check(normalized, "ipv4");
+  if (family === 6) return NON_PUBLIC_IPV6.check(normalized, "ipv6");
+  return true;
+}
+
+function assertAiHostnameLiteralAllowed(hostname) {
+  const normalized = canonicalHostname(hostname);
+  if (isLoopbackHostname(normalized)) return;
+  if (isIP(normalized) && isNonPublicIpAddress(normalized)) {
+    const error = new Error("AI 服务不能使用私网、本机链路或保留地址");
+    error.code = "AI_PRIVATE_NETWORK_BLOCKED";
+    throw error;
+  }
+}
+
+async function defaultResolveHostname(hostname) {
+  return dnsLookup(hostname, { all: true, verbatim: true });
+}
+
+function resolvedAddresses(value) {
+  const records = Array.isArray(value)
+    ? value
+    : (Array.isArray(value?.endpoints) ? value.endpoints : [value]);
+  return records
+    .map((record) => (typeof record === "string" ? record : record?.address))
+    .filter((address) => typeof address === "string" && address);
+}
+
+async function assertAiRequestTargetAllowed(value, {
+  resolveHostname = defaultResolveHostname,
+} = {}) {
+  const normalizedUrl = normalizeAiRequestUrl(value);
+  const parsed = new URL(normalizedUrl);
+  const hostname = canonicalHostname(parsed.hostname);
+  if (isLoopbackHostname(hostname)) return normalizedUrl;
+  if (isIP(hostname)) {
+    assertAiHostnameLiteralAllowed(hostname);
+    return normalizedUrl;
+  }
+  let addresses;
+  try {
+    addresses = resolvedAddresses(await resolveHostname(hostname));
+  } catch (error) {
+    throw new Error("无法安全解析 AI 服务地址", { cause: error });
+  }
+  if (!addresses.length) throw new Error("AI 服务地址没有可验证的 DNS 结果");
+  if (addresses.some((address) => isNonPublicIpAddress(address))) {
+    const error = new Error("AI 服务域名解析到了私网、本机链路或保留地址");
+    error.code = "AI_PRIVATE_NETWORK_BLOCKED";
+    throw error;
+  }
+  return normalizedUrl;
 }
 
 function normalizeAiRequestUrl(value) {
@@ -147,6 +233,7 @@ function normalizeAiRequestUrl(value) {
   if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname)) {
     throw new Error("远程 AI 服务必须使用 HTTPS；HTTP 仅允许本机地址");
   }
+  assertAiHostnameLiteralAllowed(parsed.hostname);
   return parsed.toString();
 }
 
@@ -168,6 +255,7 @@ function normalizeProviderBaseUrl(value) {
   if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname)) {
     throw new Error("远程 AI 服务必须使用 HTTPS；HTTP 仅允许本机地址");
   }
+  assertAiHostnameLiteralAllowed(parsed.hostname);
   if (/\/(chat\/completions|messages)$/i.test(parsed.pathname.replace(/\/+$/, ""))) {
     throw new Error("Base URL 不需要包含具体请求端点");
   }
@@ -185,6 +273,7 @@ function redactSecrets(value, secrets = []) {
 
 async function fetchWithAiRedirectPolicy(fetchImpl, url, options = {}, {
   maxRedirects = 3,
+  resolveHostname = defaultResolveHostname,
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("AI 网络请求服务不可用");
   const initialUrl = normalizeAiRequestUrl(url);
@@ -192,6 +281,10 @@ async function fetchWithAiRedirectPolicy(fetchImpl, url, options = {}, {
   let currentUrl = initialUrl;
   let redirects = 0;
   while (true) {
+    // This blocks known-private answers before every request and redirect. The
+    // fetch transport still performs its own connection-time lookup, so this
+    // is best-effort rebinding resistance rather than DNS pinning.
+    await assertAiRequestTargetAllowed(currentUrl, { resolveHostname });
     const response = await fetchImpl(currentUrl, { ...options, redirect: "manual" });
     if (response?.url) {
       const responseUrl = normalizeAiRequestUrl(response.url);
@@ -232,6 +325,7 @@ function apiKeyCanBeReused(previousBaseUrl, nextBaseUrl) {
 
 module.exports = {
   apiKeyCanBeReused,
+  assertAiRequestTargetAllowed,
   aiTestConfigIdentityMatches,
   commitAiTestResultIfCurrent,
   containsPlaintextSecrets,
@@ -240,6 +334,7 @@ module.exports = {
   encryptProviderSecrets,
   fetchWithAiRedirectPolicy,
   isLoopbackHostname,
+  isNonPublicIpAddress,
   normalizeAiRequestUrl,
   normalizeProviderBaseUrl,
   redactSecrets,

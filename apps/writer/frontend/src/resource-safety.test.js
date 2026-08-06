@@ -52,6 +52,7 @@ test("keeps capability-scoped runtime blob URLs without persisting arbitrary blo
 test("accepts only matching, valid base64 data resource types", () => {
   assert.equal(normalizeImageSource("data:image/png;base64,QUJDRA=="), "data:image/png;base64,QUJDRA==");
   assert.equal(normalizeImageSource("data:image/png;base64,QUI"), "data:image/png;base64,QUI=");
+  assert.equal(normalizeImageSource("data:image/avif;base64,QUJDRA=="), "");
   assert.equal(normalizeMediaSource("data:audio/mpeg;base64,QUJDRA==", "audio"), "data:audio/mpeg;base64,QUJDRA==");
   assert.equal(normalizeMediaSource("data:video/mp4;base64,QUJDRA==", "video"), "data:video/mp4;base64,QUJDRA==");
   assert.equal(normalizeImageSource("data:text/html;base64,QUJDRA=="), "");
@@ -63,6 +64,7 @@ test("accepts only matching, valid base64 data resource types", () => {
 test("allows only safe, type-matching relative document assets", () => {
   assert.equal(normalizeImageSource("assets/image-0001.png"), "assets/image-0001.png");
   assert.equal(normalizeImageSource("./assets/image-0001.svg"), "assets/image-0001.svg");
+  assert.equal(normalizeImageSource("assets/image-0001.avif"), "");
   assert.equal(normalizeMediaSource("assets/media-0001.ogg", "audio"), "assets/media-0001.ogg");
   assert.equal(normalizeMediaSource("assets/media-0001.webm", "video"), "assets/media-0001.webm");
   assert.equal(normalizeImageSource("assets/../secret.png"), "");

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GitBranch, RotateCcw, X } from "lucide-react";
 import { renderMermaidSafely } from "../editor/professional-content-extensions.js";
+import { MermaidSvg } from "../editor/MermaidSvg.js";
 import { isTopModalDialog, useModalFocusTrap } from "../ui-interactions.js";
 import { applyMermaidDraft } from "./editor-commands.js";
 import {
@@ -146,10 +147,13 @@ export function MermaidInsertDialog({
             {preview.loading ? <p className="professional-preview-empty">正在渲染 Mermaid 图…</p> : null}
             {!preview.loading && preview.svg ? (
               <div className="mermaid-dialog-preview-stage">
-                <div
+                <MermaidSvg
                   className="mermaid-dialog-svg"
-                  style={{ "--mermaid-preview-width": draft.width }}
-                  dangerouslySetInnerHTML={{ __html: preview.svg }}
+                  style={{
+                    "--mermaid-preview-width": draft.width,
+                    "--mermaid-svg-max-height": "420px",
+                  }}
+                  svg={preview.svg}
                 />
               </div>
             ) : null}

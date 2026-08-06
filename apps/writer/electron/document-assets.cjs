@@ -4,7 +4,141 @@ const { createHash, randomUUID } = require("node:crypto");
 
 const ASSET_PROTOCOL = "paperwriter-asset";
 const DEFAULT_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_MAX_STAGED_ASSET_BYTES = 128 * 1024 * 1024;
+const MAX_IMAGE_HEADER_BYTES = 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function invalidImage(message) {
+  const error = new Error(message);
+  error.code = "INVALID_IMAGE";
+  return error;
+}
+
+function jpegDimensions(buffer) {
+  if (buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return null;
+  const startOfFrameMarkers = new Set([
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7,
+    0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
+  ]);
+  let offset = 2;
+  while (offset + 4 <= buffer.length) {
+    if (buffer[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    while (offset < buffer.length && buffer[offset] === 0xff) offset += 1;
+    const marker = buffer[offset];
+    offset += 1;
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (marker === 0xd9 || marker === 0xda || offset + 2 > buffer.length) break;
+    const segmentLength = buffer.readUInt16BE(offset);
+    if (segmentLength < 2 || offset + segmentLength > buffer.length) break;
+    if (startOfFrameMarkers.has(marker) && segmentLength >= 7) {
+      return {
+        width: buffer.readUInt16BE(offset + 5),
+        height: buffer.readUInt16BE(offset + 3),
+      };
+    }
+    offset += segmentLength;
+  }
+  return null;
+}
+
+function webpDimensions(buffer) {
+  if (
+    buffer.length < 30
+    || buffer.toString("ascii", 0, 4) !== "RIFF"
+    || buffer.toString("ascii", 8, 12) !== "WEBP"
+  ) return null;
+  const chunkType = buffer.toString("ascii", 12, 16);
+  if (chunkType === "VP8X") {
+    return {
+      width: 1 + buffer.readUIntLE(24, 3),
+      height: 1 + buffer.readUIntLE(27, 3),
+    };
+  }
+  if (chunkType === "VP8L" && buffer[20] === 0x2f) {
+    return {
+      width: 1 + buffer[21] + ((buffer[22] & 0x3f) << 8),
+      height: 1 + (buffer[22] >> 6) + (buffer[23] << 2) + ((buffer[24] & 0x0f) << 10),
+    };
+  }
+  if (
+    chunkType === "VP8 "
+    && buffer[23] === 0x9d
+    && buffer[24] === 0x01
+    && buffer[25] === 0x2a
+  ) {
+    return {
+      width: buffer.readUInt16LE(26) & 0x3fff,
+      height: buffer.readUInt16LE(28) & 0x3fff,
+    };
+  }
+  return null;
+}
+
+function inspectImageBuffer(buffer, expectedExtension = "") {
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  const extension = String(expectedExtension || "").replace(/^\./, "").toLowerCase();
+  let type = "";
+  let dimensions = null;
+  if (
+    bytes.length >= 24
+    && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    && bytes.toString("ascii", 12, 16) === "IHDR"
+  ) {
+    type = "png";
+    dimensions = { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  } else if (bytes.length >= 10 && /^GIF8[79]a$/.test(bytes.toString("ascii", 0, 6))) {
+    type = "gif";
+    dimensions = { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
+  } else if (bytes.length >= 26 && bytes.toString("ascii", 0, 2) === "BM") {
+    const dibSize = bytes.readUInt32LE(14);
+    type = "bmp";
+    dimensions = dibSize === 12
+      ? { width: bytes.readUInt16LE(18), height: bytes.readUInt16LE(20) }
+      : { width: Math.abs(bytes.readInt32LE(18)), height: Math.abs(bytes.readInt32LE(22)) };
+  } else if ((dimensions = jpegDimensions(bytes))) {
+    type = "jpeg";
+  } else if ((dimensions = webpDimensions(bytes))) {
+    type = "webp";
+  }
+  if (!type || !dimensions) throw invalidImage("无法识别图片的真实格式或尺寸");
+  const expectedType = extension === "jpg" ? "jpeg" : extension;
+  if (expectedType && type !== expectedType) throw invalidImage("图片扩展名与真实格式不一致");
+  return { type, ...dimensions };
+}
+
+async function inspectImageFile(fsApi, filePath, expectedExtension) {
+  const handle = await fsApi.open(filePath, "r");
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size <= 0) throw invalidImage("所选图片不是有效文件");
+    const length = Math.min(stat.size, MAX_IMAGE_HEADER_BYTES);
+    const buffer = Buffer.allocUnsafe(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, 0);
+    return inspectImageBuffer(buffer.subarray(0, bytesRead), expectedExtension);
+  } finally {
+    await handle.close();
+  }
+}
+
+function assertImageDimensions(metadata, { maxDimension, maxPixels }) {
+  const width = Number(metadata?.width) || 0;
+  const height = Number(metadata?.height) || 0;
+  if (
+    !Number.isSafeInteger(width)
+    || !Number.isSafeInteger(height)
+    || width < 1
+    || height < 1
+    || width > maxDimension
+    || height > maxDimension
+    || width * height > maxPixels
+  ) {
+    throw invalidImage("图片尺寸或像素数量超过安全上限");
+  }
+  return metadata;
+}
 
 function normalizeAssetPath(assetPath) {
   const normalized = String(assetPath || "").replace(/\\/g, "/").replace(/^\/+/, "");
@@ -237,14 +371,36 @@ function createStagedAssetStore({
 
   const has = (token) => registry.has(String(token || ""));
 
-  const stage = async (sourcePath, { mime = "", name = "" } = {}) => {
+  const stage = async (sourcePath, {
+    mime = "",
+    name = "",
+    maxBytes = DEFAULT_MAX_STAGED_ASSET_BYTES,
+    validateImage = false,
+    maxImageDimension = 16_384,
+    maxImagePixels = 40_000_000,
+  } = {}) => {
     const absoluteSource = path.resolve(String(sourcePath || ""));
     const sourceStat = await fsApi.stat(absoluteSource);
     if (!sourceStat.isFile()) throw new Error("所选图片不是文件");
+    const byteLimit = Math.min(
+      DEFAULT_MAX_STAGED_ASSET_BYTES,
+      Math.max(1, Math.floor(Number(maxBytes) || DEFAULT_MAX_STAGED_ASSET_BYTES)),
+    );
+    if (sourceStat.size > byteLimit) throw new Error("所选资源超过安全上限");
+    const extension = safeExtension(absoluteSource);
+    const imagePolicy = {
+      maxDimension: Math.max(1, Math.floor(Number(maxImageDimension) || 16_384)),
+      maxPixels: Math.max(1, Math.floor(Number(maxImagePixels) || 40_000_000)),
+    };
+    const sourceImage = validateImage
+      ? assertImageDimensions(
+        await inspectImageFile(fsApi, absoluteSource, extension),
+        imagePolicy,
+      )
+      : null;
     await fsApi.mkdir(sessionDir, { recursive: true });
     const token = String(createToken());
     if (!UUID_PATTERN.test(token) || registry.has(token)) throw new Error("无效或重复的图片暂存 token");
-    const extension = safeExtension(absoluteSource);
     const stagedPath = path.resolve(sessionDir, `${token}${extension}`);
     const tempPath = path.resolve(sessionDir, `${token}.tmp`);
     if (path.dirname(stagedPath) !== sessionDir || path.dirname(tempPath) !== sessionDir) {
@@ -253,8 +409,25 @@ function createStagedAssetStore({
     try {
       await fsApi.copyFile(absoluteSource, tempPath);
       const copiedStat = await fsApi.stat(tempPath);
-      if (!copiedStat.isFile() || copiedStat.size !== sourceStat.size) {
+      if (
+        !copiedStat.isFile()
+        || copiedStat.size !== sourceStat.size
+        || copiedStat.size > byteLimit
+      ) {
         throw new Error("图片暂存副本不完整");
+      }
+      if (validateImage) {
+        const copiedImage = assertImageDimensions(
+          await inspectImageFile(fsApi, tempPath, extension),
+          imagePolicy,
+        );
+        if (
+          copiedImage.type !== sourceImage.type
+          || copiedImage.width !== sourceImage.width
+          || copiedImage.height !== sourceImage.height
+        ) {
+          throw invalidImage("图片在复制期间发生变化");
+        }
       }
       const sha256 = await hashFile(tempPath);
       await fsApi.rename(tempPath, stagedPath);
@@ -339,6 +512,7 @@ module.exports = {
   cleanupStaleSessions,
   createDocumentAssetRegistry,
   createStagedAssetStore,
+  inspectImageBuffer,
   normalizeAssetPath,
   parseAssetUrl,
   stagedAssetUrl,

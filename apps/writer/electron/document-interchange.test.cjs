@@ -12,7 +12,16 @@ const {
   markdownToHtml,
   normalizeFormat,
   sanitizeImportedHtml,
+  sniffImageMime,
 } = require("./document-interchange.cjs");
+
+test("does not admit AVIF until primary-image dimensions can be verified safely", () => {
+  const avif = Buffer.alloc(24);
+  avif.writeUInt32BE(24, 0);
+  avif.write("ftyp", 4, "ascii");
+  avif.write("avif", 8, "ascii");
+  assert.equal(sniffImageMime(avif), "");
+});
 
 const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),

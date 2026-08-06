@@ -1,6 +1,7 @@
 const RESEARCH_WEB_PARTITION = "paperwriter-research-web";
 const MAX_VIEW_ID_LENGTH = 1024;
 const MAX_URL_LENGTH = 8192;
+const EXTERNAL_OPEN_PROMPT_INTERVAL_MS = 5_000;
 
 function normalizeResearchWebViewId(value) {
   const id = typeof value === "string" ? value.trim() : "";
@@ -48,15 +49,20 @@ function createResearchWebViewManager({
   WebContentsView,
   session,
   shell,
+  dialog,
   getWindow,
   sendState,
   partition = RESEARCH_WEB_PARTITION,
+  now = Date.now,
+  externalOpenPromptIntervalMs = EXTERNAL_OPEN_PROMPT_INTERVAL_MS,
 } = {}) {
   if (typeof WebContentsView !== "function") throw new Error("当前 Electron 不支持内嵌网页视图");
   if (!session?.fromPartition) throw new Error("缺少网页会话支持");
   const researchSession = session.fromPartition(partition);
   const records = new Map();
   let activeViewId = "";
+  let externalOpenPromptPending = false;
+  let lastExternalOpenPromptAt = Number.NEGATIVE_INFINITY;
 
   researchSession.setPermissionRequestHandler?.((_webContents, _permission, callback) => callback(false));
   researchSession.setPermissionCheckHandler?.(() => false);
@@ -119,7 +125,31 @@ function createResearchWebViewManager({
     contents.setWindowOpenHandler?.(({ url }) => {
       try {
         const safeUrl = normalizeResearchWebUrl(url);
-        Promise.resolve(shell?.openExternal?.(safeUrl)).catch(() => {});
+        const requestedAt = Number(now()) || 0;
+        if (
+          externalOpenPromptPending
+          || requestedAt - lastExternalOpenPromptAt < externalOpenPromptIntervalMs
+        ) return { action: "deny" };
+        externalOpenPromptPending = true;
+        lastExternalOpenPromptAt = requestedAt;
+        void (async () => {
+          const window = windowForView();
+          if (!window || typeof dialog?.showMessageBox !== "function") return;
+          const result = await dialog.showMessageBox(window, {
+            type: "question",
+            buttons: ["在系统浏览器中打开", "取消"],
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+            title: "打开外部链接",
+            message: "网页请求在系统浏览器中打开链接",
+            detail: safeUrl.slice(0, 2048),
+          });
+          if (result?.response !== 0) return;
+          await shell?.openExternal?.(safeUrl);
+        })().catch(() => {}).finally(() => {
+          externalOpenPromptPending = false;
+        });
       } catch {
         // Invalid or privileged targets remain blocked.
       }
@@ -255,6 +285,7 @@ function createResearchWebViewManager({
 
 module.exports = {
   RESEARCH_WEB_PARTITION,
+  EXTERNAL_OPEN_PROMPT_INTERVAL_MS,
   createResearchWebViewManager,
   normalizeResearchWebUrl,
   normalizeResearchWebViewId,

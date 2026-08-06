@@ -3,7 +3,7 @@
   font-style: normal;
   font-weight: 200 900;
   font-display: swap;
-  src: url("./assets/fonts/NotoSerifSC-VF.ttf") format("truetype");
+  src: url("./assets/fonts/NotoSerifSC-VF.woff2") format("woff2");
 }
 
 @font-face {
@@ -11,7 +11,7 @@
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("./assets/fonts/LXGWWenKaiScreen.ttf") format("truetype");
+  src: url("./assets/fonts/LXGWWenKaiScreen.woff2") format("woff2");
 }
 
 :root {

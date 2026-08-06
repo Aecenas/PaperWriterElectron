@@ -1,0 +1,60 @@
+name: Release provenance
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build-and-attest:
+    name: Build, inventory, and attest Windows release
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            apps/writer/frontend/package-lock.json
+            apps/writer/electron/package-lock.json
+      - name: Install locked dependencies
+        run: |
+          npm.cmd --prefix apps/writer/frontend ci --no-audit --no-fund
+          npm.cmd --prefix apps/writer/electron ci --no-audit --no-fund
+      - name: Install Playwright Chromium for the release gate
+        run: npm.cmd --prefix apps/writer/frontend run test:e2e:install
+      - name: Build installer through the local release gate
+        working-directory: apps/writer/electron
+        run: npm.cmd run dist
+      - name: Smoke-test the packaged application
+        working-directory: apps/writer/electron
+        run: npm.cmd run test:packaged-smoke
+      - name: Generate CycloneDX production SBOMs
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          npm.cmd --prefix apps/writer/frontend sbom --omit=dev --sbom-format=cyclonedx | Out-File -Encoding utf8 artifacts/frontend.cdx.json
+          npm.cmd --prefix apps/writer/electron sbom --omit=dev --sbom-format=cyclonedx | Out-File -Encoding utf8 artifacts/electron.cdx.json
+      - name: Upload installer and SBOMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperwriter-windows-${{ github.ref_name }}
+          if-no-files-found: error
+          path: |
+            apps/release/*.exe
+            apps/release/*.blockmap
+            apps/release/latest.yml
+            artifacts/*.cdx.json
+      - name: Attest installer and dependency inventories
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            apps/release/*.exe
+            artifacts/*.cdx.json

@@ -1,0 +1,3 @@
+apps/writer/electron/preload.cjs text eol=lf
+apps/writer/frontend/src/app-shell/help-topics.generated.js text eol=lf
+apps/writer/knowledge/runtime-index.generated.json text eol=lf

@@ -53,7 +53,9 @@ function pickFileInBrowser({ kind, accept, maxBytes = 0, allowedExtensions = [] 
 function pickImageInBrowser() {
   return pickFileInBrowser({
     kind: "image",
-    accept: "image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml,image/avif",
+    accept: "image/png,image/jpeg,image/gif,image/webp,image/bmp",
+    maxBytes: 32 * 1024 * 1024,
+    allowedExtensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
   });
 }
 

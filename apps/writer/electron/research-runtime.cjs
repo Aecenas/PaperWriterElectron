@@ -21,6 +21,7 @@ function createResearchRuntime({
   WebContentsView,
   session,
   shell,
+  dialog,
   getWindow,
   getActiveWorkspaceRoot,
   emitRendererEvent,
@@ -60,6 +61,7 @@ function createResearchRuntime({
       WebContentsView,
       session,
       shell,
+      dialog,
       getWindow,
       sendState: (payload) => {
         emitRendererEvent("research:web-view-state", payload);

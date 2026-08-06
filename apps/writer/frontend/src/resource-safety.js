@@ -9,7 +9,6 @@ const MIME_TYPES = Object.freeze({
     "image/webp",
     "image/bmp",
     "image/svg+xml",
-    "image/avif",
   ]),
   audio: new Set([
     "audio/mpeg",
@@ -31,7 +30,7 @@ const MIME_TYPES = Object.freeze({
 });
 
 const ASSET_EXTENSIONS = Object.freeze({
-  image: new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"]),
+  image: new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]),
   audio: new Set(["mp3", "wav", "ogg", "m4a", "aac", "flac"]),
   video: new Set(["mp4", "webm", "ogv"]),
 });
