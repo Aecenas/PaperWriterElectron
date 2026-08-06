@@ -4,7 +4,7 @@ AI 功能包括供应商配置、AI 优化、完整信笺的 AI 协作、轻量�
 
 ## 供应商与模型
 
-Gemini、DeepSeek 和 Codex CLI 是内置供应商。用户还可以添加多个相互独立的自定义供应商：
+Gemini、DeepSeek、Qwen、Kimi、智谱 GLM、OpenAI、Claude、OpenRouter 和 Codex CLI 是内置供应商。用户还可以添加多个相互独立的自定义供应商：
 
 - OpenAI 兼容：使用 Chat Completions 协议，Base URL 不应包含 `/chat/completions`。
 - Anthropic 原生：使用 Messages API，Base URL 不应包含 `/messages`。

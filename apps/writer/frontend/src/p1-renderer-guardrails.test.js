@@ -13,6 +13,7 @@ const professionalDocxRendererSource = await readFile(
   new URL("./export/professional-docx-renders.js", import.meta.url),
   "utf8",
 );
+const mermaidSvgSource = await readFile(new URL("./editor/MermaidSvg.js", import.meta.url), "utf8");
 const topNavSource = await readFile(new URL("./app-shell/TopNav.jsx", import.meta.url), "utf8");
 const helpCenterSource = await readFile(new URL("./app-shell/HelpCenter.jsx", import.meta.url), "utf8");
 const appDialogsSource = await readFile(new URL("./app-shell/AppDialogs.jsx", import.meta.url), "utf8");
@@ -229,6 +230,12 @@ test("DOCX formula rasterization is lazy, untainted, bounded, and aborts before 
   );
   assert.equal(bridgeCalls, 0);
   assert.deepEqual(sourceDocument, before);
+});
+
+test("DOCX Mermaid export can read the isolated shadow-root SVG", () => {
+  assert.match(professionalDocxRendererSource, /svgHost\?\.shadowRoot\?\.querySelector\("svg"\)/);
+  assert.match(professionalDocxRendererSource, /svgHost\?\.querySelector\?\.\("svg"\)/);
+  assert.match(mermaidSvgSource, /attachShadow\?\.\(\{ mode: "open", clonable: true \}\)/);
 });
 
 test("read-only documents lock both editors, metadata and top-level mutation controls", () => {

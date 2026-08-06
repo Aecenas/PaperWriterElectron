@@ -392,7 +392,9 @@ export async function renderProfessionalElementToPng(element, {
     if (element.getAttribute("data-mermaid-render-state") !== "ready") {
       throw new Error("Mermaid 预览尚未就绪");
     }
-    const svgElement = element.querySelector(".paper-mermaid-svg svg");
+    const svgHost = element.querySelector(".paper-mermaid-svg");
+    const svgElement = svgHost?.shadowRoot?.querySelector("svg")
+      || svgHost?.querySelector?.("svg");
     if (!svgElement) throw new Error("Mermaid 安全 SVG 不存在");
     const geometry = boundedGeometry(svgElement, resolvedLimits);
     const clone = sanitizeMermaidSvg(svgElement, documentObject, windowObject);

@@ -19,9 +19,9 @@
 
 | 组合根 | 拆分前 | 拆分后 |
 | --- | ---: | ---: |
-| `frontend/src/App.jsx` | 19,771 行 | 3,845 行 |
-| `frontend/src/styles.css` | 13,485 行 | 7 行入口、7 个有序片段 |
-| `electron/main.cjs` | 4,425 行 | 961 行 |
+| `frontend/src/App.jsx` | 19,771 行 | 5,848 行 |
+| `frontend/src/styles.css` | 13,485 行 | 11 行入口、11 个有序片段 |
+| `electron/main.cjs` | 4,425 行 | 1,500 行 |
 | `frontend/src/bridge.js` | 2,036 行 | 15 行 |
 
 文件超过约 1,000 行仍然只是重新审查职责的信号。比如文档持久化控制器集中维护保存、恢复、冲突和关闭的一组高风险不变量，因此不应仅为降低行数再把这组事务拆散。
@@ -132,17 +132,21 @@ npm.cmd run preload:build
 
 ## CSS 层叠
 
-`styles.css` 是唯一的应用样式入口，仅按以下严格顺序导入七个片段：
+`styles.css` 是唯一的应用样式入口，仅按以下严格顺序导入十一个片段：
 
 1. `styles-foundation.css`
 2. `styles-sidebar-templates.css`
 3. `styles-workspace-dialogs.css`
-4. `styles-editor-paper.css`
-5. `styles-ai.css`
-6. `styles-status-export-help.css`
-7. `styles-output-responsive.css`
+4. `styles-data-safety.css`
+5. `styles-editor-paper.css`
+6. `styles-pagination.css`
+7. `styles-professional-content.css`
+8. `styles-ai.css`
+9. `styles-ai-composition.css`
+10. `styles-status-export-help.css`
+11. `styles-output-responsive.css`
 
-这七个文件的拼接结果必须与拆分前的层叠文本一致。`style-bundle-contract.test.js` 同时固定入口顺序和拼接内容的 SHA-256；移动选择器、改变片段顺序或在 `styles.css` 添加声明都可能改变 UI。合法的视觉变更应单独评审，并明确更新 hash 与截图基线。
+这些文件的顺序由 `style-bundle-contract.test.js` 固定；移动选择器、改变片段顺序或在 `styles.css` 添加声明都可能改变 UI。合法的视觉变更应单独评审，并更新相应截图基线。
 
 ## 不可破坏的不变量
 
@@ -166,7 +170,9 @@ npm.cmd run preload:build
 Set-Location apps/writer/frontend
 npm.cmd test
 npm.cmd run build
+npm.cmd run check:bundle
 npm.cmd run test:e2e
+npm.cmd run test:electron-smoke
 ```
 
 Electron 语法、preload 新鲜度、契约和单元测试：
@@ -175,9 +181,12 @@ Electron 语法、preload 新鲜度、契约和单元测试：
 Set-Location apps/writer/electron
 npm.cmd run check
 npm.cmd test
+npm.cmd run test:packaged-smoke
 ```
 
 `check` 会递归检查 Electron 目录下所有 CJS 文件，因此新拆出的 `.cjs` 不需要再手工加入文件清单。
+
+正式打包入口统一先执行 `release:prepare`。该门禁会覆盖递归前端测试、生产构建与体积预算、Playwright E2E、真实 Electron preload/IPC 和关闭握手；生成 `win-unpacked` 后再用 packaged smoke 验证 ASAR 页面和打包 preload。
 
 启动器静态检查和 prerequisites smoke：
 
@@ -189,14 +198,14 @@ Set-Location <仓库根目录>
 
 涉及布局、层叠、焦点或交互的改动，还应在固定窗口尺寸下对照重构前后截图，并覆盖打开/编辑/保存、自动保存恢复、外部冲突、双编辑组、导入导出、资料阅读、AI 启停与应用、关闭更新等关键流程。
 
-本次完成时的验收基线为：
+2026-08-06 的验收基线为：
 
-- 前端单元与静态安全测试 460/460。
-- Electron 契约与单元测试 402/402，`check` 覆盖 102 个 CJS 文件。
-- Playwright 关键流程 9/9。
-- 生产构建、启动器静态检查和 production prerequisites smoke 通过。
-- 在同一 Playwright/Chromium 环境下，对 `v0.9.11` 基线与当前构建比较默认页 1440×900、默认页 1280×720、AI 设置、导出和模板设置，五个状态均为 0 个变化像素。
-- 构建 CSS 仍为 `index-Dwf9Qg8l.css`、308,533 字节，SHA-256 为 `0C12D3B5BEC525BE22ECB2696195106EB5060962AB75A959BF486E7CFB5F7A2E`。
+- 前端递归单元与静态安全测试 653/653。
+- Electron 契约与单元测试合计 584/584，`check` 覆盖 175 个 CJS 文件；PDF/DOCX worker 测试在独立 Node 测试进程中运行，并以纯 JS 几何 shim 隔离 PDF.js 的原生 Canvas 绑定。
+- Playwright 关键流程 25/25；源码 Electron smoke 与 packaged Electron smoke 通过。
+- 前端产物 120.57 MiB（预算 125 MiB），其中字体 21.17 MiB（预算 22 MiB），无 source map；完整中文字体从 TTF 48.45 MiB 压缩为全覆盖 WOFF2 20.15 MiB。
+- `app.asar` 为 163,125,643 字节、2,517 个条目，测试、source map、构建脚本和 preload 源码命中数均为 0。
+- 构建 CSS 为 `index-CsCTvpSw.css`、537,153 字节，SHA-256 为 `B269429DCBC70CF108B9CC2507F0CCD1CD6ECFE8B425EA329620D1A392F140EE`。
 
 ## 新增领域的规则
 

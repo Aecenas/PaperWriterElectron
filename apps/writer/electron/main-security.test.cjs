@@ -130,19 +130,28 @@ test("restores a minimized close confirmation and requests Windows taskbar atten
   assert.match(source, /mainWindow\.flashFrame\(false\)/);
 });
 
-test("an unavailable renderer cannot trap the native window close handshake", async () => {
+test("a crashed renderer cannot trap close while a temporarily unresponsive renderer gets a guarded choice", async () => {
   const source = await mainSource();
   const unavailableHelper = between(source, "function markRendererUnavailable", "function createWindow");
   const closeHandler = between(source, 'mainWindow.on("close"', 'mainWindow.on("unresponsive"');
+  const unresponsiveHandler = between(source, 'mainWindow.on("unresponsive"', 'mainWindow.on("responsive"');
+  const responsiveHandler = between(source, 'mainWindow.on("responsive"', 'mainWindow.on("focus"');
+  const renderGoneHandler = between(source, 'webContents.on("render-process-gone"', "if (!downloadGuardInstalled)");
 
   assert.match(source, /webContents\.on\("render-process-gone"/);
   assert.match(source, /mainWindow\.on\("unresponsive"/);
   assert.match(source, /mainWindow\.on\("responsive"/);
+  assert.match(source, /createUnresponsiveCloseGuard\(\{/);
+  assert.match(renderGoneHandler, /markRendererUnavailable\("render-process-gone"/);
   assert.match(unavailableHelper, /closeRequestInFlight/);
   assert.match(unavailableHelper, /forceCloseWindow\s*=\s*true/);
   assert.match(unavailableHelper, /mainWindow\.close\(\)/);
   assert.match(closeHandler, /!rendererCanConfirmClose/);
   assert.match(closeHandler, /mainWindow\.webContents\.isDestroyed\(\)/);
+  assert.match(closeHandler, /unresponsiveCloseGuard\?\.closeRequested\(\)/);
+  assert.match(unresponsiveHandler, /unresponsiveCloseGuard\?\.markUnresponsive\(\)/);
+  assert.doesNotMatch(unresponsiveHandler, /markRendererUnavailable/);
+  assert.match(responsiveHandler, /unresponsiveCloseGuard\?\.markResponsive\(\)/);
 });
 
 test("does not expose internal app paths or the selected image source path", async () => {
@@ -162,6 +171,7 @@ test("does not expose internal app paths or the selected image source path", asy
   assert.doesNotMatch(pickImageHandler, /All Files|extensions:\s*\["\*"\]/);
   assert.match(pickImageHandler, /imageExtensions\.includes\(extension\)/);
   assert.match(pickImageHandler, /src:\s*staged\.src/);
+  assert.doesNotMatch(source, /const IMAGE_EXTENSIONS = \[[^\]]*"avif"/);
 });
 
 test("hardens the packaged Electron binary with production fuses", async () => {

@@ -11,6 +11,7 @@ const {
   cleanupStaleSessions,
   createDocumentAssetRegistry,
   createStagedAssetStore,
+  inspectImageBuffer,
   parseAssetUrl,
 } = require("./document-assets.cjs");
 
@@ -87,6 +88,101 @@ test("removes partial temporary and final files when staging copy fails", async 
     assert.deepEqual(await fs.readdir(store.sessionDir), []);
     await assert.rejects(() => fs.stat(path.join(store.sessionDir, `${SESSION_B}.tmp`)));
     await assert.rejects(() => fs.stat(path.join(store.sessionDir, `${SESSION_B}.gif`)));
+  } finally {
+    await store.cleanupCurrent();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("enforces the caller byte budget before copying a staged resource", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperwriter-assets-size-test-"));
+  const source = path.join(root, "oversized.png");
+  await fs.writeFile(source, Buffer.from("12345"));
+  const store = createStagedAssetStore({
+    rootDir: path.join(root, "sessions"),
+    sessionId: SESSION_A,
+  });
+  try {
+    await store.initialize();
+    await assert.rejects(
+      () => store.stage(source, {
+        mime: "image/png",
+        name: "oversized.png",
+        maxBytes: 4,
+      }),
+      /超过安全上限/,
+    );
+    assert.deepEqual(await fs.readdir(store.sessionDir), []);
+  } finally {
+    await store.cleanupCurrent();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("validates image signatures, dimensions, and extension matches", () => {
+  const png = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+  png.write("IHDR", 12, "ascii");
+  png.writeUInt32BE(1200, 16);
+  png.writeUInt32BE(800, 20);
+  assert.deepEqual(inspectImageBuffer(png, ".png"), {
+    type: "png",
+    width: 1200,
+    height: 800,
+  });
+  assert.throws(() => inspectImageBuffer(png, ".jpg"), /扩展名与真实格式/);
+  assert.throws(
+    () => inspectImageBuffer(Buffer.from("<svg><script/></svg>"), ".svg"),
+    /无法识别/,
+  );
+
+  const gif = Buffer.alloc(10);
+  gif.write("GIF89a", 0, "ascii");
+  gif.writeUInt16LE(640, 6);
+  gif.writeUInt16LE(480, 8);
+  assert.deepEqual(inspectImageBuffer(gif, ".gif"), {
+    type: "gif",
+    width: 640,
+    height: 480,
+  });
+
+  const avifWithUntrustedIspe = Buffer.alloc(44);
+  avifWithUntrustedIspe.writeUInt32BE(24, 0);
+  avifWithUntrustedIspe.write("ftyp", 4, "ascii");
+  avifWithUntrustedIspe.write("avif", 8, "ascii");
+  avifWithUntrustedIspe.writeUInt32BE(20, 24);
+  avifWithUntrustedIspe.write("ispe", 28, "ascii");
+  avifWithUntrustedIspe.writeUInt32BE(1, 36);
+  avifWithUntrustedIspe.writeUInt32BE(1, 40);
+  assert.throws(
+    () => inspectImageBuffer(avifWithUntrustedIspe, ".avif"),
+    /无法识别/,
+  );
+});
+
+test("revalidates image bytes after staging copy", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperwriter-assets-image-validation-test-"));
+  const source = path.join(root, "source.png");
+  const png = Buffer.alloc(24);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+  png.write("IHDR", 12, "ascii");
+  png.writeUInt32BE(100, 16);
+  png.writeUInt32BE(100, 20);
+  await fs.writeFile(source, png);
+  const store = createStagedAssetStore({
+    rootDir: path.join(root, "sessions"),
+    sessionId: SESSION_A,
+  });
+  try {
+    await store.initialize();
+    const staged = await store.stage(source, {
+      mime: "image/png",
+      name: "source.png",
+      validateImage: true,
+      maxImageDimension: 1000,
+      maxImagePixels: 1_000_000,
+    });
+    assert.equal(staged.size, png.length);
   } finally {
     await store.cleanupCurrent();
     await fs.rm(root, { recursive: true, force: true });

@@ -20,6 +20,7 @@ import {
 import { common, createLowlight } from "lowlight";
 import { normalizeEmbedWidth } from "../resource-safety.js";
 import { preflightMermaidSource } from "./mermaid-preflight-client.js";
+import { MermaidSvg } from "./MermaidSvg.js";
 import {
   assertMermaidSourceWithinLimits,
   MERMAID_SAFETY_LIMITS,
@@ -1296,7 +1297,7 @@ export function PaperMermaidNodeView({
         "div",
         { className: "paper-mermaid-preview" },
         state.loading ? createElement("span", { className: "paper-mermaid-status" }, "正在渲染 Mermaid 图…") : null,
-        state.svg ? createElement("div", { className: "paper-mermaid-svg", dangerouslySetInnerHTML: { __html: state.svg } }) : null,
+        state.svg ? createElement(MermaidSvg, { className: "paper-mermaid-svg", svg: state.svg }) : null,
         state.error ? createElement(
           "div",
           { className: "paper-mermaid-error" },

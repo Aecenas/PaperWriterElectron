@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   apiKeyCanBeReused,
+  assertAiRequestTargetAllowed,
   aiTestConfigIdentityMatches,
   commitAiTestResultIfCurrent,
   containsPlaintextSecrets,
@@ -9,10 +10,13 @@ const {
   decryptProviderSecrets,
   encryptProviderSecrets,
   fetchWithAiRedirectPolicy,
+  isNonPublicIpAddress,
   normalizeAiRequestUrl,
   normalizeProviderBaseUrl,
   redactSecrets,
 } = require("./ai-config-security.cjs");
+
+const resolvePublicHostname = async () => [{ address: "93.184.216.34", family: 4 }];
 
 const fakeSafeStorage = {
   isEncryptionAvailable: () => true,
@@ -43,6 +47,8 @@ test("requires HTTPS except for loopback and rejects credential-bearing URLs", (
   assert.equal(normalizeProviderBaseUrl("http://127.0.0.1:11434/v1"), "http://127.0.0.1:11434/v1");
   assert.equal(normalizeProviderBaseUrl("http://[::1]:11434/v1"), "http://[::1]:11434/v1");
   assert.throws(() => normalizeProviderBaseUrl("http://192.168.1.20/v1"), /必须使用 HTTPS/);
+  assert.throws(() => normalizeProviderBaseUrl("https://10.0.0.8/v1"), /私网/);
+  assert.throws(() => normalizeProviderBaseUrl("https://[fd00::8]/v1"), /私网/);
   assert.throws(() => normalizeProviderBaseUrl("https://user:pass@example.com/v1"), /用户名或密码/);
   assert.throws(() => normalizeProviderBaseUrl("https://example.com/v1?target=other"), /查询参数/);
 });
@@ -58,6 +64,39 @@ test("validates every AI request URL, including redirect targets", () => {
   assert.equal(normalizeAiRequestUrl("http://localhost:11434/v1/chat/completions"), "http://localhost:11434/v1/chat/completions");
   assert.throws(() => normalizeAiRequestUrl("http://192.168.1.20/v1/chat/completions"), /必须使用 HTTPS/);
   assert.throws(() => normalizeAiRequestUrl("file:///etc/passwd"), /仅支持/);
+});
+
+test("blocks private DNS answers while preserving explicit loopback providers", async () => {
+  assert.equal(isNonPublicIpAddress("::ffff:7f00:1"), true);
+  assert.equal(isNonPublicIpAddress("::ffff:a00:1"), true);
+  assert.equal(isNonPublicIpAddress("2002:5db8:d822::1"), true);
+  assert.equal(isNonPublicIpAddress("2001:0000:4136:e378::1"), true);
+  let loopbackLookups = 0;
+  assert.equal(
+    await assertAiRequestTargetAllowed("http://localhost:11434/v1", {
+      resolveHostname: async () => {
+        loopbackLookups += 1;
+        return [{ address: "127.0.0.1", family: 4 }];
+      },
+    }),
+    "http://localhost:11434/v1",
+  );
+  assert.equal(loopbackLookups, 0);
+  await assert.rejects(
+    () => assertAiRequestTargetAllowed("https://provider.example/v1", {
+      resolveHostname: async () => [{ address: "169.254.169.254", family: 4 }],
+    }),
+    /解析到了私网/,
+  );
+  await assert.rejects(
+    () => assertAiRequestTargetAllowed("https://provider.example/v1", {
+      resolveHostname: async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "192.168.1.5", family: 4 },
+      ],
+    }),
+    /解析到了私网/,
+  );
 });
 
 test("follows only same-origin method-preserving AI redirects", async () => {
@@ -78,6 +117,7 @@ test("follows only same-origin method-preserving AI redirects", async () => {
     fetchImpl,
     "https://api.example.com/v1/chat/completions",
     { method: "POST", headers: { authorization: "Bearer secret" } },
+    { resolveHostname: resolvePublicHostname },
   );
   assert.equal(response.status, 200);
   assert.deepEqual(calls.map((call) => call.url), [
@@ -101,7 +141,12 @@ test("refuses cross-origin and method-changing AI redirects before replaying cre
     };
   };
   await assert.rejects(
-    () => fetchWithAiRedirectPolicy(crossOriginFetch, "https://api.example.com/v1/chat/completions", { method: "POST" }),
+    () => fetchWithAiRedirectPolicy(
+      crossOriginFetch,
+      "https://api.example.com/v1/chat/completions",
+      { method: "POST" },
+      { resolveHostname: resolvePublicHostname },
+    ),
     /其他来源/,
   );
   assert.equal(calls, 1);
@@ -113,9 +158,39 @@ test("refuses cross-origin and method-changing AI redirects before replaying cre
       url,
       headers: new Headers({ location: "/login" }),
       body: { cancel: async () => {} },
-    }), "https://api.example.com/v1/chat/completions", { method: "POST" }),
+    }), "https://api.example.com/v1/chat/completions", { method: "POST" }, {
+      resolveHostname: resolvePublicHostname,
+    }),
     /方法变更/,
   );
+});
+
+test("rechecks DNS before a same-origin redirect can be rebound to a private address", async () => {
+  let resolutions = 0;
+  let fetches = 0;
+  const resolveHostname = async () => {
+    resolutions += 1;
+    return [{
+      address: resolutions === 1 ? "93.184.216.34" : "127.0.0.1",
+      family: 4,
+    }];
+  };
+  await assert.rejects(
+    () => fetchWithAiRedirectPolicy(async (url) => {
+      fetches += 1;
+      return {
+        status: 307,
+        url,
+        headers: new Headers({ location: "/v1/rebound" }),
+        body: { cancel: async () => {} },
+      };
+    }, "https://api.example.com/v1/chat/completions", { method: "POST" }, {
+      resolveHostname,
+    }),
+    /解析到了私网/,
+  );
+  assert.equal(fetches, 1);
+  assert.equal(resolutions, 2);
 });
 
 test("redacts provider secrets from server-controlled diagnostics", () => {

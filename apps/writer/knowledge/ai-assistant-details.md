@@ -73,11 +73,11 @@
 系统模板只读，用户模板可编辑并分组；“我的模板”始终保留完整列表，删除其他分组只移除归类。新建默认模板失效时会回退到有效项。配置迁移包可以包含界面偏好、模板、AI 供应商配置和写作检查配置，但敏感密钥按既有安全规则处理；AI精灵问答历史不进入迁移包。更新由桌面端检查和下载，浏览器预览不能执行真实更新。清理编辑器缓存不会删除信笺文件、恢复缓存、模板或 AI精灵历史。
 
 <!-- KNOWLEDGE
-{"id":"ai-providers","sinceVersion":"1.1.5","keywords":["AI配置","Gemini","DeepSeek","Codex CLI","OpenAI兼容","Anthropic","API Key","测试模型","任务模型","AI精灵模型","资料翻译模型"],"helpTopicIds":["ai-providers","codex-cli"],"sourceRefs":["apps/writer/electron/ai-provider-core.cjs","apps/writer/electron/ai-config-runtime.cjs","apps/writer/electron/codex-cli-provider.cjs"]}
+{"id":"ai-providers","sinceVersion":"1.1.5","keywords":["AI配置","Gemini","DeepSeek","Qwen","Kimi","智谱 GLM","OpenAI","Claude","OpenRouter","Codex CLI","OpenAI兼容","Anthropic","API Key","测试模型","任务模型","AI精灵模型","资料翻译模型"],"helpTopicIds":["ai-providers","codex-cli"],"sourceRefs":["apps/writer/electron/ai-provider-core.cjs","apps/writer/electron/ai-config-runtime.cjs","apps/writer/electron/codex-cli-provider.cjs"]}
 -->
 ## AI 供应商、模型测试与任务模型
 
-Gemini、DeepSeek 和 Codex CLI 是内置供应商，自定义供应商可使用 OpenAI 兼容或 Anthropic 原生协议。HTTP 模型必须保存 API Key 并测试成功后才能使用；公开配置只返回遮罩信息。Codex CLI 复用本机安装与登录态，笺间不保存 Codex 登录凭据。选区问答、直接应用定位、资料翻译、AI 起稿和 AI精灵可各自指定任务模型，未指定时跟随默认模型；一旦显式指定，所选模型删除、测试失效或 Codex 不可用时会提示重新选择，不会静默换用其他模型。不同任务可保存独立请求参数，Codex CLI 不接受 HTTP 请求参数。
+Gemini、DeepSeek、Qwen、Kimi、智谱 GLM、OpenAI、Claude、OpenRouter 和 Codex CLI 是内置供应商，自定义供应商可使用 OpenAI 兼容或 Anthropic 原生协议。HTTP 模型必须保存 API Key 并测试成功后才能使用；公开配置只返回遮罩信息。Codex CLI 复用本机安装与登录态，笺间不保存 Codex 登录凭据。选区问答、直接应用定位、资料翻译、AI 起稿和 AI精灵可各自指定任务模型，未指定时跟随默认模型；一旦显式指定，所选模型删除、测试失效或 Codex 不可用时会提示重新选择，不会静默换用其他模型。不同任务可保存独立请求参数，Codex CLI 不接受 HTTP 请求参数。
 
 <!-- KNOWLEDGE
 {"id":"ai-writing-modes","sinceVersion":"1.1.5","keywords":["AI优化","AI协作","AI问答","AI起稿","直接应用","待审阅修改","红蓝对比","定稿线","标记文字","停止生成","拆分信笺","合并信笺"],"helpTopicIds":["ai-modes","ai-compose","ai-optimize","ai-chat"],"sourceRefs":["apps/writer/frontend/src/controllers/ai-request-actions.js","apps/writer/frontend/src/controllers/ai-collaboration-actions.js","apps/writer/frontend/src/controllers/ai-apply-actions.js","apps/writer/frontend/src/ai-composition"]}

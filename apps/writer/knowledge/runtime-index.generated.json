@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "appVersion": "1.1.6",
+  "appVersion": "1.1.7",
   "generatedFrom": [
     "apps/writer/knowledge/user-help-topics.json",
     "apps/writer/knowledge/ai-assistant-details.md"
@@ -358,7 +358,7 @@
         "ai-providers"
       ],
       "sinceVersion": "1.1.5",
-      "body": "AI 配置管理供应商、基础模型、逐模型请求参数和只负责特定工作的任务模型。\n\n怎么用：\n1. 打开顶部设置菜单并选择AI 配置，再选择 Gemini、DeepSeek、Codex CLI 或自定义供应商。\n2. 为 HTTP 模型填写模型标识和请求参数，测试成功后设为默认。\n3. 打开任务模型，按需为选区问答、直接应用定位、资料翻译、AI 起稿或 AI精灵指定专用模型；未指定时跟随默认模型。\n\n注意：\n- 任务卡重新打开设置时默认折叠，可同时展开多项；折叠不会丢失本次设置会话中的参数草稿。\n- AI 起稿从结构设计到正文生成、全文检查统一使用同一个任务模型。\n- 选区问答只使用冻结的选中文字和当前会话历史；AI精灵只使用软件知识和自己的近期会话；直接应用定位模型只判断替换或插入位置；资料翻译只接收右键触发的可读文字块。\n- API Key 仅保存在本机；切换任务供应商时会清空不兼容的任务请求参数。",
+      "body": "AI 配置管理供应商、基础模型、逐模型请求参数和只负责特定工作的任务模型。\n\n怎么用：\n1. 打开顶部设置菜单并选择AI 配置，再选择 Gemini、DeepSeek、Qwen、Kimi、智谱 GLM、OpenAI、Claude、OpenRouter、Codex CLI 或自定义供应商。\n2. 为 HTTP 模型填写模型标识和请求参数，测试成功后设为默认。\n3. 打开任务模型，按需为选区问答、直接应用定位、资料翻译、AI 起稿或 AI精灵指定专用模型；未指定时跟随默认模型。\n\n注意：\n- 任务卡重新打开设置时默认折叠，可同时展开多项；折叠不会丢失本次设置会话中的参数草稿。\n- AI 起稿从结构设计到正文生成、全文检查统一使用同一个任务模型。\n- 选区问答只使用冻结的选中文字和当前会话历史；AI精灵只使用软件知识和自己的近期会话；直接应用定位模型只判断替换或插入位置；资料翻译只接收右键触发的可读文字块。\n- API Key 仅保存在本机；切换任务供应商时会清空不兼容的任务请求参数。",
       "sourceRefs": [
         "apps/writer/knowledge/user-help-topics.json"
       ]
@@ -791,6 +791,12 @@
         "AI配置",
         "Gemini",
         "DeepSeek",
+        "Qwen",
+        "Kimi",
+        "智谱 GLM",
+        "OpenAI",
+        "Claude",
+        "OpenRouter",
         "Codex CLI",
         "OpenAI兼容",
         "Anthropic",
@@ -806,7 +812,7 @@
       ],
       "sinceVersion": "1.1.5",
       "alwaysInclude": false,
-      "body": "Gemini、DeepSeek 和 Codex CLI 是内置供应商，自定义供应商可使用 OpenAI 兼容或 Anthropic 原生协议。HTTP 模型必须保存 API Key 并测试成功后才能使用；公开配置只返回遮罩信息。Codex CLI 复用本机安装与登录态，笺间不保存 Codex 登录凭据。选区问答、直接应用定位、资料翻译、AI 起稿和 AI精灵可各自指定任务模型，未指定时跟随默认模型；一旦显式指定，所选模型删除、测试失效或 Codex 不可用时会提示重新选择，不会静默换用其他模型。不同任务可保存独立请求参数，Codex CLI 不接受 HTTP 请求参数。",
+      "body": "Gemini、DeepSeek、Qwen、Kimi、智谱 GLM、OpenAI、Claude、OpenRouter 和 Codex CLI 是内置供应商，自定义供应商可使用 OpenAI 兼容或 Anthropic 原生协议。HTTP 模型必须保存 API Key 并测试成功后才能使用；公开配置只返回遮罩信息。Codex CLI 复用本机安装与登录态，笺间不保存 Codex 登录凭据。选区问答、直接应用定位、资料翻译、AI 起稿和 AI精灵可各自指定任务模型，未指定时跟随默认模型；一旦显式指定，所选模型删除、测试失效或 Codex 不可用时会提示重新选择，不会静默换用其他模型。不同任务可保存独立请求参数，Codex CLI 不接受 HTTP 请求参数。",
       "sourceRefs": [
         "apps/writer/electron/ai-provider-core.cjs",
         "apps/writer/electron/ai-config-runtime.cjs",

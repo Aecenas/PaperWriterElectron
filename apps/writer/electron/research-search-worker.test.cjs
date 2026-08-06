@@ -7,6 +7,7 @@ const {
 } = require("docx");
 
 const {
+  installTextOnlyPdfCanvasShim,
   normalizePdfPageItems,
 } = require("./research-search-worker.cjs");
 const {
@@ -54,6 +55,37 @@ test("PDF item normalization preserves CJK adjacency and separates Latin words a
     { str: "two" },
     { str: "words" },
   ]), "研究方法\ntwo words");
+});
+
+test("PDF text extraction replaces native canvas with a fail-closed pure-JS shim", () => {
+  class PureJsDomMatrix {}
+  const moduleCache = Object.create(null);
+  const installed = installTextOnlyPdfCanvasShim({
+    canvasPath: "virtual/@napi-rs/canvas/index.js",
+    DOMMatrix: PureJsDomMatrix,
+    moduleCache,
+  });
+  assert.equal(installed.exports.DOMMatrix, PureJsDomMatrix);
+  assert.deepEqual(
+    Object.keys(installed.exports).sort(),
+    ["DOMMatrix", "ImageData", "Path2D", "createCanvas"].sort(),
+  );
+  assert.equal(
+    moduleCache[installed.canvasPath].exports,
+    installed.exports,
+  );
+  assert.throws(
+    () => new installed.exports.ImageData(),
+    /不支持画布渲染/,
+  );
+  assert.throws(
+    () => new installed.exports.Path2D(),
+    /不支持画布渲染/,
+  );
+  assert.throws(
+    () => installed.exports.createCanvas(),
+    /不支持画布渲染/,
+  );
 });
 
 test("PDF extraction runs outside the main thread and returns bounded page ranges", async () => {

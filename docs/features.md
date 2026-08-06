@@ -76,7 +76,7 @@
 
 ### 供应商、模型与连接测试
 
-- Gemini、DeepSeek 和 Codex CLI 是不可删除的内置供应商。
+- Gemini、DeepSeek、Qwen、Kimi、智谱 GLM、OpenAI、Claude、OpenRouter 和 Codex CLI 是不可删除的内置供应商。
 - 可创建多个自定义供应商，协议可选 OpenAI 兼容或 Anthropic 原生。
 - 创建时填写唯一名称、协议和 Base URL，随后在详情页配置 API Key 与模型标识。
 - 只有测试成功的模型才能设为默认并用于 AI 优化或 AI 协作。

@@ -8,6 +8,20 @@ export const RELEASE_PHASE_DEFINITIONS = [
 
 export const RELEASE_NOTES = [
   {
+    version: "1.1.7",
+    phaseId: "professional-creation",
+    scale: "minor",
+    date: "2026-08-06",
+    title: "常用 AI 服务商与安全稳定性完善",
+    changes: [
+      "AI 配置新增 Qwen、Kimi、智谱 GLM、OpenAI、Claude 和 OpenRouter 六个内置服务商预设，并在设置页与模型选择器中使用各家官方图标；默认端点、协议和模型已按当前官方文档校准。",
+      "加固 AI 联网请求的目标地址、重定向与本机日志隐私边界，降低恶意地址探测内网、凭据跨站发送或诊断信息泄露的风险。",
+      "修复 Mermaid 内容在编辑器、分页预览、PDF、分页图片与 DOCX 导出之间的安全渲染兼容，失败时会明确降级而不是卡住导出。",
+      "收紧图片导入与文档资源的格式、尺寸、像素和总量限制；暂不接受新的 AVIF 导入，已有受支持图片仍按原流程显示与导出。",
+      "改善窗口无响应和渲染进程异常时的恢复提示，并扩充发布前测试、包体预算与安装包启动检查。",
+    ],
+  },
+  {
     version: "1.1.6",
     phaseId: "professional-creation",
     scale: "minor",

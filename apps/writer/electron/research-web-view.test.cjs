@@ -47,7 +47,10 @@ test("web view URL and bounds validation reject privileged input and clamp to th
 test("web views use an ephemeral sandbox, deny permissions and downloads, and retain hidden tabs", async () => {
   const views = [];
   const opened = [];
+  const prompts = [];
   const states = [];
+  let currentTime = 10_000;
+  let promptResponse = 0;
   let permissionRequestHandler;
   let permissionCheckHandler;
   let downloadHandler;
@@ -84,8 +87,15 @@ test("web views use an ephemeral sandbox, deny permissions and downloads, and re
       },
     },
     shell: { openExternal: async (url) => { opened.push(url); } },
+    dialog: {
+      async showMessageBox(...args) {
+        prompts.push(args);
+        return { response: promptResponse };
+      },
+    },
     getWindow: () => window,
     sendState: (state) => states.push(state),
+    now: () => currentTime,
   });
 
   assert.equal(usedPartition, RESEARCH_WEB_PARTITION);
@@ -116,7 +126,21 @@ test("web views use an ephemeral sandbox, deny permissions and downloads, and re
   assert.equal(views[0].webContents.url, "https://example.com/one");
 
   assert.deepEqual(views[0].webContents.windowOpenHandler({ url: "https://example.org/new" }), { action: "deny" });
-  await Promise.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(prompts.length, 1);
+  assert.strictEqual(prompts[0][0], window);
+  assert.equal(prompts[0][1].defaultId, 1);
+  assert.equal(prompts[0][1].cancelId, 1);
+  assert.deepEqual(opened, ["https://example.org/new"]);
+  assert.deepEqual(views[0].webContents.windowOpenHandler({ url: "https://example.org/rate-limited" }), { action: "deny" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(prompts.length, 1);
+  assert.deepEqual(opened, ["https://example.org/new"]);
+  currentTime += 5_000;
+  promptResponse = 1;
+  assert.deepEqual(views[0].webContents.windowOpenHandler({ url: "https://example.org/canceled" }), { action: "deny" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(prompts.length, 2);
   assert.deepEqual(opened, ["https://example.org/new"]);
   assert.deepEqual(views[0].webContents.windowOpenHandler({ url: "file:///C:/secret" }), { action: "deny" });
   assert.deepEqual(opened, ["https://example.org/new"]);

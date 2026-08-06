@@ -1,0 +1,40 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /apps/writer/frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    groups:
+      frontend-runtime:
+        dependency-type: production
+      frontend-tooling:
+        dependency-type: development
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: npm
+    directory: /apps/writer/electron
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:20"
+      timezone: Asia/Shanghai
+    groups:
+      electron-runtime:
+        dependency-type: production
+      electron-tooling:
+        dependency-type: development
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:40"
+      timezone: Asia/Shanghai
+    groups:
+      github-actions:
+        patterns: ["*"]

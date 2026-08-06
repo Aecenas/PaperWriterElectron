@@ -61,9 +61,57 @@ function normalizePdfPageItems(items) {
   return text.replace(/[ \t]+\n/g, "\n").trim();
 }
 
+function installTextOnlyPdfCanvasShim({
+  canvasPath = require.resolve("@napi-rs/canvas"),
+  DOMMatrix = require("@napi-rs/canvas/geometry").DOMMatrix,
+  moduleCache = require.cache,
+} = {}) {
+  class UnsupportedTextOnlyCanvasType {
+    constructor() {
+      throw new Error("PDF 全文提取不支持画布渲染");
+    }
+  }
+  // The legacy Node build eagerly loads @napi-rs/canvas even for text-only
+  // extraction. Its native binding can crash a Windows worker during teardown.
+  // Keep this dedicated worker native-free by exposing only the package's
+  // pure-JS matrix implementation and fail closed if rendering is invoked.
+  const exports = {
+    DOMMatrix,
+    ImageData: UnsupportedTextOnlyCanvasType,
+    Path2D: UnsupportedTextOnlyCanvasType,
+    createCanvas() {
+      throw new Error("PDF 全文提取不支持画布渲染");
+    },
+  };
+  moduleCache[canvasPath] = {
+    id: canvasPath,
+    filename: canvasPath,
+    loaded: true,
+    exports,
+  };
+  return { canvasPath, exports };
+}
+
+async function loadPdfJsForTextExtraction() {
+  installTextOnlyPdfCanvasShim();
+  return import("pdfjs-dist/legacy/build/pdf.mjs");
+}
+
+class TextOnlyPdfCanvasFactory {
+  create() {
+    throw new Error("PDF 全文提取不支持画布渲染");
+  }
+
+  reset() {
+    throw new Error("PDF 全文提取不支持画布渲染");
+  }
+
+  destroy() {}
+}
+
 async function extractPdfText(bytes, limits, onProgress = () => {}) {
   const input = normalizeWorkerBytes(bytes, limits.maxInputBytes);
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjs = await loadPdfJsForTextExtraction();
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(
       input.buffer,
@@ -73,6 +121,7 @@ async function extractPdfText(bytes, limits, onProgress = () => {}) {
     isEvalSupported: false,
     useWorkerFetch: false,
     useSystemFonts: true,
+    CanvasFactory: TextOnlyPdfCanvasFactory,
   });
   let document = null;
   try {
@@ -186,6 +235,7 @@ module.exports = {
   DEFAULT_WORKER_LIMITS,
   extractDocxText,
   extractPdfText,
+  installTextOnlyPdfCanvasShim,
   normalizePdfPageItems,
   resolveWorkerLimits,
   runWorkerTask,

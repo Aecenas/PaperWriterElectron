@@ -5,6 +5,9 @@ function registerResourceIpcHandlers({
   imageExtensions,
   audioExtensions,
   videoExtensions,
+  imageMaxBytes,
+  imageMaxDimension,
+  imageMaxPixels,
   audioMaxBytes,
   videoMaxBytes,
   path,
@@ -59,6 +62,7 @@ function registerResourceIpcHandlers({
       const staged = await stageAsset(filePath, {
         mime: mimeFromPath(filePath),
         name: path.basename(filePath),
+        maxBytes,
       });
       return {
         canceled: false,
@@ -97,12 +101,38 @@ function registerResourceIpcHandlers({
         extension,
       };
     }
+    const stat = await fs.stat(filePath);
+    if (typeof stat.isFile === "function" && !stat.isFile()) {
+      return { canceled: false, error: "read-failed", kind: "image" };
+    }
+    if (stat.size > imageMaxBytes) {
+      return {
+        canceled: false,
+        error: "too-large",
+        kind: "image",
+        size: stat.size,
+        maxBytes: imageMaxBytes,
+      };
+    }
     if (!isStagedAssetReady()) {
       throw new Error("图片暂存服务尚未就绪，请重启应用后重试");
     }
     const fileName = path.basename(filePath);
     const mime = mimeFromPath(filePath);
-    const staged = await stageAsset(filePath, { mime, name: fileName });
+    const staged = await stageAsset(filePath, {
+      mime,
+      name: fileName,
+      maxBytes: imageMaxBytes,
+      validateImage: true,
+      maxImageDimension: imageMaxDimension,
+      maxImagePixels: imageMaxPixels,
+    }).catch((error) => {
+      if (error?.code === "INVALID_IMAGE") return null;
+      throw error;
+    });
+    if (!staged) {
+      return { canceled: false, error: "invalid-image", kind: "image" };
+    }
     return {
       canceled: false,
       name: path.basename(filePath, path.extname(filePath)),

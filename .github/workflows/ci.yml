@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Windows quality gate
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            apps/writer/frontend/package-lock.json
+            apps/writer/electron/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/writer/frontend
+        run: npm.cmd ci --no-audit --no-fund
+      - name: Install Electron dependencies
+        working-directory: apps/writer/electron
+        run: npm.cmd ci --no-audit --no-fund
+
+      - name: Frontend unit and contract tests
+        working-directory: apps/writer/frontend
+        run: npm.cmd test
+      - name: Electron syntax, generated-contract, and unit checks
+        working-directory: apps/writer/electron
+        run: |
+          npm.cmd run check
+          npm.cmd test
+      - name: Build frontend and enforce bundle budget
+        working-directory: apps/writer/frontend
+        run: |
+          npm.cmd run build
+          npm.cmd run check:bundle
+      - name: Real Electron preload and close-handshake smoke
+        working-directory: apps/writer/frontend
+        run: npm.cmd run test:electron-smoke
+      - name: Install Playwright Chromium
+        working-directory: apps/writer/frontend
+        run: npm.cmd run test:e2e:install
+      - name: Browser interaction regressions
+        working-directory: apps/writer/frontend
+        run: npm.cmd run test:e2e:only
+      - name: Launcher safety and production prerequisite smoke
+        run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-Launch-PaperWriter.ps1 -Smoke
+
+      - name: Production dependency audit
+        run: |
+          npm.cmd --prefix apps/writer/frontend audit --omit=dev --audit-level=moderate
+          npm.cmd --prefix apps/writer/electron audit --omit=dev --audit-level=moderate
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate

@@ -1,6 +1,6 @@
 # 发布与维护
 
-本文档记录 `1.1.6` 版本的发布准备流程。
+本文档记录 `1.1.7` 版本的发布准备流程。
 
 ## 版本号位置
 
@@ -13,9 +13,17 @@
 - `apps/writer/electron/package-lock.json`
 - `README.md`
 
-当前目标版本：`1.1.6`
+当前目标版本：`1.1.7`
 
 发布新版本时，还应在 `release-notes.js` 顶部新增发布日期、标题和面向用户的更新摘要，确保应用内版本号弹窗可以离线查看完整历史。
+
+## 1.1.7 发布摘要
+
+- 新增 Qwen、Kimi、智谱 GLM、OpenAI、Claude 和 OpenRouter 六个不可删除的内置服务商预设，并为设置页和模型选择器加入各家官方图标。
+- 按官方当前接口校准默认协议、Base URL 与模型；Qwen 默认使用 `qwen3.7-plus`，Kimi 使用与现有多轮记录兼容的 `kimi-k2.6`，OpenAI 使用均衡档 `gpt-5.6-terra`，Claude 使用原生 Messages API。
+- 加固 AI 请求目标、重定向与日志隐私边界，降低内网探测、凭据跨站发送和诊断信息泄露风险。
+- 修复 Mermaid 安全渲染在编辑器、分页预览及 PDF、图片、DOCX 导出链路中的兼容问题，并收紧图片与文档资源限额。
+- 改善窗口无响应与渲染进程异常恢复提示，补充包体预算、自动化回归和安装包启动检查。
 
 ## 1.1.6 发布摘要
 
@@ -140,26 +148,42 @@
 
 ## 发布前检查
 
-建议按以下顺序执行：
+首次在一台机器上执行发布门禁前，安装 Playwright Chromium：
 
 ```powershell
 cd apps\writer\frontend
-npm run build
+npm run test:e2e:install
 ```
+
+随后从 Electron 目录执行统一发布门禁：
 
 ```powershell
 cd apps\writer\electron
-npm run check
+npm run release:prepare
 ```
+
+`release:prepare` 会依次执行 Electron 语法与生成物检查、Electron 单元/契约测试、递归前端单元测试、生产构建、bundle budget、Playwright E2E、真实 Electron preload/IPC 与关闭握手 smoke；`pack`、`dist`、`publish` 均不能绕过该门禁。
+
+最后执行启动器检查：
 
 ```powershell
 cd ..\..\..
 .\scripts\Test-Launch-PaperWriter.ps1 -Smoke
 ```
 
-启动器 smoke test 会校验 PowerShell 语法、安全清理约束、npm 依赖和生产前端构建完整性，但不会启动或结束 Electron/Vite 进程。正式发布前还应分别运行一次 `scripts\PaperWriter.cmd` 与 `scripts\PaperWriter-Dev.cmd`，确认生产单实例唤起和显式开发入口均可用；启动开发模式前需先从应用内正常退出生产实例。
+启动器 smoke 会校验 PowerShell 语法、安全清理约束、npm 依赖和生产前端构建完整性，但不会启动或结束 Electron/Vite。真实 Electron smoke 由 `release:prepare` 负责，并使用一次性 `userData`；正式发布前仍应手工确认一次生产单实例唤起和显式开发入口。
 
-如果需要本地生成安装包：
+若需要检查实际打包应用，先生成解包产物，再运行 packaged smoke：
+
+```powershell
+cd apps\writer\electron
+npm run pack
+npm run test:packaged-smoke
+```
+
+packaged smoke 在隔离的 `%APPDATA%` 下启动 `apps\release\win-unpacked\笺间.exe`，验证 ASAR 页面和真实 preload IPC。打包白名单只包含运行时根 CJS、Electron 资源、前端 `dist` 和生成的知识索引；测试、preload 源码、构建脚本和 source map 不进入 ASAR。
+
+本地生成安装包：
 
 ```powershell
 cd apps\writer\electron
@@ -175,10 +199,11 @@ apps\release
 ## GitHub Release 准备
 
 1. 确认工作区只包含本次发布需要的改动。
-2. 确认前端构建和 Electron 检查通过。
+2. 确认 `release:prepare`、启动器 smoke、`pack` 和 packaged smoke 通过。
 3. 提交代码。
-4. 创建版本标签，例如 `v1.1.6`。
-5. 使用 GitHub Release 发布安装包。
+4. 创建版本标签，例如 `v1.1.7`。
+5. 确认 Release provenance workflow 生成安装包、CycloneDX SBOM 和 build provenance attestation。
+6. 使用 GitHub Release 发布安装包。
 
 如使用 electron-builder 自动发布，需要配置 GitHub 发布权限，然后执行：
 
@@ -186,6 +211,10 @@ apps\release
 cd apps\writer\electron
 npm run publish
 ```
+
+仓库中的 CI 会在 push/PR 上运行 Windows 质量门禁、`moderate` 级生产依赖审计与依赖变更审查，并由 CodeQL 定期扫描；Dependabot 每周检查两个 npm workspace 和 GitHub Actions。版本标签触发的 provenance workflow 会在上传前运行同一发布门禁与 packaged smoke。
+
+Windows 代码签名证书和受保护的签名凭据不属于仓库内实现。无签名本地包可用于内部验证；公开分发前应将签名作为外部发布条件配置并验证，不能把 SBOM 或 provenance attestation 当作代码签名的替代品。
 
 ## 更新检查
 

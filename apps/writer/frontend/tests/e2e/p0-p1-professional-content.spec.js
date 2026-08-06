@@ -54,6 +54,13 @@ test("professional elements remain editable while switching continuous, single, 
   await mermaidDialog.getByRole("button", { name: "插入 Mermaid 图", exact: true }).click();
   const mermaidNode = page.locator(".canvas.active-pane [data-type='paper-mermaid']");
   await expect(mermaidNode).toHaveAttribute("data-mermaid-render-state", "ready", { timeout: 15_000 });
+  await expect.poll(() => mermaidNode.evaluate((node) => {
+    const host = node.querySelector(".paper-mermaid-svg");
+    if (!host?.shadowRoot?.querySelector("svg")) return false;
+    const range = document.createRange();
+    range.selectNode(host);
+    return Boolean(range.cloneContents().querySelector(".paper-mermaid-svg")?.shadowRoot?.querySelector("svg"));
+  })).toBe(true);
 
   await page.evaluate(() => {
     window.__paperWriterEditorIdentity = document.querySelector(".canvas.active-pane .ProseMirror");
