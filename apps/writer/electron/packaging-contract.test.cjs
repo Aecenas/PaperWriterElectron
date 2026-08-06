@@ -18,6 +18,8 @@ test("every distributable Electron command rebuilds the frontend before packagin
     const script = manifest.scripts[scriptName];
     assert.match(script, /^npm run release:prepare && electron-builder /);
   }
+  assert.match(manifest.scripts.dist, /--publish never$/);
+  assert.match(manifest.scripts.publish, /--publish always$/);
 });
 
 test("packaged smoke uses one disposable profile even when another app instance is open", () => {
