@@ -8,6 +8,19 @@ export const RELEASE_PHASE_DEFINITIONS = [
 
 export const RELEASE_NOTES = [
   {
+    version: "1.1.8",
+    phaseId: "professional-creation",
+    scale: "minor",
+    date: "2026-08-10",
+    title: "跨页导出与编辑交互修复",
+    changes: [
+      "修复 PDF 与分页图片在段落跨页时因导出阶段二次排版而吞掉部分文字的问题；导出现在直接复用 PageMap 的完整多栏布局，跨页内容、图片高度和手动分页保持一致。",
+      "正文选区悬浮工具栏新增删除线按钮，可直接切换当前选区的删除线格式。",
+      "修复正文右键菜单中的页面视图子菜单移出后仍停留的问题，鼠标离开对应区域即可收起。",
+      "AI 设置中的服务商列表在小窗口和较长列表下可独立滚动，并使用与界面一致的细滚动条样式。",
+    ],
+  },
+  {
     version: "1.1.7",
     phaseId: "professional-creation",
     scale: "minor",

@@ -1,4 +1,5 @@
 import { waitForImageExportAssets } from "../image-export-readiness.js";
+import { A4_PAGE_METRICS } from "../pagination/page-layout-service.js";
 import { refreshRegisteredPageLayout } from "../pagination/page-layout-registry.js";
 
 export const IMAGE_EXPORT_STAGE_ID = "paperwriter-image-export-stage";
@@ -7,9 +8,6 @@ export const PAGE_MAP_EXPORT_STAGE_ID = "paperwriter-page-map-export-stage";
 export const PAGE_MAP_EXPORT_MAX_PAGES = 500;
 export const PAGE_MAP_EXPORT_UNSAFE_OVERSIZE = "PAGE_MAP_EXPORT_UNSAFE_OVERSIZE";
 export const PAGE_MAP_EXPORT_UNAVAILABLE = "PAGE_MAP_EXPORT_UNAVAILABLE";
-export const PAGE_RANGE_CONTINUATION_CLASS = "paper-page-range-continuation";
-
-const FIGURE_NODE_TYPES = new Set(["image", "paperMermaid"]);
 
 function pageMapExportError(message, code = PAGE_MAP_EXPORT_UNAVAILABLE) {
   const error = new Error(message);
@@ -71,57 +69,19 @@ export function createPageMapExportPlan(
   };
 }
 
-function boundedDomOffset(point) {
-  const limit = point.node.nodeType === 3
-    ? (point.node.nodeValue?.length || 0)
-    : (point.node.childNodes?.length || 0);
-  return Math.max(0, Math.min(Number(point.offset) || 0, limit));
-}
-
-function cloneEditorRange(editor, from, to, documentObject) {
-  const start = editor?.view?.domAtPos?.(from);
-  const end = editor?.view?.domAtPos?.(to);
-  if (!start?.node || !end?.node) return null;
-  const range = documentObject.createRange();
-  range.setStart(start.node, boundedDomOffset(start));
-  range.setEnd(end.node, boundedDomOffset(end));
-  return range.cloneContents();
-}
-
-export function countFiguresBeforePageRange(editor, from) {
-  const end = Math.max(0, Math.trunc(Number(from) || 0));
-  const documentNode = editor?.state?.doc;
-  if (!end || typeof documentNode?.nodesBetween !== "function") return 0;
-  let count = 0;
-  documentNode.nodesBetween(0, end, (node, position) => {
-    if (position >= end) return false;
-    if (FIGURE_NODE_TYPES.has(node?.type?.name)) count += 1;
-    return true;
-  });
-  return count;
-}
-
-export function decorateStaticPageRange({ editor, editorClone, page, pageRange }) {
-  const figureOffset = countFiguresBeforePageRange(editor, pageRange?.from);
-  page.style?.setProperty?.("counter-reset", `paper-figure ${figureOffset}`);
-  page.setAttribute?.("data-page-map-figure-offset", String(figureOffset));
-
-  let start = null;
-  try {
-    start = editor?.state?.doc?.resolve?.(Math.max(0, Math.trunc(Number(pageRange?.from) || 0)));
-  } catch {
-    start = null;
-  }
-  if (start?.parent?.isTextblock && Number(start.parentOffset) > 0) {
-    editorClone.firstElementChild?.classList?.add(PAGE_RANGE_CONTINUATION_CLASS);
-  }
+export function pageMapExportColumnOffset(
+  index,
+  metrics = A4_PAGE_METRICS,
+) {
+  const pageIndex = Math.max(0, Math.trunc(Number(index) || 0));
+  return pageIndex ? -pageIndex * (metrics.width + metrics.gap) : 0;
 }
 
 export function cleanStaticPage(page) {
   page.querySelectorAll?.(
     ".image-size-tools, .media-size-tools, .paper-code-toolbar, .paper-mermaid-tools, "
       + ".comment-anchor-layer, "
-      + ".comment-highlight-layer, .selection-bubble-menu, .paper-page-break, "
+      + ".comment-highlight-layer, .selection-bubble-menu, "
       + ".paper-finalized-break",
   ).forEach((element) => element.remove());
   page.querySelectorAll?.("[contenteditable]").forEach((element) => {
@@ -131,20 +91,11 @@ export function cleanStaticPage(page) {
 
 function createStaticPage({
   documentObject,
-  editor,
   index,
-  pageRange,
   sourceEditor,
   sourceHeader,
   sourceSheet,
 }) {
-  const fragment = cloneEditorRange(
-    editor,
-    pageRange.from,
-    pageRange.to,
-    documentObject,
-  );
-  if (!fragment) return null;
   const page = sourceSheet.cloneNode(false);
   page.classList.add("paged-page", "page-map-export-page");
   page.removeAttribute("contenteditable");
@@ -157,12 +108,19 @@ function createStaticPage({
     page.append(header);
   }
 
-  const editorClone = sourceEditor.cloneNode(false);
+  // Keep the exact multi-column flow used during PageMap measurement and clip
+  // the requested column into each static page. Reflowing a DOM Range in an
+  // independent one-column editor changes margin fragmentation and line wraps;
+  // content near a page boundary can then fall below the fixed page viewport.
+  const editorClone = sourceEditor.cloneNode(true);
+  syncClonedFormValues(sourceEditor, editorClone);
   editorClone.classList.add("page-map-export-editor");
   editorClone.removeAttribute("contenteditable");
   editorClone.removeAttribute("spellcheck");
-  editorClone.append(fragment);
-  decorateStaticPageRange({ editor, editorClone, page, pageRange });
+  editorClone.style.setProperty(
+    "--page-map-export-column-offset",
+    `${pageMapExportColumnOffset(index)}px`,
+  );
   page.append(editorClone);
 
   const pageNumber = documentObject.createElement("span");
@@ -190,11 +148,9 @@ export async function capturePageMapExportSnapshot(canvas) {
     throw pageMapExportError("当前页面布局尚未就绪，请稍后重试导出");
   }
   const sourceHeader = sourceSheet.querySelector(".paper-header");
-  const pages = plan.pages.map((pageRange, index) => createStaticPage({
+  const pages = plan.pages.map((_pageRange, index) => createStaticPage({
     documentObject,
-    editor: layout.editor,
     index,
-    pageRange,
     sourceEditor,
     sourceHeader,
     sourceSheet,

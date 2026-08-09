@@ -7,6 +7,7 @@ import {
   MessageSquare,
   Palette,
   Sparkles,
+  Strikethrough,
 } from "lucide-react";
 import { COLOR_OPTIONS, normalizeColorValue } from "../templates/index.js";
 import {
@@ -265,6 +266,12 @@ export function SelectionBubbleToolbar({
             value={activeUnderlineStyle}
             onToggle={() => runSelectionCommand((chain) => chain.toggleUnderline())}
             onSelect={handleUnderlineStyleChange}
+          />
+          <IconButton
+            icon={Strikethrough}
+            label="删除线"
+            active={editor.isActive("strike")}
+            onClick={() => runSelectionCommand((chain) => chain.toggleStrike())}
           />
           <span className="bubble-divider" />
           <ColorMenu icon={Palette} label="字体颜色" options={COLOR_OPTIONS} value={activePaletteColor} onSelect={handleTextColorChange} />

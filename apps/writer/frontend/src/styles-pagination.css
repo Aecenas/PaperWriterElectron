@@ -447,10 +447,12 @@
   margin: 78px 0 0 76px;
   box-sizing: border-box;
   padding: 0;
-  overflow: hidden;
-  column-count: 1;
-  column-gap: normal;
-  column-width: auto;
+  overflow: visible;
+  column-width: 642px;
+  column-gap: 180px;
+  column-fill: auto;
+  transform: translateX(var(--page-map-export-column-offset, 0px));
+  transform-origin: left top;
 }
 
 .page-map-export-page.without-paper-header .page-map-export-editor {
@@ -464,7 +466,14 @@
   content: "";
 }
 
-.page-map-export-page.paper-page-map-continuation .page-map-export-editor::before {
+.page-map-export-page .page-map-export-editor .paper-page-break {
+  height: 1px;
+  margin: 0;
+  break-after: column;
+}
+
+.page-map-export-page .page-map-export-editor .paper-page-break::before,
+.page-map-export-page .page-map-export-editor .paper-page-break span {
   display: none;
 }
 

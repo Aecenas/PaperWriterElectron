@@ -56,7 +56,7 @@ test("document context menu stays keyboard-visible and shares page-view controls
   assert.match(contextMenuSource, /aria-haspopup="menu"/);
   assert.match(contextMenuSource, /role="menuitemradio"/);
   assert.match(contextMenuSource, /onClick=\{\(\) => openPageViewMenu\(false\)\}/);
-  assert.doesNotMatch(contextMenuSource, /onPointerLeave=\{\(\) => setPageViewOpen\(false\)\}/);
+  assert.match(contextMenuSource, /onPointerEnter=\{\(\) => openPageViewMenu\(false\)\}[\s\S]*?onPointerLeave=\{\(\) => setPageViewOpen\(false\)\}/);
   assert.match(contextMenuSource, /onDismissRef\.current\?\.\(\)/);
   assert.match(contextMenuSource, /\}, \[menu\]\);/);
   assert.match(contextMenuSource, /版本历史/);

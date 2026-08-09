@@ -117,6 +117,7 @@ export default function DocumentContextMenu({
       <div
         className="document-context-view-shell"
         onPointerEnter={() => openPageViewMenu(false)}
+        onPointerLeave={() => setPageViewOpen(false)}
       >
         <button
           ref={pageViewButtonRef}

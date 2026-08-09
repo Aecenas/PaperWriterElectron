@@ -165,6 +165,16 @@ test("selection toolbar ignores bookmark node activation", () => {
   assert.match(selectionToolbarSource, /\[data-type='paper-bookmark'\]/);
 });
 
+test("selection toolbar exposes strike formatting beside underline", () => {
+  const underlineIndex = selectionToolbarSource.indexOf("<UnderlineStyleMenu");
+  const strikeIndex = selectionToolbarSource.indexOf('icon={Strikethrough}');
+  const dividerIndex = selectionToolbarSource.indexOf('<span className="bubble-divider"', underlineIndex);
+  assert.ok(underlineIndex >= 0 && strikeIndex > underlineIndex && dividerIndex > strikeIndex);
+  assert.match(selectionToolbarSource, /label="删除线"/);
+  assert.match(selectionToolbarSource, /active=\{editor\.isActive\("strike"\)\}/);
+  assert.match(selectionToolbarSource, /chain\.toggleStrike\(\)/);
+});
+
 test("comment decorations map through ordinary typing instead of rebuilding all ranges", () => {
   const start = editorDecorationsSource.indexOf("const DocumentCommentDecorations");
   const end = editorDecorationsSource.indexOf("const HeadingMetadata", start);
