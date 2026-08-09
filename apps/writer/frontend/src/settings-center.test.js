@@ -111,7 +111,9 @@ test("Codex model saves omit display-only Base URLs and surface action feedback"
 });
 
 test("task-model navigation is divided, responsive and keyboard-visible", () => {
-  assert.match(appCss, /\.ai-settings-sidebar\s*\{[\s\S]*?grid-template-rows:\s*auto minmax\(0, 1fr\) auto/);
+  assert.match(appCss, /\.ai-settings-sidebar\s*\{[\s\S]*?min-height:\s*0[\s\S]*?grid-template-rows:\s*auto minmax\(0, 1fr\) auto[\s\S]*?overflow:\s*hidden/);
+  assert.match(appCss, /\.ai-provider-list\s*\{[\s\S]*?min-height:\s*0[\s\S]*?overflow-y:\s*auto[\s\S]*?scrollbar-gutter:\s*stable/);
+  assert.match(appCss, /\.ai-provider-list::\-webkit-scrollbar-thumb/);
   assert.match(appCss, /\.ai-task-model-nav-wrap\s*\{[\s\S]*?border-top:/);
   assert.match(appCss, /\.ai-task-model-select \.template-select-trigger/);
   assert.match(appCss, /\.template-select-trigger:focus-visible/);

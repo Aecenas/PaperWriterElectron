@@ -62,11 +62,13 @@
 
 .ai-settings-sidebar {
   min-width: 0;
+  min-height: 0;
   border-right: 1px solid rgba(99, 86, 67, 0.14);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 20px;
   padding: 50px 18px 20px;
+  overflow: hidden;
   background:
     linear-gradient(180deg, rgba(251, 248, 242, 0.9), rgba(247, 242, 234, 0.78)),
     rgba(249, 245, 238, 0.82);
@@ -109,10 +111,31 @@
 
 .ai-provider-list {
   min-width: 0;
+  min-height: 0;
   display: grid;
   align-content: start;
   gap: 8px;
   overflow-y: auto;
+  scrollbar-color: rgba(154, 86, 53, 0.34) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.ai-provider-list::-webkit-scrollbar {
+  width: 7px;
+}
+
+.ai-provider-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ai-provider-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(154, 86, 53, 0.3);
+}
+
+.ai-provider-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(154, 86, 53, 0.46);
 }
 
 .ai-task-model-nav-wrap {

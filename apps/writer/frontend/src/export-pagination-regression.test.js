@@ -6,11 +6,9 @@ import { createExportExecutionActions } from "./controllers/export.js";
 import {
   capturePageMapExportSnapshot,
   cleanStaticPage,
-  countFiguresBeforePageRange,
   createPageMapExportPlan,
-  decorateStaticPageRange,
+  pageMapExportColumnOffset,
   PAGE_MAP_EXPORT_UNSAFE_OVERSIZE,
-  PAGE_RANGE_CONTINUATION_CLASS,
 } from "./export/presentation.js";
 import { registerPageLayout } from "./pagination/page-layout-registry.js";
 import { PAGE_VIEW_MODES } from "./pagination/page-view-state.js";
@@ -69,75 +67,23 @@ test("static page cleanup removes editor chrome without deleting semantic conten
   assert.match(removed[0], /\.image-size-tools/);
   assert.match(removed[0], /\.paper-code-toolbar/);
   assert.match(removed[0], /\.paper-mermaid-tools/);
+  assert.doesNotMatch(removed[0], /\.paper-page-break/);
 });
 
-test("static pages continue document-wide figure numbering and suppress repeated paragraph indentation", () => {
-  const nodes = [
-    { position: 3, type: { name: "paragraph" } },
-    { position: 8, type: { name: "image" } },
-    { position: 16, type: { name: "paperMermaid" } },
-    { position: 25, type: { name: "image" } },
-  ];
-  const editor = {
-    state: {
-      doc: {
-        nodesBetween(_from, to, visit) {
-          nodes.filter(({ position }) => position < to).forEach((node) => visit(node, node.position));
-        },
-        resolve() {
-          return { parent: { isTextblock: true }, parentOffset: 12 };
-        },
-      },
-    },
-  };
-  const pageAttributes = new Map();
-  const pageStyles = new Map();
-  const continuationClasses = new Set();
-  const page = {
-    setAttribute: (name, value) => pageAttributes.set(name, value),
-    style: { setProperty: (name, value) => pageStyles.set(name, value) },
-  };
-  const editorClone = {
-    firstElementChild: {
-      classList: { add: (name) => continuationClasses.add(name) },
-    },
-  };
-
-  assert.equal(countFiguresBeforePageRange(editor, 24), 2);
-  assert.equal(countFiguresBeforePageRange(editor, 0), 0);
-  decorateStaticPageRange({ editor, editorClone, page, pageRange: { from: 24, to: 40 } });
-  assert.equal(pageStyles.get("counter-reset"), "paper-figure 2");
-  assert.equal(pageAttributes.get("data-page-map-figure-offset"), "2");
-  assert.equal(continuationClasses.has(PAGE_RANGE_CONTINUATION_CLASS), true);
+test("static pages clip the measured multi-column flow instead of reflowing page ranges", () => {
+  assert.equal(pageMapExportColumnOffset(0), 0);
+  assert.equal(pageMapExportColumnOffset(1), -822);
+  assert.equal(pageMapExportColumnOffset(2), -1644);
+  assert.match(presentationSource, /sourceEditor\.cloneNode\(true\)/);
+  assert.doesNotMatch(presentationSource, /range\.cloneContents\(\)/);
   assert.match(
     stylesSource,
-    /\.paper-sheet\.indents-paragraphs \.page-map-export-editor > p\.paper-page-range-continuation \{[^}]*text-indent:\s*0;/s,
+    /\.page-map-export-page \.page-map-export-editor \{[^}]*column-width:\s*642px;[^}]*column-gap:\s*180px;[^}]*column-fill:\s*auto;[^}]*translateX\(var\(--page-map-export-column-offset/s,
   );
-});
-
-test("static pages keep normal indentation when a page starts at a paragraph boundary", () => {
-  const continuationClasses = new Set();
-  const editor = {
-    state: {
-      doc: {
-        nodesBetween() {},
-        resolve() {
-          return { parent: { isTextblock: true }, parentOffset: 0 };
-        },
-      },
-    },
-  };
-  decorateStaticPageRange({
-    editor,
-    editorClone: {
-      firstElementChild: {
-        classList: { add: (name) => continuationClasses.add(name) },
-      },
-    },
-    page: { setAttribute() {}, style: { setProperty() {} } },
-    pageRange: { from: 20, to: 40 },
-  });
-  assert.equal(continuationClasses.has(PAGE_RANGE_CONTINUATION_CLASS), false);
+  assert.match(
+    stylesSource,
+    /\.page-map-export-page \.page-map-export-editor \.paper-page-break \{[^}]*break-after:\s*column;/s,
+  );
 });
 
 test("screen, PDF, and PNG share one bounded PageMap plan including hard page boundaries", () => {
