@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { mergeAttributes, Node } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
 import { NodeViewWrapper, ReactNodeViewRenderer, useEditorState } from "@tiptap/react";
 import Image from "@tiptap/extension-image";
-import { ClipboardCopy, Music2, Trash2, Video } from "lucide-react";
+import { Link2, Music2, Trash2, Video } from "lucide-react";
 import tocTitleSignatureAsset from "../assets/decor/toc-title-signature.png?inline";
 import {
   IMAGE_CAPTION_MAX_CHARS,
@@ -25,6 +25,7 @@ import {
   getPaperDerivedState,
   numberHeadingItems,
 } from "./decorations.js";
+import { ImagePreviewDialog } from "./ImagePreviewDialog.jsx";
 
 export const IMAGE_WIDTH_OPTIONS = [
   { label: "小", value: SAFE_EMBED_WIDTHS[0] },
@@ -63,6 +64,43 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
   const imageId = normalizeDocumentId(node.attrs.imageId);
   const readOnly = !editor?.isEditable;
   const captionRef = useRef(null);
+  const imageRef = useRef(null);
+  const toolsCloseTimerRef = useRef(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const imageNumber = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => {
+      let position = -1;
+      try {
+        position = typeof getPos === "function" ? getPos() : -1;
+      } catch {
+        return 1;
+      }
+      return getPaperDerivedState(activeEditor).imageItems
+        ?.find((item) => item.position === position)?.number || 1;
+    },
+  }) || 1;
+
+  const cancelToolsClose = useCallback(() => {
+    if (toolsCloseTimerRef.current) {
+      window.clearTimeout(toolsCloseTimerRef.current);
+      toolsCloseTimerRef.current = null;
+    }
+    setToolsOpen(true);
+  }, []);
+
+  const scheduleToolsClose = useCallback(() => {
+    if (toolsCloseTimerRef.current) window.clearTimeout(toolsCloseTimerRef.current);
+    toolsCloseTimerRef.current = window.setTimeout(() => {
+      toolsCloseTimerRef.current = null;
+      setToolsOpen(false);
+    }, 400);
+  }, []);
+
+  useEffect(() => () => {
+    if (toolsCloseTimerRef.current) window.clearTimeout(toolsCloseTimerRef.current);
+  }, []);
 
   useEffect(() => {
     resizeCaptionField(captionRef.current);
@@ -74,17 +112,48 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
     };
   }, [caption]);
 
+  const openPreview = useCallback((event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    setPreviewOpen(true);
+  }, []);
+
   return (
     <NodeViewWrapper
       as="figure"
-      className={selected ? "paper-image-figure selected" : "paper-image-figure"}
+      className={[
+        "paper-image-figure",
+        selected ? "selected" : "",
+        toolsOpen ? "image-tools-open" : "",
+      ].filter(Boolean).join(" ")}
       data-type="paper-image"
       data-image-id={imageId}
+      data-image-number={imageNumber}
       data-width={width}
       style={{ "--image-width": width }}
+      onPointerEnter={cancelToolsClose}
+      onPointerLeave={scheduleToolsClose}
+      onFocusCapture={cancelToolsClose}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) scheduleToolsClose();
+      }}
     >
       <div className="paper-image-frame" contentEditable={false}>
-        <img src={source || undefined} alt={alt} title={title} draggable={false} decoding="async" />
+        <img
+          ref={imageRef}
+          src={source || undefined}
+          alt={alt}
+          title={title || "点击预览图片"}
+          draggable={false}
+          decoding="async"
+          role="button"
+          tabIndex={0}
+          aria-label={caption ? `预览图${imageNumber}：${caption}` : `预览图${imageNumber}`}
+          onClick={openPreview}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") openPreview(event);
+          }}
+        />
         <div className="image-size-tools" aria-label="图片工具">
           {IMAGE_WIDTH_OPTIONS.map((option) => (
             <button
@@ -116,7 +185,7 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
               } }));
             }}
           >
-            <ClipboardCopy size={14} aria-hidden="true" />
+            <Link2 size={14} aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -129,10 +198,10 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
           >
             <Trash2 size={14} aria-hidden="true" />
           </button>
-        </div>
+          </div>
       </div>
       <label className="paper-image-caption-row" contentEditable={false}>
-        <span className="paper-image-caption-prefix" aria-hidden="true" />
+        <span className="paper-image-caption-prefix" aria-hidden="true">图{imageNumber}. </span>
         <textarea
           ref={captionRef}
           className="paper-image-caption"
@@ -149,6 +218,16 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
           spellCheck={false}
         />
       </label>
+      {previewOpen ? (
+        <ImagePreviewDialog
+          src={source}
+          alt={alt}
+          caption={caption}
+          number={imageNumber}
+          returnFocusRef={imageRef}
+          onClose={() => setPreviewOpen(false)}
+        />
+      ) : null}
     </NodeViewWrapper>
   );
 }

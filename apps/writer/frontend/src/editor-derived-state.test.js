@@ -48,6 +48,21 @@ test("derives CJK and Latin words, text blocks and structural counts in one docu
     pages: 3,
   });
   assert.equal(derived.imageCount, 1);
+  assert.deepEqual(derived.imageItems, [{ position: 29, number: 1 }]);
+});
+
+test("derives contiguous image title numbers from document order", () => {
+  const derived = computePaperDerivedState(fakeDoc([
+    [node("image"), 3],
+    [node("paragraph", { isTextblock: true, textContent: "正文" }), 5],
+    [node("image"), 12],
+    [node("image"), 20],
+  ]));
+  assert.deepEqual(derived.imageItems, [
+    { position: 3, number: 1 },
+    { position: 12, number: 2 },
+    { position: 20, number: 3 },
+  ]);
 });
 
 test("derives outline, contents and finalized boundary state", () => {

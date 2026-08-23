@@ -20,6 +20,7 @@ test("selection AI assistant keeps temporary privacy, multi-session, minimize, a
   assert.match(popoverSource, /aria-describedby="selection-ai-privacy-note"/);
   assert.match(popoverSource, /仅发送选中内容快照、你的问题和当前会话历史/);
   assert.match(popoverSource, /onCopy=\{controller\.copyReply\}/);
+  assert.match(popoverSource, /onCopy=\{copySelectionAiPlainText\}/);
   assert.match(popoverSource, /<SelectionAiMarkdown text=\{message\.content\}/);
   assert.match(markdownSource, /parseSelectionAiMarkdown/);
   assert.match(markdownSource, /bridge\.openExternal\?\.\(token\.href\)/);

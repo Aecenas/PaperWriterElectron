@@ -358,6 +358,17 @@
   background: rgba(197, 111, 66, 0.12);
 }
 
+.document-context-display-size-submenu > button small {
+  margin-left: auto;
+  color: rgba(79, 68, 56, 0.5);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.document-context-display-size-submenu .document-context-check {
+  margin-left: 0;
+}
+
 .document-context-check {
   margin-left: auto;
 }

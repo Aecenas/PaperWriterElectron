@@ -381,6 +381,30 @@ test("image references use a validated rich clipboard IPC contract", async () =>
   assert.deepEqual(JSON.parse(JSON.stringify(preload.invocations.at(-1))), ["clipboard:write-image-reference", payload]);
 });
 
+test("image preview copy uses main-renderer coordinates without forwarding the source", async () => {
+  const resourceIpc = await sourceOf("resource-ipc.cjs");
+  const handler = between(
+    resourceIpc,
+    'ipcMain.handle("clipboard:copy-image-at"',
+    'ipcMain.handle("clipboard:write-image-reference"',
+  );
+  assert.match(handler, /sender !== mainWindow\.webContents/);
+  assert.match(handler, /Number\.isInteger\(x\)/);
+  assert.match(handler, /sender\.copyImageAt\(x, y\)/);
+
+  const preload = loadPreloadApi(await sourceOf("preload.cjs"));
+  await preload.api.copyImageToClipboard({ x: 20, y: 30, src: "private-image-source" });
+  assert.deepEqual(JSON.parse(JSON.stringify(preload.invocations.at(-1))), [
+    "clipboard:copy-image-at",
+    { x: 20, y: 30 },
+  ]);
+  await preload.api.copyImageToClipboard({ x: 20.9, y: Number.NaN, src: "private-image-source" });
+  assert.deepEqual(JSON.parse(JSON.stringify(preload.invocations.at(-1))), [
+    "clipboard:copy-image-at",
+    { x: -1, y: -1 },
+  ]);
+});
+
 test("AI rich text copy uses the bounded native clipboard IPC contract", async () => {
   const resourceIpc = await sourceOf("resource-ipc.cjs");
   const handler = between(

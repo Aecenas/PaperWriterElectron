@@ -21,6 +21,7 @@ const EXPECTED_BROWSER_BRIDGE_KEYS = [
   "controlResearchWebView",
   "copyFolderPath",
   "copyImageReference",
+  "copyImageToClipboard",
   "copyResearchEntryPath",
   "copyResearchWebSelection",
   "createAiProvider",

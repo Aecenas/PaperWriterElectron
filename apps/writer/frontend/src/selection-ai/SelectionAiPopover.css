@@ -387,6 +387,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .selection-ai-message-heading > button {

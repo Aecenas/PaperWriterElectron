@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent } from "@tiptap/react";
 import {
   DEFAULT_PAGE_VIEW_STATE,
+  ContinuousScaledSurface,
   PAGE_VIEW_MODES,
   PageViewToolbar,
   PaginatedSurface,
+  continuousPageDisplayScale,
   normalizePageViewState,
   reducePageViewState,
 } from "../pagination/index.js";
@@ -68,6 +70,10 @@ export function PaperCanvas({
     && !printMode
     && !imageExportMode
     && normalizedPageViewState.mode !== PAGE_VIEW_MODES.CONTINUOUS;
+  const continuousDisplayScale = pageViewEnabled && !printMode && !imageExportMode && !paginated
+    ? continuousPageDisplayScale(normalizedPageViewState)
+    : 1;
+  const continuousDisplayScaled = Math.abs(continuousDisplayScale - 1) > 0.001;
   const layoutPageViewState = pageViewEnabled
     ? normalizedPageViewState
     : { ...normalizedPageViewState, mode: PAGE_VIEW_MODES.CONTINUOUS };
@@ -233,6 +239,11 @@ export function PaperCanvas({
       />
     </PageArticle>
   );
+  const continuousEditorSurface = continuousDisplayScaled ? (
+    <ContinuousScaledSurface scale={continuousDisplayScale}>
+      {editorSurface}
+    </ContinuousScaledSurface>
+  ) : editorSurface;
 
   return (
     <main
@@ -241,8 +252,10 @@ export function PaperCanvas({
         printMode ? "canvas print-mode" : "canvas",
         readOnly ? "read-only" : "",
         paginated ? `has-paginated-editor page-view-${normalizedPageViewState.mode}` : "",
+        continuousDisplayScaled ? "has-continuous-page-scale" : "",
         className,
       ].filter(Boolean).join(" ")}
+      data-page-display-scale={continuousDisplayScale}
       onPointerDown={onActivate}
       onFocusCapture={onActivate}
       onContextMenu={(event) => {
@@ -294,7 +307,7 @@ export function PaperCanvas({
             onPageMapChange={handlePageMapChange}
             onStateChange={handlePageViewStateChange}
           >
-            {editorSurface}
+            {paginated ? editorSurface : continuousEditorSurface}
           </PaginatedSurface>
         ) : (
           editorSurface
