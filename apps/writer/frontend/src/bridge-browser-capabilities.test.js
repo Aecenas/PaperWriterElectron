@@ -608,7 +608,7 @@ test("browser bridge exposes the desktop feature surface with explicit browser f
     "onResearchSearchProgress", "translateResearchContent", "cancelResearchTranslation", "onResearchTranslationProgress",
     "showResearchWebView", "updateResearchWebViewBounds", "hideResearchWebView", "controlResearchWebView",
     "destroyResearchWebView", "onResearchWebViewState",
-    "writeClipboardContent",
+    "writeClipboardContent", "copyImageToClipboard",
     "setFullscreen", "getFullscreen", "onFullscreenChanged", "onWorkspaceChanged", "onWindowFocus", "onWindowBlur",
   ]) {
     assert.equal(typeof browserBridge[capability], "function", capability);

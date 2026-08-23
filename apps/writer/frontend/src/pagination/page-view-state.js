@@ -9,6 +9,20 @@ export const PAGE_ZOOM_MODES = Object.freeze({
   CUSTOM: "custom",
 });
 
+export const PAGE_DISPLAY_SIZES = Object.freeze({
+  SMALL: "small",
+  MEDIUM: "medium",
+  LARGE: "large",
+  EXTRA_LARGE: "extra-large",
+});
+
+export const PAGE_DISPLAY_SIZE_OPTIONS = Object.freeze([
+  Object.freeze({ value: PAGE_DISPLAY_SIZES.SMALL, label: "小", zoom: 0.75 }),
+  Object.freeze({ value: PAGE_DISPLAY_SIZES.MEDIUM, label: "中", zoom: 1 }),
+  Object.freeze({ value: PAGE_DISPLAY_SIZES.LARGE, label: "大", zoom: 1.25 }),
+  Object.freeze({ value: PAGE_DISPLAY_SIZES.EXTRA_LARGE, label: "极大", zoom: 1.5 }),
+]);
+
 export const DEFAULT_PAGE_VIEW_STATE = Object.freeze({
   mode: PAGE_VIEW_MODES.CONTINUOUS,
   currentPage: 1,
@@ -47,6 +61,46 @@ export function normalizePageViewState(value, pageCount) {
     zoomMode,
     zoom: clampZoom(source.zoom),
   };
+}
+
+export function pageDisplaySizeForState(value) {
+  const state = normalizePageViewState(value);
+  if (state.zoomMode === PAGE_ZOOM_MODES.FIT) return PAGE_DISPLAY_SIZES.MEDIUM;
+  return PAGE_DISPLAY_SIZE_OPTIONS.find((option) => (
+    Math.abs(option.zoom - state.zoom) < 0.001
+  ))?.value || "";
+}
+
+export function pageDisplaySizeLabel(value) {
+  const state = normalizePageViewState(value);
+  const size = pageDisplaySizeForState(state);
+  if (size) {
+    return PAGE_DISPLAY_SIZE_OPTIONS.find((option) => option.value === size)?.label || "中";
+  }
+  return `${Math.round(state.zoom * 100)}%`;
+}
+
+export function applyPageDisplaySize(value, displaySize, pageCount) {
+  const state = normalizePageViewState(value, pageCount);
+  const option = PAGE_DISPLAY_SIZE_OPTIONS.find((item) => item.value === displaySize);
+  if (!option) return state;
+  if (option.value === PAGE_DISPLAY_SIZES.MEDIUM) {
+    return {
+      ...state,
+      zoomMode: PAGE_ZOOM_MODES.FIT,
+      zoom: 1,
+    };
+  }
+  return {
+    ...state,
+    zoomMode: PAGE_ZOOM_MODES.CUSTOM,
+    zoom: option.zoom,
+  };
+}
+
+export function continuousPageDisplayScale(value) {
+  const state = normalizePageViewState(value);
+  return state.zoomMode === PAGE_ZOOM_MODES.FIT ? 1 : state.zoom;
 }
 
 export function spreadStartPage(currentPage, pageCount) {

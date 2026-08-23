@@ -3,15 +3,26 @@ import {
   Check,
   ChevronRight,
   Columns2,
+  Expand,
   FileClock,
   LayoutTemplate,
+  Maximize2,
+  Minimize2,
   PanelLeft,
   PanelRight,
   Rows3,
   ScrollText,
+  Square,
   X,
 } from "lucide-react";
-import { PAGE_VIEW_MODES } from "./pagination/index.js";
+import {
+  PAGE_DISPLAY_SIZES,
+  PAGE_DISPLAY_SIZE_OPTIONS,
+  PAGE_VIEW_MODES,
+  normalizePageViewState,
+  pageDisplaySizeForState,
+  pageDisplaySizeLabel,
+} from "./pagination/index.js";
 
 const MENU_WIDTH = 184;
 const SUBMENU_WIDTH = 196;
@@ -37,14 +48,23 @@ const PAGE_OPTIONS = [
   { mode: PAGE_VIEW_MODES.SPREAD, label: "双页", icon: Columns2 },
 ];
 
+const DISPLAY_SIZE_ICONS = Object.freeze({
+  [PAGE_DISPLAY_SIZES.SMALL]: Minimize2,
+  [PAGE_DISPLAY_SIZES.MEDIUM]: Square,
+  [PAGE_DISPLAY_SIZES.LARGE]: Maximize2,
+  [PAGE_DISPLAY_SIZES.EXTRA_LARGE]: Expand,
+});
+
 export default function DocumentContextMenu({
   menu,
   title = "当前信笺",
   pageViewMode = PAGE_VIEW_MODES.CONTINUOUS,
+  pageViewState,
   moveTarget = "",
   moveAllowed = true,
   includeClose = true,
   onSetPageViewMode,
+  onSetDisplaySize,
   onOpenHistory,
   onOpenTemplate,
   onMove,
@@ -54,11 +74,25 @@ export default function DocumentContextMenu({
   const menuRef = useRef(null);
   const pageViewButtonRef = useRef(null);
   const pageViewMenuRef = useRef(null);
+  const displaySizeButtonRef = useRef(null);
+  const displaySizeMenuRef = useRef(null);
   const onDismissRef = useRef(onDismiss);
-  const [pageViewOpen, setPageViewOpen] = useState(false);
+  const [openSubmenu, setOpenSubmenu] = useState("");
+  const normalizedPageViewState = useMemo(() => normalizePageViewState(
+    pageViewState || { mode: pageViewMode },
+  ), [pageViewMode, pageViewState]);
+  const resolvedPageViewMode = normalizedPageViewState.mode;
+  const activeDisplaySize = useMemo(
+    () => pageDisplaySizeForState(normalizedPageViewState),
+    [normalizedPageViewState],
+  );
+  const activeDisplaySizeLabel = useMemo(
+    () => pageDisplaySizeLabel(normalizedPageViewState),
+    [normalizedPageViewState],
+  );
   const activePageOption = useMemo(() => (
-    PAGE_OPTIONS.find((option) => option.mode === pageViewMode) || PAGE_OPTIONS[0]
-  ), [pageViewMode]);
+    PAGE_OPTIONS.find((option) => option.mode === resolvedPageViewMode) || PAGE_OPTIONS[0]
+  ), [resolvedPageViewMode]);
 
   useEffect(() => {
     onDismissRef.current = onDismiss;
@@ -66,7 +100,7 @@ export default function DocumentContextMenu({
 
   useEffect(() => {
     if (!menu) return undefined;
-    setPageViewOpen(false);
+    setOpenSubmenu("");
     const close = (event) => {
       if (event?.type === "keydown" && event.key !== "Escape") return;
       onDismissRef.current?.();
@@ -90,16 +124,18 @@ export default function DocumentContextMenu({
     action?.();
   };
 
-  const openPageViewMenu = (focusFirst = false) => {
-    setPageViewOpen(true);
+  const openNestedMenu = (name, focusFirst = false) => {
+    setOpenSubmenu(name);
     if (focusFirst) {
       window.requestAnimationFrame(() => {
-        pageViewMenuRef.current?.querySelector("button:not(:disabled)")?.focus({ preventScroll: true });
+        const target = name === "page-view" ? pageViewMenuRef.current : displaySizeMenuRef.current;
+        target?.querySelector("button:not(:disabled)")?.focus({ preventScroll: true });
       });
     }
   };
 
   const ActivePageIcon = activePageOption.icon;
+  const ActiveDisplaySizeIcon = DISPLAY_SIZE_ICONS[activeDisplaySize] || Square;
 
   return (
     <div
@@ -116,21 +152,21 @@ export default function DocumentContextMenu({
     >
       <div
         className="document-context-view-shell"
-        onPointerEnter={() => openPageViewMenu(false)}
-        onPointerLeave={() => setPageViewOpen(false)}
+        onPointerEnter={() => openNestedMenu("page-view", false)}
+        onPointerLeave={() => setOpenSubmenu("")}
       >
         <button
           ref={pageViewButtonRef}
           type="button"
           role="menuitem"
           aria-haspopup="menu"
-          aria-expanded={pageViewOpen}
+          aria-expanded={openSubmenu === "page-view"}
           aria-label={`页面视图，当前${activePageOption.label}`}
-          onClick={() => openPageViewMenu(false)}
+          onClick={() => openNestedMenu("page-view", false)}
           onKeyDown={(event) => {
             if (event.key === "ArrowRight") {
               event.preventDefault();
-              openPageViewMenu(true);
+              openNestedMenu("page-view", true);
             }
           }}
         >
@@ -139,7 +175,7 @@ export default function DocumentContextMenu({
           <small>{activePageOption.label}</small>
           <ChevronRight size={14} aria-hidden="true" />
         </button>
-        {pageViewOpen ? (
+        {openSubmenu === "page-view" ? (
           <div
             ref={pageViewMenuRef}
             className={`document-context-view-submenu${menu.openSubmenuLeft ? " opens-left" : ""}`}
@@ -148,14 +184,14 @@ export default function DocumentContextMenu({
             onKeyDown={(event) => {
               if (event.key === "ArrowLeft") {
                 event.preventDefault();
-                setPageViewOpen(false);
+                setOpenSubmenu("");
                 pageViewButtonRef.current?.focus({ preventScroll: true });
               }
             }}
           >
             {PAGE_OPTIONS.map((option) => {
               const Icon = option.icon;
-              const selected = pageViewMode === option.mode;
+              const selected = resolvedPageViewMode === option.mode;
               return (
                 <button
                   key={option.mode}
@@ -174,6 +210,72 @@ export default function DocumentContextMenu({
           </div>
         ) : null}
       </div>
+
+      {onSetDisplaySize ? (
+        <div
+          className="document-context-view-shell document-context-display-size-shell"
+          onPointerEnter={() => openNestedMenu("display-size", false)}
+          onPointerLeave={() => setOpenSubmenu("")}
+        >
+          <button
+            ref={displaySizeButtonRef}
+            type="button"
+            role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={openSubmenu === "display-size"}
+            aria-label={`显示大小，当前${activeDisplaySizeLabel}`}
+            onClick={() => openNestedMenu("display-size", false)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowRight") {
+                event.preventDefault();
+                openNestedMenu("display-size", true);
+              }
+            }}
+          >
+            <ActiveDisplaySizeIcon size={16} aria-hidden="true" />
+            <span>显示大小</span>
+            <small>{activeDisplaySizeLabel}</small>
+            <ChevronRight size={14} aria-hidden="true" />
+          </button>
+          {openSubmenu === "display-size" ? (
+            <div
+              ref={displaySizeMenuRef}
+              className={`document-context-view-submenu document-context-display-size-submenu${menu.openSubmenuLeft ? " opens-left" : ""}`}
+              role="menu"
+              aria-label="正文显示大小"
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  setOpenSubmenu("");
+                  displaySizeButtonRef.current?.focus({ preventScroll: true });
+                }
+              }}
+            >
+              {PAGE_DISPLAY_SIZE_OPTIONS.map((option) => {
+                const Icon = DISPLAY_SIZE_ICONS[option.value] || Square;
+                const selected = activeDisplaySize === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={selected ? "is-active" : ""}
+                    role="menuitemradio"
+                    aria-checked={selected}
+                    onClick={() => run(() => onSetDisplaySize?.(option.value))}
+                  >
+                    <Icon size={15} aria-hidden="true" />
+                    <span>{option.label}</span>
+                    <small>{option.value === PAGE_DISPLAY_SIZES.MEDIUM
+                      ? (resolvedPageViewMode === PAGE_VIEW_MODES.CONTINUOUS ? "100%" : "适合窗口")
+                      : `${Math.round(option.zoom * 100)}%`}</small>
+                    {selected ? <Check className="document-context-check" size={13} aria-hidden="true" /> : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <span className="document-context-divider" role="separator" />
 

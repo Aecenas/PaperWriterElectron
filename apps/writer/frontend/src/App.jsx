@@ -256,6 +256,7 @@ import {
 import {
   PAGE_VIEW_MODES,
   PAGE_ZOOM_MODES,
+  applyPageDisplaySize,
   createPageViewSessionStore,
 } from "./pagination/index.js";
 import {
@@ -1093,7 +1094,6 @@ export default function App() {
       updatePageViewStateForTab(activeTabId, {
         ...current,
         mode: PAGE_VIEW_MODES.CONTINUOUS,
-        zoomMode: PAGE_ZOOM_MODES.FIT,
       });
     }
     setDocumentContextMenu(null);
@@ -3019,7 +3019,6 @@ export default function App() {
     updatePageViewStateForTab(tabId, {
       ...current,
       mode,
-      zoomMode: PAGE_ZOOM_MODES.FIT,
     });
   }, [
     getPageViewStateForTab,
@@ -3028,6 +3027,13 @@ export default function App() {
     setActivePane,
     updatePageViewStateForTab,
   ]);
+
+  const handleSetDocumentDisplaySize = useCallback((view, displaySize) => {
+    const tabId = String(view?.tabId || "");
+    if (!tabId) return;
+    const current = getPageViewStateForTab(tabId);
+    updatePageViewStateForTab(tabId, applyPageDisplaySize(current, displaySize));
+  }, [getPageViewStateForTab, updatePageViewStateForTab]);
 
   const handleOpenDocumentHistory = useCallback((
     tabId = activeWorkTabId,
@@ -5139,6 +5145,7 @@ export default function App() {
                   onOpenTemplatePicker={handleOpenGroupTabTemplate}
                   onOpenHistory={handleOpenDocumentHistory}
                   onSetPageViewMode={handleSetDocumentPageViewMode}
+                  onSetDisplaySize={handleSetDocumentDisplaySize}
                   getPageViewState={getPageViewStateForTab}
                   canMoveDocument={(view, targetGroupId) => (
                     workspaceGroups.primary.views.length > 1
@@ -5161,6 +5168,7 @@ export default function App() {
                   onOpenTemplatePicker={handleOpenGroupTabTemplate}
                   onOpenHistory={handleOpenDocumentHistory}
                   onSetPageViewMode={handleSetDocumentPageViewMode}
+                  onSetDisplaySize={handleSetDocumentDisplaySize}
                   getPageViewState={getPageViewStateForTab}
                 />
               </div>
@@ -5178,6 +5186,7 @@ export default function App() {
                 onOpenTemplatePicker={handleOpenGroupTabTemplate}
                 onOpenHistory={handleOpenDocumentHistory}
                 onSetPageViewMode={handleSetDocumentPageViewMode}
+                onSetDisplaySize={handleSetDocumentDisplaySize}
                 getPageViewState={getPageViewStateForTab}
                 canMoveDocument={(view, targetGroupId) => (
                   workspaceGroups.primary.views.length > 1
@@ -5509,6 +5518,9 @@ export default function App() {
       <DocumentContextMenu
         menu={!aiMode && documentContextTargetTab && documentContextTargetView ? documentContextMenu : null}
         title={documentContextTargetTab?.title || "当前信笺"}
+        pageViewState={documentContextTargetTab
+          ? getPageViewStateForTab(documentContextTargetTab.id)
+          : undefined}
         pageViewMode={documentContextTargetTab
           ? getPageViewStateForTab(documentContextTargetTab.id).mode
           : PAGE_VIEW_MODES.CONTINUOUS}
@@ -5522,6 +5534,10 @@ export default function App() {
           mode,
           documentContextMenu?.groupId,
         )}
+        onSetDisplaySize={(displaySize) => handleSetDocumentDisplaySize({
+          ...documentContextTargetView,
+          tabId: documentContextTargetTab?.id,
+        }, displaySize)}
         onOpenHistory={() => handleOpenDocumentHistory(
           documentContextTargetTab?.id,
           documentContextMenu?.groupId === WORKSPACE_GROUP_ID.SECONDARY

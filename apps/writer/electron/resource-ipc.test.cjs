@@ -11,6 +11,7 @@ const RESOURCE_CHANNELS = [
   "asset:pick-audio",
   "asset:pick-image",
   "asset:pick-video",
+  "clipboard:copy-image-at",
   "clipboard:write-content",
   "clipboard:write-image-reference",
   "external:open",
@@ -22,18 +23,33 @@ function hasOwn(value, key) {
 
 function createHarness(options = {}) {
   const handlers = new Map();
-  const mainWindow = { id: "main-window" };
+  let destroyed = false;
   const dialogResults = [...(options.dialogResults || [{
     canceled: false,
     filePaths: ["C:\\media\\asset.png"],
   }])];
   const calls = {
     clipboardWrites: [],
+    copiedImagePoints: [],
     mimePaths: [],
     openDialogs: [],
     openExternal: [],
     stages: [],
     stats: [],
+  };
+  const webContents = {
+    copyImageAt(x, y) {
+      if (options.copyImageError) throw options.copyImageError;
+      calls.copiedImagePoints.push([x, y]);
+    },
+    isDestroyed() {
+      return destroyed;
+    },
+  };
+  const mainWindow = {
+    id: "main-window",
+    webContents,
+    getContentSize: () => options.contentSize || [1200, 800],
   };
   const stagedAssetStore = {
     async stage(...args) {
@@ -125,6 +141,10 @@ function createHarness(options = {}) {
     mainWindow,
     stagedAssetStore,
     state,
+    webContents,
+    setDestroyed(value) {
+      destroyed = Boolean(value);
+    },
   };
 }
 
@@ -331,6 +351,32 @@ test("rich clipboard content rejects empty input and applies exact text and HTML
 
   assert.deepEqual(await write({}, { text: "plain" }), { ok: true });
   assert.deepEqual(harness.calls.clipboardWrites[1], { text: "plain" });
+});
+
+test("image clipboard copies only a bounded point from the main renderer", async () => {
+  const harness = createHarness();
+  const copy = harness.handlers.get("clipboard:copy-image-at");
+
+  assert.deepEqual(
+    await copy({ sender: harness.webContents }, { x: 420, y: 360 }),
+    { ok: true },
+  );
+  assert.deepEqual(harness.calls.copiedImagePoints, [[420, 360]]);
+
+  for (const [event, payload] of [
+    [{ sender: {} }, { x: 420, y: 360 }],
+    [{ sender: harness.webContents }, { x: -1, y: 360 }],
+    [{ sender: harness.webContents }, { x: 1200, y: 360 }],
+    [{ sender: harness.webContents }, { x: 420.5, y: 360 }],
+  ]) {
+    assert.deepEqual(await copy(event, payload), { ok: false, message: "图片复制位置无效" });
+  }
+  harness.setDestroyed(true);
+  assert.deepEqual(
+    await copy({ sender: harness.webContents }, { x: 420, y: 360 }),
+    { ok: false, message: "图片复制位置无效" },
+  );
+  assert.deepEqual(harness.calls.copiedImagePoints, [[420, 360]]);
 });
 
 test("image-reference clipboard validates UUIDs, normalizes case, and clamps numbering", async () => {

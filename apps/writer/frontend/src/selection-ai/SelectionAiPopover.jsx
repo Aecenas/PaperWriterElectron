@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { SELECTION_AI_MAX_QUESTION_CHARS } from "./protocol.js";
+import { copySelectionAiPlainText } from "./clipboard.js";
 import { SelectionAiMarkdown } from "./SelectionAiMarkdown.jsx";
 import "./SelectionAiPopover.css";
 
@@ -727,6 +728,7 @@ export function SelectionAiPopover({
         className="selection-ai-messages"
         role="tabpanel"
         aria-busy={isStreaming}
+        onCopy={copySelectionAiPlainText}
       >
         {session.messages?.length ? session.messages.map((message) => (
           <SelectionAiMessage

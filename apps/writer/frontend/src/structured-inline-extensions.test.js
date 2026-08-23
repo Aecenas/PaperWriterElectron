@@ -186,7 +186,7 @@ test("the copy-reference control is gated by both image-caption template flags",
   const pageArticle = fs.readFileSync(new URL("./editor/PageArticle.jsx", import.meta.url), "utf8");
   const css = readAppStylesSync();
   assert.match(paperNodes, /className="image-copy-reference"/);
-  assert.match(paperNodes, /<ClipboardCopy size=\{14\} aria-hidden="true" \/>/);
+  assert.match(paperNodes, /<Link2 size=\{14\} aria-hidden="true" \/>/);
   assert.doesNotMatch(paperNodes, /<span>引用<\/span>/);
   assert.match(paperNodes, /className="image-delete is-danger"[\s\S]*aria-label="删除图片"[\s\S]*onClick=\{\(\) => deleteNode\?\.\(\)\}/);
   assert.equal(paperCanvasViewModel({ documentId: DOCUMENT_ONE }).documentId, DOCUMENT_ONE);

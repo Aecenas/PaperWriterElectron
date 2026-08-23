@@ -15,10 +15,15 @@ import {
 } from "./pagination/page-layout-registry.js";
 import {
   DEFAULT_PAGE_VIEW_STATE,
+  PAGE_DISPLAY_SIZES,
   PAGE_VIEW_MODES,
+  applyPageDisplaySize,
   clampZoom,
+  continuousPageDisplayScale,
   createPageViewSessionStore,
   normalizePageViewState,
+  pageDisplaySizeForState,
+  pageDisplaySizeLabel,
   pageGroupStartIndex,
   reducePageViewState,
   spreadStartPage,
@@ -60,6 +65,33 @@ test("page reducer navigates spread groups while clamping boundaries", () => {
   assert.equal(reducePageViewState({ ...state, currentPage: 9 }, { type: "next" }, 9).currentPage, 9);
 });
 
+test("page display presets map fit and fixed zooms without entering document data", () => {
+  const fit = applyPageDisplaySize(DEFAULT_PAGE_VIEW_STATE, PAGE_DISPLAY_SIZES.MEDIUM);
+  const small = applyPageDisplaySize(fit, PAGE_DISPLAY_SIZES.SMALL);
+  const large = applyPageDisplaySize(fit, PAGE_DISPLAY_SIZES.LARGE);
+  const extraLarge = applyPageDisplaySize(fit, PAGE_DISPLAY_SIZES.EXTRA_LARGE);
+  assert.deepEqual(
+    [small.zoom, fit.zoom, large.zoom, extraLarge.zoom],
+    [0.75, 1, 1.25, 1.5],
+  );
+  assert.equal(fit.zoomMode, "fit");
+  assert.equal(small.zoomMode, "custom");
+  assert.equal(pageDisplaySizeForState(small), PAGE_DISPLAY_SIZES.SMALL);
+  assert.equal(pageDisplaySizeForState(fit), PAGE_DISPLAY_SIZES.MEDIUM);
+  assert.equal(pageDisplaySizeForState(large), PAGE_DISPLAY_SIZES.LARGE);
+  assert.equal(pageDisplaySizeForState(extraLarge), PAGE_DISPLAY_SIZES.EXTRA_LARGE);
+  assert.equal(continuousPageDisplayScale(fit), 1);
+  assert.equal(continuousPageDisplayScale(extraLarge), 1.5);
+});
+
+test("custom page zooms keep their percentage and invalid presets leave state normalized", () => {
+  const custom = normalizePageViewState({ zoomMode: "custom", zoom: 1.1 });
+  assert.equal(pageDisplaySizeForState(custom), "");
+  assert.equal(pageDisplaySizeLabel(custom), "110%");
+  assert.deepEqual(applyPageDisplaySize(custom, "unknown"), custom);
+  assert.equal(pageDisplaySizeLabel({ zoomMode: "broken", zoom: 9 }), "中");
+});
+
 test("per-tab page state persists only in the supplied session store", () => {
   const memory = new Map();
   const storage = {
@@ -76,7 +108,9 @@ test("per-tab page state persists only in the supplied session store", () => {
   const second = createPageViewSessionStore({ storage });
   assert.equal(second.get("tab-a", 5).currentPage, 3);
   assert.equal(second.get("tab-a", 5).mode, PAGE_VIEW_MODES.SINGLE);
+  assert.equal(pageDisplaySizeLabel(second.get("tab-a", 5)), "120%");
   assert.equal(second.get("tab-b", 5).mode, PAGE_VIEW_MODES.CONTINUOUS);
+  assert.equal(pageDisplaySizeForState(second.get("tab-b", 5)), PAGE_DISPLAY_SIZES.MEDIUM);
 });
 
 test("page geometry keeps every coordinate inside its A4 content column", () => {
@@ -231,7 +265,12 @@ test("application integration keeps one EditorContent and stores page view outsi
   assert.match(appSource, /pageViewState=\{rightPageViewState\}/);
   assert.equal((canvasSource.match(/<EditorContent editor=\{editor\} \/>/g) || []).length, 1);
   assert.match(canvasSource, /normalizedPageViewState\.mode !== PAGE_VIEW_MODES\.CONTINUOUS/);
-  assert.match(canvasSource, /<PaginatedSurface[\s\S]*?\{editorSurface\}/);
+  assert.match(canvasSource, /continuousPageDisplayScale\(normalizedPageViewState\)/);
+  assert.match(canvasSource, /pageViewEnabled && !printMode && !imageExportMode && !paginated/);
+  assert.match(canvasSource, /<ContinuousScaledSurface scale=\{continuousDisplayScale\}>/);
+  assert.match(canvasSource, /continuousDisplayScaled \? "has-continuous-page-scale"/);
+  assert.match(canvasSource, /data-page-display-scale=\{continuousDisplayScale\}/);
+  assert.match(canvasSource, /<PaginatedSurface[\s\S]*?\{paginated \? editorSurface : continuousEditorSurface\}/);
   assert.match(canvasSource, /<PageViewToolbar[\s\S]*?showModes=\{false\}/);
   assert.match(canvasSource, /collapsed=\{pageToolbarCollapsed\}/);
   assert.match(canvasSource, /contextMenuEnabled = true/);
@@ -271,6 +310,23 @@ test("opening the secondary workspace changes a primary spread to single-page mo
   assert.match(modeHandler, /handleMoveGroupDocument\(view\.viewId, WORKSPACE_GROUP_ID\.PRIMARY, null\)/);
   assert.doesNotMatch(appSource, /workspaceGroups\.primary\.views\.length > 1\s*&& !mainSpreadViewActive/);
   assert.doesNotMatch(modeHandler, /destroyResearchWebView|closeWorkspaceGroupView|removeTab/);
+});
+
+test("display presets persist across page modes and AI only suppresses their rendering", async () => {
+  const appSource = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
+  const sizeHandler = appSource.match(
+    /const handleSetDocumentDisplaySize[\s\S]*?\n  \}, \[getPageViewStateForTab, updatePageViewStateForTab\]\);/,
+  )?.[0] || "";
+  const modeHandler = appSource.match(
+    /const handleSetDocumentPageViewMode[\s\S]*?\n  \]\);/,
+  )?.[0] || "";
+  const aiViewEffect = appSource.match(
+    /useEffect\(\(\) => \{\n    if \(!aiMode \|\| !activeTabId\) return;[\s\S]*?\n  \],\n  \);/,
+  )?.[0] || "";
+  assert.match(sizeHandler, /applyPageDisplaySize\(current, displaySize\)/);
+  assert.doesNotMatch(sizeHandler, /handleSelectGroupView|handleMoveGroupDocument/);
+  assert.doesNotMatch(modeHandler, /zoomMode:/);
+  assert.doesNotMatch(aiViewEffect, /zoomMode:/);
 });
 
 test("export registry flushes the live layout and unregisters without document state", async () => {

@@ -20,6 +20,7 @@ import { pickImportDocumentInBrowser } from "./document-import.js";
 import { createBrowserEditableExport, downloadBrowserBlob } from "./document-export.js";
 import { browserEvents } from "./events.js";
 import { openBrowserExternal } from "./external.js";
+import { normalizeImageSource } from "../resource-safety.js";
 
 const browserExportProgressListeners = new Set();
 const canceledBrowserSearches = new Set();
@@ -30,6 +31,36 @@ function emitBrowserExportProgress(payload) {
 
 function waitForBrowserPreview(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function browserImagePngBlob(sourceValue) {
+  const source = normalizeImageSource(sourceValue);
+  if (!source) throw new Error("图片资源地址无效");
+  const image = await new Promise((resolve, reject) => {
+    const candidate = new globalThis.Image();
+    candidate.decoding = "async";
+    candidate.addEventListener("load", () => resolve(candidate), { once: true });
+    candidate.addEventListener("error", () => reject(new Error("图片读取失败")), { once: true });
+    candidate.src = source;
+  });
+  const width = Math.max(0, Number(image.naturalWidth) || 0);
+  const height = Math.max(0, Number(image.naturalHeight) || 0);
+  if (!width || !height || width > 16_384 || height > 16_384 || width * height > 40_000_000) {
+    throw new Error("图片尺寸过大，无法安全复制");
+  }
+  const canvas = globalThis.document?.createElement?.("canvas");
+  if (!canvas) throw new Error("当前环境无法转换图片");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("当前环境无法转换图片");
+  context.drawImage(image, 0, 0, width, height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob?.type === "image/png") resolve(blob);
+      else reject(new Error("图片转换失败"));
+    }, "image/png");
+  });
 }
 
 function createBrowserDocumentWorkspaceApi() {
@@ -203,6 +234,18 @@ function createBrowserDocumentWorkspaceApi() {
       if (!navigator.clipboard?.writeText) throw new Error("当前环境不支持写入剪贴板");
       await navigator.clipboard.writeText(text);
       return { ok: true, plainTextOnly: Boolean(html) };
+    },
+    copyImageToClipboard: async (payload = {}) => {
+      if (typeof navigator.clipboard?.write !== "function" || typeof globalThis.ClipboardItem !== "function") {
+        return { ok: false, message: "当前浏览器不支持复制图片到系统剪贴板" };
+      }
+      try {
+        const png = await browserImagePngBlob(payload.src);
+        await navigator.clipboard.write([new globalThis.ClipboardItem({ "image/png": png })]);
+        return { ok: true, browserOnly: true };
+      } catch (error) {
+        return { ok: false, message: error?.message || "图片复制失败" };
+      }
     },
     showFolder: async () => ({ ok: false }),
     createFolder: async () => ({ ok: false, canceled: true }),

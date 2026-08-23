@@ -167,6 +167,36 @@ function registerResourceIpcHandlers({
     return { ok: true };
   });
 
+  ipcMain.handle("clipboard:copy-image-at", async (event, payload = {}) => {
+    const mainWindow = getMainWindow();
+    const sender = event?.sender;
+    const x = payload?.x;
+    const y = payload?.y;
+    const contentSize = mainWindow?.getContentSize?.() || [];
+    const contentWidth = Number(contentSize[0]) || 0;
+    const contentHeight = Number(contentSize[1]) || 0;
+    if (
+      !mainWindow
+      || sender !== mainWindow.webContents
+      || sender?.isDestroyed?.()
+      || !Number.isInteger(x)
+      || !Number.isInteger(y)
+      || x < 0
+      || y < 0
+      || x >= contentWidth
+      || y >= contentHeight
+      || typeof sender.copyImageAt !== "function"
+    ) {
+      return { ok: false, message: "图片复制位置无效" };
+    }
+    try {
+      sender.copyImageAt(x, y);
+      return { ok: true };
+    } catch {
+      return { ok: false, message: "图片复制失败" };
+    }
+  });
+
   ipcMain.handle("clipboard:write-image-reference", async (_event, payload = {}) => {
     const documentId = safeClipboardUuid(payload?.documentId);
     const imageId = safeClipboardUuid(payload?.imageId);

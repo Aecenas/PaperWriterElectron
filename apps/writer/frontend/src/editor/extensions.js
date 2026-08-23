@@ -16,6 +16,7 @@ import { createStructuredInlineExtensions } from "../structured-inline-extension
 import { createProfessionalContentExtensions } from "./professional-content-extensions.js";
 import { WritingAssistanceDecorations } from "../writing-assistance/extension.js";
 import { DEFAULT_UNDERLINE_STYLE, normalizeUnderlineStyle } from "./formatting.js";
+import { EnglishHyphenationDecorations } from "./english-hyphenation.js";
 import {
   PaperFinalizedBreak,
   PaperHorizontalRule,
@@ -96,6 +97,7 @@ export function createPaperEditorExtensions() {
     AiApplyPreviewDecorations,
     DocumentCommentDecorations,
     WritingAssistanceDecorations,
+    EnglishHyphenationDecorations,
     TextAlign.configure({ types: ["heading", "paragraph"] }),
     Placeholder.configure({ placeholder: "在这里开始写。" }),
   ];

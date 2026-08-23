@@ -57,6 +57,7 @@ export default function GroupTabStrip({
   onOpenTemplatePicker,
   onOpenHistory,
   onSetPageViewMode,
+  onSetDisplaySize,
   getPageViewState,
   canMoveDocument,
 }) {
@@ -210,11 +211,14 @@ export default function GroupTabStrip({
         <DocumentContextMenu
           menu={contextMenu}
           title={viewLabel(contextView)}
-          pageViewMode={getPageViewState?.(contextView.tabId)?.mode}
+          pageViewState={getPageViewState?.(contextView.tabId)}
           moveTarget={contextView.kind === "document" ? otherGroup : ""}
           moveAllowed={moveAllowed}
           onSetPageViewMode={contextView.kind === "document"
             ? ((mode) => onSetPageViewMode?.(contextView, mode, groupId))
+            : undefined}
+          onSetDisplaySize={contextView.kind === "document"
+            ? ((displaySize) => onSetDisplaySize?.(contextView, displaySize, groupId))
             : undefined}
           onOpenHistory={contextView.kind === "document"
             ? (() => {

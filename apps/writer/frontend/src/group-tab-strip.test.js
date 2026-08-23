@@ -50,13 +50,17 @@ test("group tab strip opens a separate template picker from the context menu", (
   assert.doesNotMatch(source, /role="menuitemradio"|group-tab-template-/);
 });
 
-test("document context menu stays keyboard-visible and shares page-view controls", () => {
+test("document context menu stays keyboard-visible and shares page-view and display-size controls", () => {
   assert.match(contextMenuSource, /MENU_WIDTH\s*=\s*184/);
   assert.match(contextMenuSource, /className={`document-context-view-submenu/);
   assert.match(contextMenuSource, /aria-haspopup="menu"/);
   assert.match(contextMenuSource, /role="menuitemradio"/);
-  assert.match(contextMenuSource, /onClick=\{\(\) => openPageViewMenu\(false\)\}/);
-  assert.match(contextMenuSource, /onPointerEnter=\{\(\) => openPageViewMenu\(false\)\}[\s\S]*?onPointerLeave=\{\(\) => setPageViewOpen\(false\)\}/);
+  assert.match(contextMenuSource, /openNestedMenu\("page-view", false\)/);
+  assert.match(contextMenuSource, /openNestedMenu\("display-size", false\)/);
+  assert.match(contextMenuSource, /aria-label={`显示大小，当前\$\{activeDisplaySizeLabel\}`}/);
+  assert.match(contextMenuSource, /aria-label="正文显示大小"/);
+  assert.match(contextMenuSource, /PAGE_DISPLAY_SIZE_OPTIONS\.map/);
+  assert.match(contextMenuSource, /onKeyDown=\{\(event\) => \{[\s\S]*?event\.key === "ArrowLeft"/);
   assert.match(contextMenuSource, /onDismissRef\.current\?\.\(\)/);
   assert.match(contextMenuSource, /\}, \[menu\]\);/);
   assert.match(contextMenuSource, /版本历史/);
@@ -64,8 +68,18 @@ test("document context menu stays keyboard-visible and shares page-view controls
   assert.match(styles, /\.document-context-view-submenu\s*\{[^}]*width:\s*196px/s);
   assert.match(styles, /\.document-context-view-submenu::before\s*\{[^}]*left:\s*-7px[^}]*width:\s*7px/s);
   assert.match(styles, /\.document-context-view-submenu\.opens-left::before\s*\{[^}]*right:\s*-7px[^}]*left:\s*auto/s);
+  assert.match(styles, /\.document-context-display-size-submenu > button small\s*\{/);
   assert.match(styles, /\.document-context-menu > button:focus-visible[\s\S]*?box-shadow:/s);
   assert.doesNotMatch(styles, /\.group-tab-template-|--group-tab-template-swatch/);
+});
+
+test("tab display size targets its own page-view state without activating the tab", () => {
+  assert.match(source, /pageViewState=\{getPageViewState\?\.\(contextView\.tabId\)\}/);
+  assert.match(source, /onSetDisplaySize\?\.\(contextView, displaySize, groupId\)/);
+  const displayCallback = source.match(
+    /onSetDisplaySize=\{contextView\.kind === "document"[\s\S]*?: undefined\}/,
+  )?.[0] || "";
+  assert.doesNotMatch(displayCallback, /onActivate|onSelect|onMoveDocument/);
 });
 
 test("tab history remembers the invoking tab for modal focus return", () => {

@@ -2,6 +2,7 @@ export const EMPTY_PAPER_DERIVED_STATE = Object.freeze({
   stats: Object.freeze({ words: 0, paragraphs: 0, images: 0, quotes: 0, pageBreaks: 0, pages: 1 }),
   outlineItems: Object.freeze([]),
   headingItems: Object.freeze([]),
+  imageItems: Object.freeze([]),
   tableOfContentsPositions: Object.freeze([]),
   hasFinalizedBreak: false,
   hasTableOfContents: false,
@@ -12,6 +13,7 @@ export function computePaperDerivedState(doc) {
   if (!doc?.descendants) return EMPTY_PAPER_DERIVED_STATE;
   const outlineItems = [];
   const headingItems = [];
+  const imageItems = [];
   const tableOfContentsPositions = [];
   let lastTextEnd = null;
   let words = 0;
@@ -49,7 +51,10 @@ export function computePaperDerivedState(doc) {
       return;
     }
     if (node.isTextblock && node.textContent?.trim()) paragraphs += 1;
-    if (type === "image") images += 1;
+    if (type === "image") {
+      images += 1;
+      imageItems.push({ position: pos, number: images });
+    }
     if (type === "blockquote") quotes += 1;
     if (type === "paperPageBreak") pageBreaks += 1;
     if (type === "paperFinalizedBreak") hasFinalizedBreak = true;
@@ -94,6 +99,7 @@ export function computePaperDerivedState(doc) {
     },
     outlineItems,
     headingItems,
+    imageItems,
     tableOfContentsPositions,
     hasFinalizedBreak,
     hasTableOfContents,

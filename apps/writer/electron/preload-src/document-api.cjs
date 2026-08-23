@@ -66,6 +66,16 @@ function createDocumentApi(ipcRenderer) {
     writeClipboardContent: (payload) => (
       ipcRenderer.invoke("clipboard:write-content", payload && typeof payload === "object" ? payload : {})
     ),
+    copyImageToClipboard: (payload) => {
+      const source = payload && typeof payload === "object" ? payload : {};
+      const coordinate = (value) => (
+        typeof value === "number" && Number.isSafeInteger(value) ? value : -1
+      );
+      return ipcRenderer.invoke("clipboard:copy-image-at", {
+        x: coordinate(source.x),
+        y: coordinate(source.y),
+      });
+    },
     copyImageReference: (payload) => (
       ipcRenderer.invoke("clipboard:write-image-reference", payload && typeof payload === "object" ? payload : {})
     ),

@@ -26,7 +26,7 @@ test.describe("P1 interaction regressions", () => {
     await reader.getByRole("button", { name: "展开资料搜索", exact: true }).click();
     await reader.getByRole("textbox", { name: "搜索资料内容", exact: true }).fill("DOCX");
     await expect(reader.locator("mark")).toHaveCount(3);
-    await expect(page.getByRole("button", { name: "查看版本 1.1.8 的更新历史", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看版本 1.1.9 的更新历史", exact: true })).toBeVisible();
 
     expect(pageErrors).toEqual([]);
   });
@@ -238,10 +238,10 @@ test.describe("P1 interaction regressions", () => {
     await expect(page.getByLabel("文章标题")).toHaveAttribute("readonly", "");
     await expect(page.locator(".canvas.active-pane .ProseMirror")).toHaveAttribute("contenteditable", "false");
     await page.locator(".canvas.active-pane .ProseMirror").evaluate((root) => {
-      const textNode = root.querySelector("p")?.firstChild;
-      if (!textNode) throw new Error("read-only fixture text is missing");
+      const paragraph = root.querySelector("p");
+      if (!paragraph) throw new Error("read-only fixture text is missing");
       const range = document.createRange();
-      range.selectNodeContents(textNode);
+      range.selectNodeContents(paragraph);
       const selection = window.getSelection();
       selection.removeAllRanges();
       selection.addRange(range);

@@ -111,6 +111,7 @@ export async function installDesktopBridgeFixture(page, {
       cancelAi: [],
       closeCanceled: [],
       closeReady: [],
+      copyImageToClipboard: [],
       exportEditable: [],
       generateSelectionAi: [],
       pickExportPath: [],
@@ -272,6 +273,10 @@ export async function installDesktopBridgeFixture(page, {
         path: targetPath,
         count: Math.max(1, pageRects?.length || 0),
       }),
+      copyImageToClipboard: async (payload = {}) => {
+        calls.copyImageToClipboard.push(clone(payload));
+        return { ok: true };
+      },
       generateSelectionAi: async (payload = {}) => {
         const requestId = String(payload.requestId || `fixture-selection-${Date.now()}`);
         const response = fixture.selectionAiResponse
