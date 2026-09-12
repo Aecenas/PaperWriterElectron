@@ -3,6 +3,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
 import { TextStyle } from "@tiptap/extension-text-style";
 import FontFamily from "@tiptap/extension-font-family";
+import { PasteTemplateTypography } from "./paste-typography.js";
 import Color from "@tiptap/extension-color";
 import UnderlineExtension from "@tiptap/extension-underline";
 import Highlight from "@tiptap/extension-highlight";
@@ -74,6 +75,7 @@ export function createPaperEditorExtensions() {
     StyledUnderlineExtension,
     Highlight.configure({ multicolor: true }),
     FontFamily,
+    PasteTemplateTypography,
     PaperDerivedState,
     HeadingMetadata,
     Table.configure({

@@ -100,7 +100,25 @@ try {
   assert.equal(bridgeResult.isElectron, true);
   assert.equal(typeof bridgeResult.documents, "string");
   assert.deepEqual(bridgeResult.fullscreen, { fullscreen: false });
-  stage("preload IPC verified; requesting native window close");
+  stage("checking half-screen minimum size and sidebar toggle");
+  const geometry = await electronApp.evaluate(({ BrowserWindow, screen }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    const area = screen.getDisplayMatching(window.getBounds()).workAreaSize;
+    window.setSize(100, 100);
+    return { minimum: window.getMinimumSize(), expected: [Math.ceil(area.width / 2), Math.ceil(area.height / 2)] };
+  });
+  assert.deepEqual(geometry.minimum, geometry.expected);
+  await page.waitForFunction(() => document.querySelector(".nav-sidebar-toggle"));
+  const actualSize = await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getSize());
+  assert.ok(actualSize[0] >= geometry.minimum[0] && actualSize[1] >= geometry.minimum[1]);
+  const sidebarToggle = page.locator('.nav-sidebar-toggle[aria-controls="left-sidebar"]');
+  if (await sidebarToggle.getAttribute("aria-expanded") === "true") await sidebarToggle.click();
+  await page.locator("#left-sidebar").waitFor({ state: "detached" });
+  await sidebarToggle.click();
+  await page.locator("#left-sidebar").waitFor({ state: "visible" });
+  await sidebarToggle.click();
+  await page.locator("#left-sidebar").waitFor({ state: "detached" });
+  stage("preload IPC and window sizing verified; requesting native window close");
 
   let closeRequests = 0;
   let resolveCloseRequest;

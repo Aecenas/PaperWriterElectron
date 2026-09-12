@@ -191,7 +191,7 @@ import {
 } from "./templates/index.js";
 import { CURRENT_RELEASE_VERSION } from "./release-notes.js";
 import { applyDocumentTextReplacements, moveActiveDocumentSearchMatch, searchDocumentText } from "./document-search.js";
-import { renderDocumentSearchState } from "./document-search-extension.js";
+import { renderDocumentSearchState, scheduleDocumentSearchState } from "./document-search-extension.js";
 import {
   createDerivedDocumentIdentity,
   createDocumentId,
@@ -1885,7 +1885,7 @@ export default function App() {
   }, [activeWorkEditor, searchMode, searchQuery]);
 
   useEffect(() => {
-    renderDocumentSearchState(activeWorkEditor, searchMode === "document" ? documentSearchState : null);
+    return scheduleDocumentSearchState(activeWorkEditor, searchMode === "document" ? documentSearchState : null);
   }, [activeWorkEditor, documentSearchState, searchMode]);
 
   useEffect(() => {

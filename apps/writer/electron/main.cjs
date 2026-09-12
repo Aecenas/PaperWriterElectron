@@ -12,6 +12,7 @@ const JSZip = require("jszip");
 const mammoth = require("mammoth");
 const docx = require("docx");
 const iconvLite = require("iconv-lite");
+const { getMinimumWindowSize, installWindowSizePolicy } = require("./window-size-policy.cjs");
 
 if (!app.isPackaged && process.env.PAPERWRITER_SMOKE_TEST === "1") {
   const smokeUserDataDir = String(process.env.PAPERWRITER_SMOKE_USER_DATA_DIR || "");
@@ -950,15 +951,17 @@ function createWindow() {
   forceCloseWindow = false;
   closeAttentionActive = false;
   rendererCanConfirmClose = false;
-  const workArea = screen.getPrimaryDisplay().workAreaSize;
-  const windowWidth = Math.min(1440, Math.max(1080, Math.floor(workArea.width * 0.92)));
-  const windowHeight = Math.min(940, Math.max(720, Math.floor(workArea.height * 0.9)));
+  const display = screen.getPrimaryDisplay();
+  const workArea = display.workAreaSize;
+  const [minWidth, minHeight] = getMinimumWindowSize(display);
+  const windowWidth = Math.min(workArea.width, Math.max(minWidth, Math.min(1440, Math.max(1080, Math.floor(workArea.width * 0.92)))));
+  const windowHeight = Math.min(workArea.height, Math.max(minHeight, Math.min(940, Math.max(720, Math.floor(workArea.height * 0.9)))));
 
   mainWindow = new BrowserWindow({
     width: windowWidth,
     height: windowHeight,
-    minWidth: 1040,
-    minHeight: 720,
+    minWidth,
+    minHeight,
     center: true,
     title: "笺间",
     icon: APP_ICON,
@@ -974,6 +977,7 @@ function createWindow() {
       spellcheck: true,
     },
   });
+  installWindowSizePolicy(mainWindow, screen);
   unresponsiveCloseGuard = createUnresponsiveCloseGuard({
     getWindow: () => mainWindow,
     isCloseRequestInFlight: () => closeRequestInFlight,

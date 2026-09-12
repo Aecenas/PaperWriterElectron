@@ -38,7 +38,7 @@ export const DocumentSearchExtension = Extension.create({
 });
 
 export function renderDocumentSearchState(editor, searchState) {
-  if (!editor?.view) return;
+  if (!editor || editor.isDestroyed || !editor.view) return;
   editor.view.dispatch(editor.state.tr.setMeta(documentSearchPluginKey, {
     matches: searchState?.matches || [],
     activeIndex: Number(searchState?.activeIndex) || 0,
@@ -49,4 +49,14 @@ export function renderDocumentSearchState(editor, searchState) {
     const element = dom?.nodeType === 1 ? dom : dom?.parentElement;
     element?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   }
+}
+
+export function scheduleDocumentSearchState(editor, searchState) {
+  let canceled = false;
+  // React node views flush effects while ProseMirror is rebuilding its view
+  // tree. Dispatch only after that stack unwinds, using a fresh transaction.
+  queueMicrotask(() => {
+    if (!canceled) renderDocumentSearchState(editor, searchState);
+  });
+  return () => { canceled = true; };
 }

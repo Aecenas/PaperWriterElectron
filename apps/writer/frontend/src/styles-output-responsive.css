@@ -328,6 +328,15 @@
     overflow-x: auto;
   }
 
+  /* A scroll container clips absolutely positioned menu popovers in both
+     axes. Temporarily release that clipping while a responsive nav menu is
+     open so the menu can extend below the toolbar instead of becoming a
+     toolbar-height strip with a vertical scrollbar. */
+  .nav-primary:has(.nav-menu.open),
+  .nav-tools:has(.nav-menu.open) {
+    overflow: visible;
+  }
+
   .mode-switch {
     flex: 0 0 auto;
   }
@@ -439,8 +448,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .sidebar {
-    display: none;
+  .app-shell > .left-sidebar {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 25;
+    width: min(280px, calc(100% - 48px));
+    box-shadow: 8px 0 24px rgba(48, 42, 32, 0.16);
   }
 
   .statusbar-counts {
@@ -462,6 +475,22 @@
 
   .paper-title-input {
     max-width: calc(100% - 120px);
+  }
+}
+
+@media (max-height: 450px) {
+  .left-sidebar .documents-panel {
+    overflow-y: auto;
+  }
+
+  .left-sidebar .documents-panel > * {
+    flex-shrink: 0;
+  }
+
+  .left-sidebar .structure-inspector,
+  .left-sidebar .research-sidebar,
+  .left-sidebar .document-list {
+    min-height: 260px;
   }
 }
 
