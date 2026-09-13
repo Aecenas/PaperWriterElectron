@@ -17,8 +17,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -43,7 +43,7 @@ jobs:
           npm.cmd --prefix apps/writer/frontend sbom --omit=dev --sbom-format=cyclonedx | Out-File -Encoding utf8 artifacts/frontend.cdx.json
           npm.cmd --prefix apps/writer/electron sbom --omit=dev --sbom-format=cyclonedx | Out-File -Encoding utf8 artifacts/electron.cdx.json
       - name: Upload installer and SBOMs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: paperwriter-windows-${{ github.ref_name }}
           if-no-files-found: error
@@ -53,7 +53,7 @@ jobs:
             apps/release/latest.yml
             artifacts/*.cdx.json
       - name: Attest installer and dependency inventories
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             apps/release/*.exe
