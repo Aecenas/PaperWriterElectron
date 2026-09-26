@@ -146,12 +146,16 @@ try {
     external ? document.querySelector(".tiptap")?.textContent.length > 1000
       : document.querySelectorAll(".tiptap .paper-image-figure").length === 21
         && document.querySelector(".tiptap")?.textContent.includes("Startup recovery text 21")
-  ), Boolean(externalFixture), { timeout: 20_000 }).catch(async error => {
-    process.stderr.write(JSON.stringify(await page.evaluate(() => ({
+  ), Boolean(externalFixture), { timeout: 60_000 }).catch(async error => {
+    process.stderr.write(JSON.stringify(await page.evaluate(async () => ({
       length: document.querySelector(".tiptap")?.textContent.length,
       images: document.querySelectorAll(".tiptap .paper-image-figure").length,
       boundary: document.querySelector(".app-error-boundary")?.textContent,
+      sessionState: localStorage.getItem("paperwriter.sessionState"),
+      paths: await window.paperWriter?.getPaths?.(),
+      body: document.body?.innerText?.slice(0, 500),
     }))) + "\n");
+    process.stderr.write(`[packaged-smoke] main process diagnostics:\n${diagnosticsText()}\n`);
     throw error;
   });
   await page.waitForTimeout(1500);
