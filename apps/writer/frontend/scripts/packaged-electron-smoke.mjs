@@ -137,7 +137,7 @@ try {
   assert.deepEqual(bridgeResult.fullscreen, { fullscreen: false });
 
   if (launchIndex === 0) {
-    await page.evaluate((filePath) => {
+    await page.addInitScript((filePath) => {
       localStorage.setItem("paperwriter.sessionState", JSON.stringify({ folderPath: "", activePath: filePath, tabs: [{ path: filePath, temporary: false }] }));
     }, fixturePath);
     await page.reload();
