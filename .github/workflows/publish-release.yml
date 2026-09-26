@@ -1,0 +1,131 @@
+name: Publish verified GitHub release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag with a successful Release provenance run
+        required: true
+        type: string
+      source_run_id:
+        description: Successful Release provenance workflow run ID
+        required: true
+        type: string
+      release_title:
+        description: Public release title
+        required: true
+        type: string
+      release_notes:
+        description: Public release notes
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  attestations: read
+  contents: read
+
+jobs:
+  publish:
+    name: Verify and publish release assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      attestations: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      RELEASE_TITLE: ${{ inputs.release_title }}
+      RELEASE_NOTES: ${{ inputs.release_notes }}
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Download artifacts from the successful build
+        uses: actions/download-artifact@v4
+        with:
+          name: paperwriter-windows-${{ inputs.release_tag }}
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: release-artifacts
+
+      - name: Verify source, package metadata, and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+          VERSION="${RELEASE_TAG#v}"
+          PACKAGE_VERSION="$(node -p "require('./apps/writer/electron/package.json').version")"
+          test "$VERSION" = "$PACKAGE_VERSION"
+
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          RUN_JSON="$(gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN_ID")"
+          test "$(jq -r '.status' <<<"$RUN_JSON")" = "completed"
+          test "$(jq -r '.conclusion' <<<"$RUN_JSON")" = "success"
+          test "$(jq -r '.head_sha' <<<"$RUN_JSON")" = "$SOURCE_SHA"
+          test "$(jq -r '.head_branch' <<<"$RUN_JSON")" = "$RELEASE_TAG"
+
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "A release already exists for $RELEASE_TAG." >&2
+            exit 1
+          fi
+
+          INSTALLER="$(find release-artifacts -type f -name "PaperWriter-$VERSION-x64.exe" -print -quit)"
+          BLOCKMAP="$(find release-artifacts -type f -name "PaperWriter-$VERSION-x64.exe.blockmap" -print -quit)"
+          LATEST_YML="$(find release-artifacts -type f -name latest.yml -print -quit)"
+          FRONTEND_BOM="$(find release-artifacts -type f -name frontend.cdx.json -print -quit)"
+          ELECTRON_BOM="$(find release-artifacts -type f -name electron.cdx.json -print -quit)"
+          for asset in "$INSTALLER" "$BLOCKMAP" "$LATEST_YML" "$FRONTEND_BOM" "$ELECTRON_BOM"; do
+            test -n "$asset" && test -s "$asset"
+          done
+
+          python3 - "$VERSION" "$INSTALLER" "$LATEST_YML" "$FRONTEND_BOM" "$ELECTRON_BOM" <<'PY'
+          import base64
+          import hashlib
+          import json
+          import pathlib
+          import re
+          import sys
+
+          version, installer_path, metadata_path, frontend_path, electron_path = sys.argv[1:]
+          installer = pathlib.Path(installer_path).read_bytes()
+          metadata = pathlib.Path(metadata_path).read_text(encoding="utf-8-sig")
+          assert re.search(rf"^version:\s*{re.escape(version)}\s*$", metadata, re.M)
+          assert f"PaperWriter-{version}-x64.exe" in metadata
+          expected_hash = base64.b64encode(hashlib.sha512(installer).digest()).decode()
+          assert expected_hash in re.findall(r"^\s*sha512:\s*(\S+)\s*$", metadata, re.M)
+          assert str(len(installer)) in re.findall(r"^\s*size:\s*(\d+)\s*$", metadata, re.M)
+
+          for bom_path in (frontend_path, electron_path):
+              bom = json.loads(pathlib.Path(bom_path).read_text(encoding="utf-8-sig"))
+              assert bom["bomFormat"] == "CycloneDX"
+              assert bom["metadata"]["component"]["version"] == version
+          PY
+
+          gh attestation verify "$INSTALLER" \
+            --repo "$GH_REPO" \
+            --source-ref "refs/tags/$RELEASE_TAG" \
+            --source-digest "$SOURCE_SHA" \
+            --signer-workflow "$GH_REPO/.github/workflows/release-provenance.yml"
+
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          printf '%s\n' "$RELEASE_NOTES" > "$notes_file"
+          gh release create "$RELEASE_TAG" \
+            --repo "$GH_REPO" \
+            --verify-tag \
+            --draft \
+            --title "$RELEASE_TITLE" \
+            --notes-file "$notes_file"
+          gh release upload "$RELEASE_TAG" \
+            "$INSTALLER" "$BLOCKMAP" "$LATEST_YML" "$FRONTEND_BOM" "$ELECTRON_BOM" \
+            --repo "$GH_REPO"
+          test "$(gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json assets --jq '.assets|length')" -eq 5
+          gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --draft=false --latest

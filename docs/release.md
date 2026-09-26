@@ -233,7 +233,7 @@ apps\release
 3. 提交代码。
 4. 创建版本标签，例如 `v1.1.8`。
 5. 确认 Release provenance workflow 生成安装包、CycloneDX SBOM 和 build provenance attestation。
-6. 使用 GitHub Release 发布安装包。
+6. 执行 `Publish verified GitHub release` workflow，填写标签、成功的 Release provenance run ID、标题和发布说明。该 workflow 会下载并校验原构建产物、SBOM 和 provenance，再发布 GitHub Release。
 
 如使用 electron-builder 自动发布，需要配置 GitHub 发布权限，然后执行：
 
