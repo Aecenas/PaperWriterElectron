@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { access, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
@@ -61,7 +61,7 @@ async function waitForApplicationPage(browser) {
   throw new Error("Packaged Electron did not create its application page.");
 }
 
-const temporaryAppData = await mkdtemp(path.join(os.tmpdir(), "paperwriter-packaged-smoke-"));
+const temporaryAppData = await realpath(await mkdtemp(path.join(os.tmpdir(), "paperwriter-packaged-smoke-")));
 const fixturePath = path.join(temporaryAppData, "startup-images.letterpaper");
 const fixture = new JSZip();
 const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAD0lEQVR42mNkYPj/n4GBgQEABQAB/WTN8QAAAABJRU5ErkJggg==";
