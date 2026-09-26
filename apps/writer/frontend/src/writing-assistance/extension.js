@@ -1,6 +1,7 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { deferEditorViewUpdate } from "../editor-view-scheduler.js";
 
 export const writingAssistancePluginKey = new PluginKey("paperWritingAssistance");
 
@@ -59,6 +60,7 @@ export const WritingAssistanceDecorations = Extension.create({
 
 export function publishWritingIssues(editor, issues) {
   if (!editor || editor.isDestroyed) return false;
+  if (deferEditorViewUpdate(editor, writingAssistancePluginKey, () => publishWritingIssues(editor, issues))) return true;
   if (typeof editor.commands?.setWritingAssistanceIssues === "function") {
     return editor.commands.setWritingAssistanceIssues(issues) !== false;
   }

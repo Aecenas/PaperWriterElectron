@@ -239,8 +239,8 @@ test("DOCX Mermaid export can read the isolated shadow-root SVG", () => {
 });
 
 test("read-only documents lock both editors, metadata and top-level mutation controls", () => {
-  assert.match(appSource, /editor\.setEditable\(!activeTabReadOnly/);
-  assert.match(appSource, /rightSplitEditor\.setEditable\(!rightSplitReadOnly\)/);
+  assert.match(appSource, /setEditorEditable\(editor, !activeTabReadOnly/);
+  assert.match(appSource, /setEditorEditable\(rightSplitEditor, !rightSplitReadOnly\)/);
   assert.match(pageArticleSource, /function PageArticle\([\s\S]*readOnly = false/);
   assert.match(pageArticleSource, /className="paper-title-input"[\s\S]*readOnly=\{readOnly\}/);
   assert.match(pageArticleSource, /className="paper-author-input"[\s\S]*readOnly=\{readOnly\}/);

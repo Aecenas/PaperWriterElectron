@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mergeAttributes, Node } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
-import { NodeViewWrapper, ReactNodeViewRenderer, useEditorState } from "@tiptap/react";
+import { NodeViewWrapper, useEditorState } from "@tiptap/react";
+import { SafeReactNodeViewRenderer as ReactNodeViewRenderer } from "./safe-react-node-view.js";
 import Image from "@tiptap/extension-image";
 import { Link2, Music2, Trash2, Video } from "lucide-react";
 import tocTitleSignatureAsset from "../assets/decor/toc-title-signature.png?inline";

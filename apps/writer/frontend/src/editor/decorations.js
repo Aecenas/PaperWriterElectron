@@ -1,6 +1,7 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { deferEditorViewUpdate } from "../editor-view-scheduler.js";
 import { computePaperDerivedState, EMPTY_PAPER_DERIVED_STATE } from "../editor-derived-state.js";
 import { mapDocumentCommentsThroughTransaction, normalizeDocumentComments } from "../editor-comments.js";
 import { DEFAULT_TEMPLATE_PRESENTATION } from "../templates/model.js";
@@ -583,6 +584,7 @@ export const HeadingMetadata = Extension.create({
 });
 
 export function syncAiChatSelectionDecorations(editor, selections = []) {
+  if (deferEditorViewUpdate(editor, AI_CHAT_SELECTION_PLUGIN_KEY, () => syncAiChatSelectionDecorations(editor, selections))) return;
   if (!editor?.view) {
     return;
   }
@@ -590,6 +592,7 @@ export function syncAiChatSelectionDecorations(editor, selections = []) {
 }
 
 export function syncAiApplyPreviewDecorations(editor, preview = null) {
+  if (deferEditorViewUpdate(editor, AI_APPLY_PREVIEW_PLUGIN_KEY, () => syncAiApplyPreviewDecorations(editor, preview))) return;
   if (!editor?.view || editor.isDestroyed) return;
   editor.view.dispatch(editor.state.tr.setMeta(AI_APPLY_PREVIEW_PLUGIN_KEY, preview
     ? { type: "show", preview }
@@ -597,6 +600,7 @@ export function syncAiApplyPreviewDecorations(editor, preview = null) {
 }
 
 export function syncAiCollaborationReviewDecorations(editor, review = null) {
+  if (deferEditorViewUpdate(editor, AI_APPLY_PREVIEW_PLUGIN_KEY, () => syncAiCollaborationReviewDecorations(editor, review))) return;
   if (!editor?.view || editor.isDestroyed) return;
   editor.view.dispatch(editor.state.tr.setMeta(AI_APPLY_PREVIEW_PLUGIN_KEY, review
     ? { type: "show-collaboration", review }
@@ -604,6 +608,7 @@ export function syncAiCollaborationReviewDecorations(editor, review = null) {
 }
 
 export function syncDocumentCommentDecorations(editor, comments = []) {
+  if (deferEditorViewUpdate(editor, DOCUMENT_COMMENT_PLUGIN_KEY, () => syncDocumentCommentDecorations(editor, comments))) return;
   if (!editor?.view) {
     return;
   }
@@ -614,6 +619,7 @@ export function syncDocumentCommentDecorations(editor, comments = []) {
 }
 
 export function setDocumentCommentVisibility(editor, hidden) {
+  if (deferEditorViewUpdate(editor, "comment-visibility", () => setDocumentCommentVisibility(editor, hidden))) return;
   if (!editor?.view) return;
   editor.view.dispatch(editor.state.tr.setMeta(DOCUMENT_COMMENT_PLUGIN_KEY, {
     type: "set-visibility",
@@ -638,6 +644,7 @@ export function getHeadingNumberingDefaults(editor) {
 }
 
 export function syncHeadingNumberingDefaults(editor, headingNumbering) {
+  if (deferEditorViewUpdate(editor, HEADING_NUMBERING_PLUGIN_KEY, () => syncHeadingNumberingDefaults(editor, headingNumbering))) return;
   if (!editor?.view) {
     return;
   }

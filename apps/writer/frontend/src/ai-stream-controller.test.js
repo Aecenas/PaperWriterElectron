@@ -361,7 +361,7 @@ test("App composes opaque stream hooks at the original anchors without raw regis
     "const aiPreviousSidebarsRef = useRef",
     "usePromiseDialogResolverRefs();",
     "useAiStreamChatMessagesSlot(aiStreamRegistry);",
-    "rightSplitEditor.setEditable(!rightSplitReadOnly)",
+    "setEditorEditable(rightSplitEditor, !rightSplitReadOnly)",
     "useAiElapsedLifecycle({",
     "useAiStreamEventsLifecycle({",
     "useAiRequestActions({",

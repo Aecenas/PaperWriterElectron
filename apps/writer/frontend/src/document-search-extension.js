@@ -1,6 +1,7 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { deferEditorViewUpdate } from "./editor-view-scheduler.js";
 
 export const documentSearchPluginKey = new PluginKey("paperDocumentSearch");
 
@@ -39,6 +40,7 @@ export const DocumentSearchExtension = Extension.create({
 
 export function renderDocumentSearchState(editor, searchState) {
   if (!editor || editor.isDestroyed || !editor.view) return;
+  if (deferEditorViewUpdate(editor, documentSearchPluginKey, () => renderDocumentSearchState(editor, searchState))) return;
   editor.view.dispatch(editor.state.tr.setMeta(documentSearchPluginKey, {
     matches: searchState?.matches || [],
     activeIndex: Number(searchState?.activeIndex) || 0,

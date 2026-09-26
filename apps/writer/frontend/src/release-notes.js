@@ -8,6 +8,18 @@ export const RELEASE_PHASE_DEFINITIONS = [
 
 export const RELEASE_NOTES = [
   {
+    version: "1.2.1",
+    phaseId: "professional-creation",
+    scale: "minor",
+    date: "2026-09-26",
+    title: "启动恢复与多图信笺崩溃修复",
+    changes: [
+      "修复 1.2.0 中恢复含图片、目录等节点的信笺时，写作检查等界面更新打断编辑器重建并导致整个界面崩溃的问题。",
+      "为所有 React 编辑节点加入统一的构建保护，合并并延后写作检查、搜索、批注、AI 标记、标题编号和编辑权限的重入更新；保留正常交互的同步行为。",
+      "补充多图信笺恢复、标签切换与重载回归；正式安装包发布前新增真实会话恢复和关闭后冷启动检查。",
+    ],
+  },
+  {
     version: "1.2.0",
     phaseId: "professional-creation",
     scale: "minor",

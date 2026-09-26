@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { chromium } from "playwright";
+const require = createRequire(import.meta.url);
+const JSZip = require("../../electron/node_modules/jszip");
 
 const executable = process.argv[2]
   ? path.resolve(process.cwd(), process.argv[2])
@@ -59,12 +62,33 @@ async function waitForApplicationPage(browser) {
 }
 
 const temporaryAppData = await mkdtemp(path.join(os.tmpdir(), "paperwriter-packaged-smoke-"));
+const fixturePath = path.join(temporaryAppData, "startup-images.letterpaper");
+const fixture = new JSZip();
+const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAD0lEQVR42mNkYPj/n4GBgQEABQAB/WTN8QAAAABJRU5ErkJggg==";
+fixture.file("document.json", JSON.stringify({
+  version: 3,
+  documentId: "30000000-0000-4000-8000-000000000001",
+  title: "Startup recovery regression",
+  html: '<section data-type="paper-toc"></section>' + Array.from({ length: 21 }, (_, index) => (
+    `<h2>Section ${index + 1}</h2>${Array.from({ length: 20 }, (_, paragraph) => `<p>Startup recovery text ${index + 1} paragraph ${paragraph} ${"long document regression content ".repeat(3)}</p>`).join("")}<figure data-type="paper-image" data-image-id="40000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}"><img src="${image}"></figure>`
+  )).join(""),
+}));
+await writeFile(fixturePath, await fixture.generateAsync({ type: "nodebuffer" }));
+// An optional real-world fixture is copied into the sandbox; never open the original.
+const externalFixture = process.argv[3];
+if (externalFixture) await copyFile(path.resolve(externalFixture), fixturePath);
+// Both possible userData locations are inside this isolated test directory.
+for (const userData of [temporaryAppData, path.join(temporaryAppData, "笺间")]) {
+  await mkdir(userData, { recursive: true });
+  await writeFile(path.join(userData, "filesystem-access.json"), JSON.stringify({ version: 1, roots: [temporaryAppData], documents: [fixturePath] }));
+}
 const debugPort = await reserveLoopbackPort();
 const diagnostics = [];
 let browser;
 let child;
 
 try {
+  for (let launchIndex = 0; launchIndex < 2; launchIndex++) {
   process.stdout.write(`[packaged-smoke] launching ${executable}\n`);
   process.stdout.write(`[packaged-smoke] isolated APPDATA: ${temporaryAppData}\n`);
   child = spawn(executable, [
@@ -95,6 +119,7 @@ try {
     diagnosticsText,
   );
   const page = await waitForApplicationPage(browser);
+  page.on("pageerror", error => process.stderr.write(`[packaged-smoke] renderer error: ${error.message}\n`));
   await page.waitForFunction(
     () => window.paperWriter?.isElectron === true,
     null,
@@ -111,6 +136,28 @@ try {
   assert.equal(typeof bridgeResult.paths?.documents, "string");
   assert.deepEqual(bridgeResult.fullscreen, { fullscreen: false });
 
+  if (launchIndex === 0) {
+    await page.evaluate((filePath) => {
+      localStorage.setItem("paperwriter.sessionState", JSON.stringify({ folderPath: "", activePath: filePath, tabs: [{ path: filePath, temporary: false }] }));
+    }, fixturePath);
+    await page.reload();
+  }
+  await page.waitForFunction((external) => (
+    external ? document.querySelector(".tiptap")?.textContent.length > 1000
+      : document.querySelectorAll(".tiptap .paper-image-figure").length === 21
+        && document.querySelector(".tiptap")?.textContent.includes("Startup recovery text 21")
+  ), Boolean(externalFixture), { timeout: 20_000 }).catch(async error => {
+    process.stderr.write(JSON.stringify(await page.evaluate(() => ({
+      length: document.querySelector(".tiptap")?.textContent.length,
+      images: document.querySelectorAll(".tiptap .paper-image-figure").length,
+      boundary: document.querySelector(".app-error-boundary")?.textContent,
+    }))) + "\n");
+    throw error;
+  });
+  await page.waitForTimeout(1500);
+  assert.equal(await page.locator(".app-error-boundary").count(), 0);
+  process.stdout.write(`[packaged-smoke] multi-image session restored on launch ${launchIndex + 1}\n`);
+
   const processExited = new Promise((resolve, reject) => {
     child.once("exit", resolve);
     child.once("error", reject);
@@ -124,7 +171,10 @@ try {
   ]);
   assert.ok(exitCode === 0 || exitCode === null, `unexpected packaged exit code: ${exitCode}`);
   child = null;
-  process.stdout.write("Packaged Electron smoke passed: ASAR UI and preload IPC.\n");
+  await browser.close().catch(() => undefined);
+  browser = null;
+  }
+  process.stdout.write("Packaged Electron smoke passed: ASAR UI, preload IPC, multi-image session and cold restart.\n");
 } finally {
   await browser?.close().catch(() => undefined);
   if (child && child.exitCode === null) {

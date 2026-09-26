@@ -1,3 +1,4 @@
+import { setEditorEditable } from "./editor-view-scheduler.js";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useEditor } from "@tiptap/react";
 import {
@@ -2070,9 +2071,9 @@ export default function App() {
     if (!editor) {
       return undefined;
     }
-    editor.setEditable(!activeTabReadOnly && !activeTabCollaborationLocked && !(aiMode && aiStatus === "streaming") && !aiApplyPreview);
+    setEditorEditable(editor, !activeTabReadOnly && !activeTabCollaborationLocked && !(aiMode && aiStatus === "streaming") && !aiApplyPreview);
     return () => {
-      editor.setEditable(true);
+      setEditorEditable(editor, true);
     };
   }, [activeTabCollaborationLocked, activeTabReadOnly, aiApplyPreview, aiMode, aiStatus, editor]);
 
@@ -2080,10 +2081,10 @@ export default function App() {
     if (!rightSplitEditor) {
       return undefined;
     }
-    rightSplitEditor.setEditable(!rightSplitReadOnly);
-    if (rightSplitCollaborationLocked) rightSplitEditor.setEditable(false);
+    setEditorEditable(rightSplitEditor, !rightSplitReadOnly);
+    if (rightSplitCollaborationLocked) setEditorEditable(rightSplitEditor, false);
     return () => {
-      rightSplitEditor.setEditable(true);
+      setEditorEditable(rightSplitEditor, true);
     };
   }, [rightSplitCollaborationLocked, rightSplitEditor, rightSplitReadOnly]);
 

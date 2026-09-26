@@ -1056,7 +1056,7 @@ test("App keeps AI apply hooks at their anchors and controllers stay isolated", 
   }
   assert.match(
     appBody,
-    /editor\.setEditable\([^;]+&& !aiApplyPreview\)/,
+    /setEditorEditable\(editor, [^;]+&& !aiApplyPreview\)/,
   );
   assert.ok(
     (appBody.match(/Boolean\(aiApplyPreview\)/g) || []).length >= 2,

@@ -397,7 +397,7 @@ test("App keeps AI config hooks at their anchors and controllers cannot reach ra
     "const activeDocumentKey = useMemo",
     "useAiDocumentStateActions(aiDocumentPort);",
     "useAiConfigLifecycle({",
-    "editor.setEditable(!activeTabReadOnly",
+    "setEditorEditable(editor, !activeTabReadOnly",
     "useAiConfigActions({",
     "useAiLayoutPort({",
     "useAiModeTransitionActions({",

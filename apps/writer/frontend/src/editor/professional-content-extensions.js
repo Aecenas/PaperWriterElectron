@@ -4,7 +4,8 @@ import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { BlockMath, InlineMath } from "@tiptap/extension-mathematics";
-import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
+import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
+import { SafeReactNodeViewRenderer as ReactNodeViewRenderer } from "./safe-react-node-view.js";
 import DOMPurify from "dompurify";
 import katex from "katex";
 import {
