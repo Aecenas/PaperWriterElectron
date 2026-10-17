@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -39,7 +39,13 @@ async function terminateElectronApp(app, child) {
     "timed out while closing Electron after smoke",
   ).catch(() => undefined);
   if (child.exitCode === null) {
-    child.kill();
+    if (process.platform === "win32") {
+      spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+        windowsHide: true, stdio: "ignore", timeout: 5_000,
+      });
+    } else {
+      child.kill();
+    }
     await withTimeout(
       new Promise((resolve) => child.once("exit", resolve)),
       5_000,
@@ -56,7 +62,7 @@ const electronExecutable = require(path.join(
   "node_modules",
   "electron",
 ));
-const temporaryUserData = await mkdtemp(path.join(os.tmpdir(), "paperwriter-electron-smoke-"));
+const temporaryUserData = await realpath(await mkdtemp(path.join(os.tmpdir(), "paperwriter-electron-smoke-")));
 const currentFolder = path.join(temporaryUserData, "复盘");
 const externalFolder = path.join(temporaryUserData, "claude");
 const currentDocument = path.join(currentFolder, "当前信笺.letterpaper");
