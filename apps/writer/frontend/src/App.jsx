@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { bridge } from "./bridge.js";
+import { connectExternalDocumentRequests } from "./document-workspace/external-document-open.js";
 import AiModeChooser from "./AiModeChooser.jsx";
 import { DocumentFindWidget, ResearchSearchPalette, WorkspaceSearchPalette } from "./WorkspaceSearchPanel.jsx";
 import "./workspace-features.css";
@@ -323,7 +324,6 @@ export default function App() {
     openTabsRef,
     rightSplitTabId,
     rightSplitTabIdRef,
-    sessionRestoredRef,
     sessionStatePort,
     setActivePane,
     setActiveTabId,
@@ -2879,12 +2879,28 @@ export default function App() {
   documentPersistenceControllerRef.current = documentPersistenceController;
 
   useEffect(() => {
-    if (!editor || sessionRestoredRef.current) {
+    if (!editor) {
       return undefined;
     }
+    let disposed = false;
+    let externalDocuments;
     const restoreOperation = documentSessionController.beginRestore();
-    return () => restoreOperation?.cancel();
-  }, [applyDocument, commitWorkspaceGroups, editor, letterTemplates, persistSession]);
+    Promise.resolve(restoreOperation?.promise).then(() => {
+      if (disposed) return;
+      externalDocuments = connectExternalDocumentRequests({
+        requestPort: bridge,
+        openDocumentPath: (path) => workspaceFileControllerRef.current.openPort.openDocumentPath(path),
+        onError: (error) => showStatus(`打开失败：${error?.message || error}`, "warning"),
+      });
+    }).catch((error) => {
+      if (!disposed) showStatus(`恢复文档失败：${error?.message || error}`, "warning");
+    });
+    return () => {
+      disposed = true;
+      restoreOperation?.cancel();
+      externalDocuments?.dispose();
+    };
+  }, [applyDocument, commitWorkspaceGroups, editor, letterTemplates, persistSession, showStatus]);
 
   const handleSelectGroupView = useCallback(
     (groupId, viewId) => {

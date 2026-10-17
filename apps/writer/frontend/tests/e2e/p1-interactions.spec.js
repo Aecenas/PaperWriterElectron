@@ -26,7 +26,7 @@ test.describe("P1 interaction regressions", () => {
     await reader.getByRole("button", { name: "展开资料搜索", exact: true }).click();
     await reader.getByRole("textbox", { name: "搜索资料内容", exact: true }).fill("DOCX");
     await expect(reader.locator("mark")).toHaveCount(3);
-    await expect(page.getByRole("button", { name: "查看版本 1.2.1 的更新历史", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "查看版本 1.2.2 的更新历史", exact: true })).toBeVisible();
 
     expect(pageErrors).toEqual([]);
   });
@@ -206,6 +206,30 @@ test.describe("P1 interaction regressions", () => {
     expect(handshake.ready).toEqual([{ requestId: "close-e2e-1" }]);
     expect(handshake.canceled).toEqual([]);
 
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("discarding a recovered saved document removes its recovery draft from the next session", async ({ page }) => {
+    const documentPath = "C:\\e2e\\discard.letterpaper";
+    const recoveryPath = "C:\\recovery\\discard.letterpaper";
+    await installDesktopBridgeFixture(page, {
+      documents: {
+        [documentPath]: createTestDocument({ title: "放弃恢复草稿", body: "DISK-VERSION" }),
+        [recoveryPath]: createTestDocument({ title: "放弃恢复草稿", body: "RECOVERY-DRAFT" }),
+      },
+      activePath: documentPath,
+      sessionTabs: [{ path: documentPath, recoveryPath, recoveryId: "discard-recovery", recoverySourcePath: documentPath }],
+    });
+    const pageErrors = await openPaperWriter(page);
+    await expect(page.locator(".canvas.active-pane .ProseMirror")).toContainText("RECOVERY-DRAFT");
+    await page.evaluate(() => window.__paperWriterE2E.emit("app:close-request", { requestId: "discard-close" }));
+    await page.getByRole("button", { name: "不保存", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.__paperWriterE2E.calls.closeReady.length)).toBe(1);
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("paperwriter.sessionState")));
+    expect(saved.tabs).toHaveLength(1);
+    expect(saved.tabs[0].path).toBe(documentPath);
+    expect(saved.tabs[0].recoveryPath).toBe("");
+    expect(saved.tabs[0].recoveryId).toBe("");
     expect(pageErrors).toEqual([]);
   });
 

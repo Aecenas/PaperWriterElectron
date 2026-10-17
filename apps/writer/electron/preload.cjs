@@ -108,6 +108,8 @@ const __preloadModules = {
       return {
         openDocument: () => ipcRenderer.invoke("document:open"),
         openDocumentPath: (filePath) => ipcRenderer.invoke("document:open-path", filePath || ""),
+        takeExternalDocumentRequests: () => ipcRenderer.invoke("document:take-external-open-requests"),
+        onExternalDocumentRequest: (callback) => subscribeToIpc(ipcRenderer, "document:external-open-request", callback),
         importDocument: () => ipcRenderer.invoke("document:import"),
         exportEditable: (document, format, targetPath = "", renderedHtml = "") => {
           const transientHtml = ["docx", "html"].includes(format) && typeof renderedHtml === "string"

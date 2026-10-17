@@ -81,6 +81,8 @@ function createBrowserDocumentWorkspaceApi() {
       return { ok: true, entry, browserOnly: true };
     },
     openDocument: async () => ({ canceled: true }),
+    takeExternalDocumentRequests: async () => [],
+    onExternalDocumentRequest: () => () => {},
     openDocumentPath: async (filePath = "") => {
       const documentValue = readJson("paperwriter.preview.document", null);
       if (!documentValue || !String(filePath).startsWith("browser-preview")) return { canceled: true };

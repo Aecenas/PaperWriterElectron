@@ -100,6 +100,8 @@ const EXPECTED_API_KEYS = [
   "onWorkspaceWatchError",
   "openDocument",
   "openDocumentPath",
+  "takeExternalDocumentRequests",
+  "onExternalDocumentRequest",
   "openExternal",
   "openFolder",
   "openResearchDocument",
@@ -214,6 +216,7 @@ const researchSearchValue = {
 };
 
 const INVOKE_CONTRACTS = [
+  ["takeExternalDocumentRequests", [], ["document:take-external-open-requests"]],
   ["getPaths", [], ["app:get-paths"]],
   ["debugLog", ["event", payload], ["debug:log", "event", payload]],
   ["setWindowModalOverlay", [1], ["window:set-modal-overlay", true]],
@@ -469,6 +472,7 @@ const EVENT_CONTRACTS = [
   ["onCompositionEvent", "composition:event", false],
   ["onDocumentContextMenuRequest", "writing-assistance:document-context-menu", true],
   ["onExportProgress", "document:export-progress", false],
+  ["onExternalDocumentRequest", "document:external-open-request", false],
   ["onResearchWebViewState", "research:web-view-state", false],
   ["onUpdateState", "update:state", false],
   ["onCloseRequest", "app:close-request", true],

@@ -654,6 +654,37 @@ test("save conflict compare, reload, overwrite, and cancel preserve their distin
   });
 });
 
+test("conflict reload preserves edits made while the disk version is being read", async () => {
+  const loading = deferred();
+  const harness = createPersistenceHarness({
+    onSaveDocument: async () => ({ conflict: true, conflictCopyPath: "initial-copy" }),
+    resolveSaveConflict: async () => "reload",
+    onOpenDocumentPath: () => loading.promise,
+    tabs: [createTestTab("tab-a", { recoveryPath: "C:\\recovery\\draft.letterpaper", recoveryId: "draft-recovery" })],
+  });
+  const saving = harness.controller.save(false);
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.mutateTab("tab-a", { document: createTestDocument("Newer edits") });
+  loading.resolve({ document: createTestDocument("Disk"), path: "C:\\letters\\tab-a.letterpaper", diskRevision: diskRevision("c") });
+  const result = await saving;
+  assert.equal(result.status, "changed");
+  assert.equal(harness.read().documentState.tabs[0].document.title, "Newer edits");
+  assert.equal(harness.kernel.dirtyPort.isDirty("tab-a"), true);
+  assert.equal(harness.events.some(([kind]) => kind === "delete-temp"), false);
+});
+
+test("a failed conflict reload reports failure and retains the current draft", async () => {
+  const harness = createPersistenceHarness({
+    onSaveDocument: async () => ({ conflict: true, conflictCopyPath: "copy" }),
+    resolveSaveConflict: async () => "reload",
+    onOpenDocumentPath: async () => ({ canceled: true, error: "文件已被移走" }),
+  });
+  const result = await harness.controller.save(false);
+  assert.equal(result.status, "reload-failed");
+  assert.equal(harness.kernel.dirtyPort.isDirty("tab-a"), true);
+  assert.equal(harness.events.some(([kind]) => kind === "apply"), false);
+});
+
 test("single-tab close holds the autosave gate and rejects a stale confirmation", async () => {
   const confirmation = deferred();
   const tempWrites = [];
@@ -793,6 +824,29 @@ test("window save-close persists named and unnamed tabs then sends closeReady ex
     harness.events.filter(([kind]) => kind === "close-ready").length,
     1,
   );
+});
+
+test("discard-close forgets named and unnamed recovery drafts while keeping saved files in the session", async () => {
+  const named = createTestTab("named", {
+    recoveryPath: "C:\\recovery\\named.letterpaper", recoveryId: "named-recovery", recoveryRevision: 1,
+  });
+  const unnamed = createTestTab("unnamed", {
+    path: "", recoveryPath: "C:\\recovery\\unnamed.letterpaper", recoveryId: "unnamed-recovery", recoveryRevision: 1,
+  });
+  const clean = createTestTab("clean", { dirty: false });
+  const harness = createPersistenceHarness({
+    tabs: [named, unnamed, clean], confirmWindowClose: async () => "discard",
+    onDeleteTempDocument: async () => { throw new Error("locked recovery file"); },
+  });
+  const result = await harness.controller.closeWindow();
+  assert.equal(result.status, "ready");
+  assert.deepEqual(harness.read().session.tabs.map((tab) => tab.path), [named.path, clean.path]);
+  assert.equal(harness.read().session.tabs[0].recoveryPath, "");
+  assert.equal(harness.read().session.tabs[0].recoveryId, "");
+  assert.equal(harness.read().session.tabs[0].recoverySourcePath, "");
+  assert.equal(result.tabs[0].recoveryBaseRevision, null);
+  assert.deepEqual(harness.events.filter(([kind]) => kind === "delete-temp").map(([, id]) => id).sort(), ["named-recovery", "unnamed-recovery"]);
+  assert.equal(harness.events.some(([kind]) => kind === "save-document" || kind === "save-temp"), false);
 });
 
 test("window close commits a returned disk revision but cancels when the live revision changes during save", async () => {

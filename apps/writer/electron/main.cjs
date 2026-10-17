@@ -39,6 +39,7 @@ const {
   sanitizeDebugLogData,
 } = require("./diagnostics-ipc.cjs");
 const { registerDocumentOpenIpcHandlers } = require("./document-open-ipc.cjs");
+const { createExternalDocumentOpenRuntime, registerExternalDocumentOpenIpcHandlers } = require("./external-document-open.cjs");
 const { registerDocumentOutputIpcHandlers } = require("./document-output-ipc.cjs");
 const { registerDocumentSaveIpcHandlers } = require("./document-save-ipc.cjs");
 const { createAiRuntime } = require("./ai-runtime.cjs");
@@ -208,12 +209,6 @@ let removeSpellingContextMenu = null;
 let updateState = createInitialUpdateState(app.getVersion());
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
-app.on("second-instance", () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-});
 
 const documentAssetsRuntime = createDocumentAssetsRuntime({
   fs,
@@ -338,6 +333,15 @@ const {
   resolveAuthorizedOpenDocument,
   resolveDocumentTargetPath,
 } = filesystemRuntime;
+
+const externalDocumentOpen = createExternalDocumentOpenRuntime({
+  app,
+  getMainWindow: () => mainWindow,
+  isSupportedDocument,
+  canonicalExistingPath,
+  authorizeDocumentPath,
+  writeDebugLog: writeAiDebugLog,
+});
 
 const aiRuntime = createAiRuntime({
   fs,
@@ -610,6 +614,8 @@ const ipcMain = createTrustedIpcRegistrar({
   getMainWindow: () => mainWindow,
   isTrustedApplicationUrl,
 });
+
+registerExternalDocumentOpenIpcHandlers({ ipcMain, externalDocumentOpen });
 
 function emitUpdateState(patch) {
   updateState = mergeUpdateState(updateState, patch, app.getVersion());

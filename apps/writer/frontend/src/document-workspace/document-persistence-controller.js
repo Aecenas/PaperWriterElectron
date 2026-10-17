@@ -259,9 +259,20 @@ export function createDocumentPersistenceController({
             return { status: "conflict-again" };
           }
         } else if (decision === "reload") {
+          const reloadIsStale = () => {
+            if (revisionPort.readLiveRevision(targetTab.id) === revision) return false;
+            show("重新载入期间文档又有修改，已保留当前编辑；请重新保存后再处理冲突", "warning");
+            return true;
+          };
+          if (reloadIsStale()) return { status: "changed" };
           const reloaded = await documentIoPort.openDocumentPath(
             targetTab.path,
           );
+          if (reloadIsStale()) return { status: "changed" };
+          if (reloaded?.canceled || !reloaded?.document) {
+            show(`重新载入失败：${reloaded?.error || "无法读取磁盘版本"}；已保留当前编辑`, "warning");
+            return { status: "reload-failed" };
+          }
           if (!reloaded?.canceled && reloaded?.document) {
             revisionPort.commitDiskRevision(
               targetTab.id,
@@ -287,6 +298,7 @@ export function createDocumentPersistenceController({
                     recoveryRevision: null,
                     recoveredTemporary: false,
                     externalChanged: false,
+                    readOnly: Boolean(reloaded.readOnly),
                   }
                 : tab
             ));
@@ -750,7 +762,7 @@ export function createDocumentPersistenceController({
           );
           await Promise.allSettled(
             latestDirtyTabs
-              .filter((tab) => !tab.path && tab.recoveryPath)
+              .filter((tab) => tab.recoveryPath)
               .map((tab) => documentIoPort.deleteTempDocument?.(
                 recoveryTabId(tab),
               )),
@@ -762,7 +774,15 @@ export function createDocumentPersistenceController({
           );
           finalTabs = latestSnapshot.filter(
             (tab) => !discardedIds.has(tab.id),
-          );
+          ).map((tab) => tab.dirty ? {
+            ...tab,
+            recoveryPath: "",
+            recoveryId: "",
+            recoverySourcePath: "",
+            recoveryBaseRevision: null,
+            recoveryRevision: null,
+            recoveredTemporary: false,
+          } : tab);
         }
 
         if (decision === "save") {

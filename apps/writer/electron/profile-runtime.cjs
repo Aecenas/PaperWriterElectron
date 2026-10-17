@@ -1,6 +1,7 @@
 const {
   preflightZipBuffer: defaultPreflightZipBuffer,
 } = require("./document-storage.cjs");
+const { apiKeyCanBeReused } = require("./ai-config-security.cjs");
 
 const PROFILE_EXTENSION = ".jianprofile";
 const PROFILE_SCHEMA_VERSION = 1;
@@ -409,12 +410,17 @@ function createProfileRuntime({
       providerRemap.set(providerId, targetId);
       occupied.add(targetId);
       const existing = safeObject(current.providers[targetId]);
+      const nextBaseUrl = Object.hasOwn(provider, "baseUrl") ? provider.baseUrl : existing.baseUrl;
       current.providers[targetId] = {
         ...existing,
         ...provider,
         ...(typeof importedSecrets[providerId] === "string"
           ? { apiKey: importedSecrets[providerId].slice(0, 16384) }
-          : (existing.apiKey ? { apiKey: existing.apiKey } : {})),
+          : {
+              apiKey: apiKeyCanBeReused(existing.baseUrl, nextBaseUrl)
+                ? existing.apiKey || ""
+                : "",
+            }),
       };
     }
 

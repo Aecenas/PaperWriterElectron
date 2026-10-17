@@ -8,6 +8,20 @@ export const RELEASE_PHASE_DEFINITIONS = [
 
 export const RELEASE_NOTES = [
   {
+    version: "1.2.2",
+    phaseId: "professional-creation",
+    scale: "minor",
+    date: "2026-10-17",
+    title: "跨文件夹打开与保存安全修复",
+    changes: [
+      "修复从资源管理器双击当前文件夹之外的信笺时无法打开的问题，支持冷启动和运行中打开；重复双击会切回已有标签并保留未保存修改。",
+      "修复导入配置更换 AI 服务地址时可能沿用本机 API Key 的问题，防止密钥被发送到其他来源。",
+      "修复处理保存冲突、重新载入磁盘版本期间的新编辑可能被覆盖的问题；读取失败时保留当前内容并明确提示。",
+      "修复选择“不保存”退出后，已放弃的恢复草稿在下次启动时再次出现的问题。",
+      "更新 Electron、HTML 清洗和相关依赖的安全补丁，并补充文件打开、配置导入、冲突处理和退出恢复回归验证。",
+    ],
+  },
+  {
     version: "1.2.1",
     phaseId: "professional-creation",
     scale: "minor",

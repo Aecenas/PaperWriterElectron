@@ -339,6 +339,36 @@ test("import remaps colliding custom providers, resets tests, and merges local d
   );
 });
 
+test("profile imports never carry a local API key to a changed provider origin", async (t) => {
+  for (const baseUrl of ["https://attacker.test/v1", "http://example.test/v1", null]) {
+    const imported = sampleAiConfig();
+    imported.providers.gemini.baseUrl = baseUrl;
+    const exporter = await createHarness({ aiConfig: imported });
+    const importer = await createHarness();
+    t.after(() => Promise.all([exporter.root, importer.root].map((root) => fs.rm(root, { recursive: true, force: true }))));
+    const archive = await exporter.runtime.facade.createArchive({});
+    await importer.runtime.facade.applyArchive(archive.buffer);
+    const provider = importer.getAi().providers.gemini;
+    assert.equal(provider.baseUrl, baseUrl);
+    assert.equal(provider.apiKey || "", "");
+    assert.equal(provider.testedOk, false);
+  }
+});
+
+test("profile imports preserve same-origin local keys and accept explicitly imported encrypted keys", async (t) => {
+  for (const includeSecrets of [false, true]) {
+    const imported = sampleAiConfig();
+    imported.providers.gemini.baseUrl = includeSecrets ? "https://new-provider.test/v1" : "https://example.test/v2";
+    imported.providers.gemini.apiKey = "imported-key";
+    const exporter = await createHarness({ aiConfig: imported });
+    const importer = await createHarness();
+    t.after(() => Promise.all([exporter.root, importer.root].map((root) => fs.rm(root, { recursive: true, force: true }))));
+    const archive = await exporter.runtime.facade.createArchive({ includeSecrets, passphrase: "regression-passphrase" });
+    await importer.runtime.facade.applyArchive(archive.buffer, { passphrase: "regression-passphrase" });
+    assert.equal(importer.getAi().providers.gemini.apiKey, includeSecrets ? "imported-key" : "gemini-secret");
+  }
+});
+
 test("profile inspection returns actionable per-section diff and terminology conflicts", async (t) => {
   const exporter = await createHarness({
     writingAssistance: {
