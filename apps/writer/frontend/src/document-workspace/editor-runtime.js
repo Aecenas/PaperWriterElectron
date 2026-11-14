@@ -34,8 +34,9 @@ export function serializePaneDocument({
   const html = stripDerivedHtml(
     readPaneValue(pane, "readHtml", "") || source.html || "<p></p>",
   );
-  const title = source.title?.trim()
-    || inferTitle(readPaneValue(pane, "readText", "") || "");
+  const title = typeof source.title === "string"
+    ? source.title.trim()
+    : inferTitle(readPaneValue(pane, "readText", "") || "");
   const comments = typeof pane?.readComments === "function"
     ? pane.readComments(source.comments)
     : source.comments;

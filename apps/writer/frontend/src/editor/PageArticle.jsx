@@ -47,7 +47,7 @@ export function PageArticle({ document, selectedTemplate, presentation = DEFAULT
               onChange={(event) => onTitleChange?.(event.target.value)}
               maxLength={DOCUMENT_TITLE_MAX_CHARS}
               aria-label="文章标题"
-              placeholder="未命名信笺"
+              placeholder="输入标题"
               spellCheck={false}
             />
           ) : null}

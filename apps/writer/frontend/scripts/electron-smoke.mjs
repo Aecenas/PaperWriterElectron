@@ -153,7 +153,9 @@ try {
   assert.deepEqual(bridgeResult.fullscreen, { fullscreen: false });
   stage("checking cold-start file open, then restoring the current folder");
   await waitForActiveDocument(page, "当前信笺");
-  await page.evaluate(({ folderPath, documentPath }) => {
+  // Seed the next renderer before startup. The current renderer can still
+  // flush its pending session snapshot while reload is being requested.
+  await page.addInitScript(({ folderPath, documentPath }) => {
     localStorage.setItem("paperwriter.sessionState", JSON.stringify({
       folderPath, activePath: documentPath, tabs: [{ path: documentPath }],
     }));

@@ -14,7 +14,7 @@ export const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 
 export function normalizeDocumentTitle(value, fallback = "未命名信笺") {
   if (typeof value !== "string") return fallback;
-  return value.slice(0, DOCUMENT_TITLE_MAX_CHARS).trim() || fallback;
+  return value.slice(0, DOCUMENT_TITLE_MAX_CHARS).trim();
 }
 
 export function normalizeImageCaption(value) {

@@ -576,7 +576,6 @@ function normalizeDocument(document = {}) {
     ),
     citationStyle: normalizeCitationStyle(document.citationStyle),
     title: typeof document.title === "string"
-      && document.title.trim()
       ? document.title.trim().slice(0, 200)
       : "未命名信笺",
     author: typeof document.author === "string"

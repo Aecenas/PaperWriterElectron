@@ -1820,6 +1820,7 @@ function tokenizeHtml(html) {
 function structuredBlocks(html, assetMap = new Map()) {
   const blocks = [];
   const stack = [];
+  const tableContexts = [];
   let current = null;
   let table = null;
   let row = null;
@@ -1840,15 +1841,16 @@ function structuredBlocks(html, assetMap = new Map()) {
     }
     return style;
   };
-  const runs = () => cell?.runs || current?.runs;
+  const runs = () => current?.runs;
   const pushText = (text) => {
     if (!text) return;
-    if (!current && !cell && !String(text).trim()) return;
-    if (!current && !cell) current = { type: "paragraph", runs: [] };
+    if (!current && !String(text).trim()) return;
+    if (!current) current = { type: "paragraph", runs: [] };
     runs()?.push({ text: decodeHtmlEntitiesOnce(text), style: activeStyles() });
   };
+  const appendBlock = (block) => (cell?.blocks || blocks).push(block);
   const finishCurrent = () => {
-    if (current) { blocks.push(current); current = null; }
+    if (current) { appendBlock(current); current = null; }
   };
   for (const token of tokenizeHtml(html)) {
     if (!token.startsWith("<")) { pushText(token); continue; }
@@ -1857,10 +1859,19 @@ function structuredBlocks(html, assetMap = new Map()) {
       const tag = close[1].toLowerCase();
       const entryIndex = stack.map((entry) => entry.tag).lastIndexOf(tag);
       const entry = entryIndex >= 0 ? stack[entryIndex] : null;
-      if (tag === "td" || tag === "th") { if (cell && row) row.cells.push(cell); cell = null; }
+      if (tag === "td" || tag === "th") {
+        finishCurrent();
+        if (cell && row) row.cells.push(cell);
+        cell = null;
+      }
       else if (tag === "tr") { if (row && table) table.rows.push(row); row = null; }
-      else if (tag === "table") { if (table) blocks.push(table); table = null; }
-      else if (entry?.startedBlock && !cell) finishCurrent();
+      else if (tag === "table") {
+        finishCurrent();
+        const completedTable = table;
+        ({ table, row, cell } = tableContexts.pop() || { table: null, row: null, cell: null });
+        if (completedTable) appendBlock(completedTable);
+      }
+      else if (entry?.startedBlock) finishCurrent();
       if (entryIndex >= 0) stack.splice(entryIndex);
       continue;
     }
@@ -1870,13 +1881,13 @@ function structuredBlocks(html, assetMap = new Map()) {
     const attrs = open[2];
     if (tag === "br") { pushText("\n"); continue; }
     if (tag === "hr") {
-      if (attributeValue(attrs, "data-type") === "paper-page-break") { finishCurrent(); blocks.push({ type: "pageBreak" }); }
-      else { finishCurrent(); blocks.push({ type: "paragraph", runs: [{ text: "────────", style: {} }] }); }
+      if (attributeValue(attrs, "data-type") === "paper-page-break") { finishCurrent(); appendBlock({ type: "pageBreak" }); }
+      else { finishCurrent(); appendBlock({ type: "paragraph", runs: [{ text: "────────", style: {} }] }); }
       continue;
     }
     if (tag === "img") {
       const source = decodeHtmlEntities(attributeValue(attrs, "src"));
-      if (!current && !cell) current = { type: "paragraph", runs: [] };
+      if (!current) current = { type: "paragraph", runs: [] };
       runs()?.push({
         image: assetMap.get(source),
         alt: attributeValue(attrs, "alt"),
@@ -1889,16 +1900,29 @@ function structuredBlocks(html, assetMap = new Map()) {
       });
       continue;
     }
-    if (tag === "div" && attributeValue(attrs, "data-type") === "paper-page-break") { finishCurrent(); blocks.push({ type: "pageBreak" }); continue; }
-    if (tag === "table") { finishCurrent(); table = { type: "table", rows: [] }; }
+    if (tag === "div" && attributeValue(attrs, "data-type") === "paper-page-break") { finishCurrent(); appendBlock({ type: "pageBreak" }); continue; }
+    if (tag === "table") {
+      finishCurrent();
+      tableContexts.push({ table, row, cell });
+      table = { type: "table", rows: [] };
+      row = null;
+      cell = null;
+    }
     if (tag === "tr") row = { cells: [] };
-    if (tag === "td" || tag === "th") cell = { header: tag === "th", runs: [] };
+    if (tag === "td" || tag === "th") cell = { header: tag === "th", blocks: [] };
     const blockTag = /^(?:p|h[1-6]|li|blockquote|pre|figcaption)$/.test(tag);
     let startedBlock = false;
-    if (blockTag && !cell) {
-      finishCurrent();
-      const list = tag === "li" ? [...stack].reverse().find((entry) => entry.tag === "ol" || entry.tag === "ul")?.tag : "";
-      current = { type: tag.startsWith("h") ? "heading" : tag === "li" ? "listItem" : tag === "blockquote" ? "quote" : tag === "pre" ? "code" : "paragraph", level: tag.startsWith("h") ? Number(tag[1]) : 0, list, runs: [] };
+    if (blockTag) {
+      // Tiptap wraps list and quote content in paragraphs. Keep the first
+      // paragraph attached to its container's marker and paragraph style.
+      const continuesContainer = tag === "p"
+        && current?.runs.length === 0
+        && ["listItem", "quote"].includes(current.type);
+      if (!continuesContainer) {
+        finishCurrent();
+        const list = tag === "li" ? [...stack].reverse().find((entry) => entry.tag === "ol" || entry.tag === "ul")?.tag : "";
+        current = { type: tag.startsWith("h") ? "heading" : tag === "li" ? "listItem" : tag === "blockquote" ? "quote" : tag === "pre" ? "code" : "paragraph", level: tag.startsWith("h") ? Number(tag[1]) : 0, list, runs: [] };
+      }
       startedBlock = true;
     }
     stack.push({
@@ -2013,13 +2037,20 @@ function docxSemanticPayload(html, document, warnings = []) {
 
 function buildDocxBuffer(html, document, docx, assetMap, semanticHtml = html, warnings = []) {
   if (!docx?.Document || !docx?.Packer || !docx?.Paragraph || !docx?.TextRun) throw new Error("DOCX 导出需要注入 docx");
-  const textRuns = (text, style = {}) => segmentDocxTextByEmojiFont(text).map((chunk) => (
-    new docx.TextRun({
-      text: chunk.text,
-      ...style,
-      ...(chunk.font ? { font: chunk.font } : {}),
-    })
-  ));
+  const textRuns = (text, style = {}) => {
+    const runs = [];
+    String(text).split(/\r\n|\r|\n/).forEach((line, index) => {
+      if (index > 0) runs.push(new docx.TextRun({ ...style, break: 1 }));
+      for (const chunk of segmentDocxTextByEmojiFont(line)) {
+        runs.push(new docx.TextRun({
+          text: chunk.text,
+          ...style,
+          ...(chunk.font ? { font: chunk.font } : {}),
+        }));
+      }
+    });
+    return runs;
+  };
   const imageTransformation = (run) => {
     const width = Number(run?.width) || 0;
     const height = Number(run?.height) || 0;
@@ -2072,10 +2103,24 @@ function buildDocxBuffer(html, document, docx, assetMap, semanticHtml = html, wa
   const children = [];
   if (document.title) children.push(new docx.Paragraph({ heading: docx.HeadingLevel?.TITLE || "Title", children: textRuns(document.title) }));
   if (document.author) children.push(new docx.Paragraph({ children: textRuns(document.author, { italics: true }) }));
-  for (const block of structuredBlocks(html, assetMap)) {
-    if (block.type !== "table" || !docx.Table || !docx.TableRow || !docx.TableCell) { children.push(paragraphFor(block.type === "table" ? { type: "paragraph", runs: [{ text: block.rows.map((row) => row.cells.map((item) => item.runs.map((run) => run.text).join("")).join("\t")).join("\n"), style: {} }] } : block)); continue; }
-    children.push(new docx.Table({ rows: block.rows.map((tableRow) => new docx.TableRow({ children: tableRow.cells.map((tableCell) => new docx.TableCell({ children: [new docx.Paragraph({ children: makeRuns(tableCell.runs) })] })) })) }));
-  }
+  const makeBlocks = (blocks) => blocks.flatMap((block) => {
+    if (block.type !== "table") return [paragraphFor(block)];
+    if (!docx.Table || !docx.TableRow || !docx.TableCell) {
+      return block.rows.flatMap((row) => row.cells.flatMap((cell) => makeBlocks(cell.blocks)));
+    }
+    const rows = block.rows.map((row) => new docx.TableRow({
+      children: row.cells.map((cell) => {
+        const cellChildren = makeBlocks(cell.blocks);
+        // Word requires a paragraph at the end of every table cell.
+        if (!cellChildren.length || cell.blocks.at(-1)?.type === "table") {
+          cellChildren.push(new docx.Paragraph({ children: [] }));
+        }
+        return new docx.TableCell({ children: cellChildren });
+      }),
+    }));
+    return [new docx.Table({ rows })];
+  });
+  children.push(...makeBlocks(structuredBlocks(html, assetMap)));
   const options = {
     creator: document.author || "笺间",
     title: document.title || "未命名信笺",

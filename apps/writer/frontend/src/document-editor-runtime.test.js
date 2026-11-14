@@ -82,8 +82,7 @@ test("serializePaneDocument keeps live HTML, comments, and updatedAt together", 
         return '<p data-derived="true">live body</p>';
       },
       readText() {
-        calls.push("text");
-        return "Live inferred title";
+        throw new Error("An explicitly cleared title must not be inferred from the body");
       },
       readComments(fallback) {
         calls.push(["comments", fallback]);
@@ -94,9 +93,8 @@ test("serializePaneDocument keeps live HTML, comments, and updatedAt together", 
       calls.push(["strip", html]);
       return "<p>live body</p>";
     },
-    inferTitle(text) {
-      calls.push(["infer", text]);
-      return "Inferred title";
+    inferTitle() {
+      throw new Error("An explicitly cleared title must stay empty");
     },
     normalizeDocument(document, templates) {
       calls.push(["normalize", templates]);
@@ -106,7 +104,7 @@ test("serializePaneDocument keeps live HTML, comments, and updatedAt together", 
 
   assert.deepEqual(result, {
     ...sourceDocument,
-    title: "Inferred title",
+    title: "",
     html: "<p>live body</p>",
     comments: liveComments,
     updatedAt: "live-time",
@@ -115,8 +113,6 @@ test("serializePaneDocument keeps live HTML, comments, and updatedAt together", 
   assert.deepEqual(calls, [
     "html",
     ["strip", '<p data-derived="true">live body</p>'],
-    "text",
-    ["infer", "Live inferred title"],
     ["comments", sourceDocument.comments],
     ["normalize", ["template-a"]],
   ]);

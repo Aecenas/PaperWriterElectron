@@ -806,6 +806,39 @@ test("bounds a selected source file before reading its contents", async () => {
   assert.equal(closeCalled, true);
 });
 
+test("DOCX preserves outer cells and paragraph order around nested tables", async () => {
+  const interchange = createDocumentInterchange({ docx: require("docx") });
+  const html = '<p>Before</p><table><tr><td><p>Outer before</p><table><tr><td><p>Inner first</p><p>Inner second</p></td></tr></table><p>Outer after</p></td><td><p>Sibling cell</p></td></tr><tr><td><p>Last row</p></td><td><p></p></td></tr></table><p>After</p>';
+  const exported = await interchange.exportDocument({ format: "docx", document: { html } });
+  const converted = await require("mammoth").convertToHtml({ buffer: exported.buffer });
+  assert.equal(converted.value, html.replace("<p></p>", ""));
+  assert.deepEqual(exported.warnings, []);
+});
+
+test("DOCX keeps list markers when editor list items contain paragraphs", async () => {
+  const interchange = createDocumentInterchange({ docx: require("docx") });
+  const html = '<ol><li><p>First</p></li><li><p>Second</p><p>Continuation</p></li></ol><ul><li><p>Bullet</p></li></ul>';
+  const exported = await interchange.exportDocument({ format: "docx", document: { html } });
+  const converted = await require("mammoth").convertToHtml({ buffer: exported.buffer });
+  assert.match(converted.value, /<ol><li>First<\/li><li>Second<\/li><\/ol>/);
+  assert.match(converted.value, /<p>Continuation<\/p>/);
+  assert.match(converted.value, /<ul><li>Bullet<\/li><\/ul>/);
+});
+
+test("DOCX writes real line breaks for hard breaks and multiline code", async () => {
+  const interchange = createDocumentInterchange({ docx: require("docx") });
+  const html = '<p>First<br><strong>Second<br>Third</strong></p><pre data-type="paper-code" data-code-language="python"><code>print(1)\n\nprint(2)\n</code></pre>';
+  const exported = await interchange.exportDocument({ format: "docx", document: { html } });
+  const zip = await JSZip.loadAsync(exported.buffer);
+  const xml = await zip.file("word/document.xml").async("string");
+  // Two hard breaks, the code label separator, and three source newlines.
+  assert.equal((xml.match(/<w:br\s*\/>/g) || []).length, 6);
+  const converted = await require("mammoth").convertToHtml({ buffer: exported.buffer });
+  assert.match(converted.value, /First<br\s*\/>/);
+  assert.match(converted.value, /Second<br\s*\/>Third/);
+  assert.match(converted.value, /print\(1\)<br\s*\/><br\s*\/>print\(2\)/);
+});
+
 test("uses injected docx constructors for headings, lists, tables, page breaks and inline images", async () => {
   let captured;
   class Capture { constructor(options = {}) { this.options = options; } }

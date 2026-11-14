@@ -4,6 +4,11 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  createBlankDocument,
+  normalizeDocument,
+  paperCanvasViewModel,
+} from "./document-workspace/model.js";
+import {
   createDocumentStorePort,
   createDocumentWorkspaceInitialState,
   createGroupStorePort,
@@ -18,6 +23,20 @@ import {
 function ref(current) {
   return { current };
 }
+
+test("new documents get a default title while cleared titles survive rendering and normalization", () => {
+  const blank = createBlankDocument();
+  assert.equal(blank.title, "未命名信笺");
+  assert.equal(normalizeDocument({}).title, "未命名信笺");
+
+  for (const title of ["", "   ", "重新输入的标题"]) {
+    const document = { ...blank, title };
+    assert.equal(paperCanvasViewModel(document).title, title.trim());
+    const normalized = normalizeDocument(document);
+    assert.equal(normalized.title, title.trim());
+    assert.equal(normalizeDocument(JSON.parse(JSON.stringify(normalized))).title, title.trim());
+  }
+});
 
 test("document workspace initial state preserves the current App defaults", () => {
   const initialSession = {

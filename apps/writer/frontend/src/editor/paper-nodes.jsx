@@ -65,8 +65,11 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
   const imageId = normalizeDocumentId(node.attrs.imageId);
   const readOnly = !editor?.isEditable;
   const captionRef = useRef(null);
+  const captionComposingRef = useRef(false);
+  const committedCaptionRef = useRef(caption);
   const imageRef = useRef(null);
   const toolsCloseTimerRef = useRef(null);
+  const [captionDraft, setCaptionDraft] = useState(caption);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const imageNumber = useEditorState({
@@ -104,14 +107,32 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
   }, []);
 
   useEffect(() => {
-    resizeCaptionField(captionRef.current);
-    const animationFrame = window.requestAnimationFrame(() => resizeCaptionField(captionRef.current));
-    const timer = window.setTimeout(() => resizeCaptionField(captionRef.current), 80);
+    committedCaptionRef.current = caption;
+    if (!captionComposingRef.current) setCaptionDraft(caption);
+  }, [caption]);
+
+  const commitCaption = useCallback((value) => {
+    const nextCaption = normalizeImageCaption(value);
+    setCaptionDraft(nextCaption);
+    if (nextCaption !== committedCaptionRef.current) {
+      committedCaptionRef.current = nextCaption;
+      updateAttributes({ caption: nextCaption });
+    }
+  }, [updateAttributes]);
+
+  useEffect(() => {
+    // IMEs own the candidate text and its layout until composition finishes.
+    const resize = () => {
+      if (!captionComposingRef.current) resizeCaptionField(captionRef.current);
+    };
+    resize();
+    const animationFrame = window.requestAnimationFrame(resize);
+    const timer = window.setTimeout(resize, 80);
     return () => {
       window.cancelAnimationFrame(animationFrame);
       window.clearTimeout(timer);
     };
-  }, [caption]);
+  }, [captionDraft]);
 
   const openPreview = useCallback((event) => {
     event?.preventDefault?.();
@@ -206,12 +227,29 @@ export function PaperImageNodeView({ node, updateAttributes, selected, editor, g
         <textarea
           ref={captionRef}
           className="paper-image-caption"
-          value={caption}
+          value={captionDraft}
           readOnly={readOnly}
           maxLength={IMAGE_CAPTION_MAX_CHARS}
           rows={1}
           onChange={(event) => {
-            updateAttributes({ caption: normalizeImageCaption(event.target.value) });
+            const value = event.currentTarget.value;
+            if (captionComposingRef.current || event.nativeEvent.isComposing) {
+              setCaptionDraft(value);
+              return;
+            }
+            commitCaption(value);
+          }}
+          onCompositionStart={() => {
+            captionComposingRef.current = true;
+          }}
+          onCompositionEnd={(event) => {
+            captionComposingRef.current = false;
+            commitCaption(event.currentTarget.value);
+            resizeCaptionField(event.currentTarget);
+          }}
+          onBlur={(event) => {
+            captionComposingRef.current = false;
+            commitCaption(event.currentTarget.value);
             resizeCaptionField(event.currentTarget);
           }}
           aria-label="图片标题"

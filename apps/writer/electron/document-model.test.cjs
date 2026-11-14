@@ -125,7 +125,7 @@ test("legacy schemas migrate to v3 while future schemas preserve read-only bound
   assert.deepEqual(legacy.footnotes, []);
   assert.deepEqual(legacy.citationSources, []);
   assert.equal("unknownLegacyField" in legacy, false);
-  assert.equal(legacy.title, "未命名信笺");
+  assert.equal(legacy.title, "");
   assert.equal(legacy.html, "<p></p>");
   assert.equal(legacy.fontSize, 32);
   assert.equal(Object.hasOwn(legacy, "layoutMode"), false);
@@ -150,6 +150,17 @@ test("legacy schemas migrate to v3 while future schemas preserve read-only bound
       in documentModel.normalizeDocument({ version: 2 }),
     false,
   );
+});
+
+test("document normalization preserves cleared titles across disk round trips", () => {
+  for (const title of ["", "   ", "重新输入的标题"]) {
+    const normalized = documentModel.normalizeDocument({ title, html: "<p>正文不应成为标题</p>" });
+    assert.equal(normalized.title, title.trim());
+    assert.equal(documentModel.normalizeDocument(JSON.parse(JSON.stringify(normalized))).title, title.trim());
+  }
+  for (const title of [undefined, null, 123]) {
+    assert.equal(documentModel.normalizeDocument({ title }).title, "未命名信笺");
+  }
 });
 
 test("footnotes normalize UUIDs, timestamps, bounds, and duplicate identities", () => {

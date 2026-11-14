@@ -167,10 +167,10 @@ export function normalizeCollaborationOperation(operation = {}, index = 0) {
     reviewRevision: Number.isFinite(Number(operation.reviewRevision)) ? Number(operation.reviewRevision) : 0,
   };
   if (type === "set_title") {
-    return { ...common, title: normalizeDocumentTitle(operation.title) };
+    return { ...common, title: normalizeDocumentTitle(operation.title) || "未命名信笺" };
   }
   if (type === "create_document") {
-    const title = normalizeDocumentTitle(operation.title);
+    const title = normalizeDocumentTitle(operation.title) || "未命名信笺";
     return {
       ...common,
       title,

@@ -8,6 +8,20 @@ export const RELEASE_PHASE_DEFINITIONS = [
 
 export const RELEASE_NOTES = [
   {
+    version: "1.2.3",
+    phaseId: "professional-creation",
+    scale: "minor",
+    date: "2026-11-14",
+    title: "Word 导出与标题编辑修复",
+    changes: [
+      "修复 Word 导出嵌套表格时丢失外层及相邻单元格正文的问题，并保留单元格内的段落顺序。",
+      "修复 Word 导出丢失列表编号、硬换行和多行代码换行的问题。",
+      "修复清空信笺标题后，保存或重新打开时被默认标题或正文重新填充的问题。",
+      "修复图片标题使用中文输入法时组字被打断的问题，组字完成后再提交标题。",
+      "更新 Vite 补丁版本，修复依赖审计发现的高危问题。",
+    ],
+  },
+  {
     version: "1.2.2",
     phaseId: "professional-creation",
     scale: "minor",

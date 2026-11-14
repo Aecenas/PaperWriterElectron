@@ -19,7 +19,11 @@ import {
 test("caps document titles before they reach controlled inputs and tabs", () => {
   assert.equal(normalizeDocumentTitle("  正常标题  "), "正常标题");
   assert.equal(normalizeDocumentTitle("题".repeat(10000)).length, 200);
-  assert.equal(normalizeDocumentTitle("  "), "未命名信笺");
+  assert.equal(normalizeDocumentTitle(""), "");
+  assert.equal(normalizeDocumentTitle("  "), "");
+  assert.equal(normalizeDocumentTitle(undefined), "未命名信笺");
+  assert.equal(normalizeDocumentTitle(null), "未命名信笺");
+  assert.equal(normalizeDocumentTitle(123), "未命名信笺");
 });
 
 test("keeps only recent chat messages within per-message and aggregate budgets", () => {
