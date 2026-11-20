@@ -43,13 +43,13 @@ jobs:
       RELEASE_NOTES: ${{ inputs.release_notes }}
     steps:
       - name: Check out the tagged source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.release_tag }}
           fetch-depth: 0
 
       - name: Download artifacts from the successful build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: paperwriter-windows-${{ inputs.release_tag }}
           run-id: ${{ inputs.source_run_id }}
